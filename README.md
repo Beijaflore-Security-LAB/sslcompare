@@ -1,7 +1,7 @@
 #### DESCRIPTION
 This python script compares tls cipher suites of a server to baselines.
 
-Cipher suites are retrieved with the testssl.sh shell script.
+Cipher suites are retrieved with the testssl.sh shell script (https://github.com/drwetter/testssl.sh).
 
 
 #### GUIDE 
