@@ -21,8 +21,8 @@ Examples :
 #### Baseline files :
 
 Baseline are formated as json files.
-Baseline files are stored in the baseline directory
-Default baseline file is anssi.json (ANSSI recommendations)
+Baseline files are stored in the baseline directory.
+Default baseline file is anssi.json (ANSSI recommendations).
 For each tsl version suite can be either :
 - recommended
 - degraded
