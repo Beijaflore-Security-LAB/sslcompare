@@ -35,7 +35,7 @@ For each tsl version suite can be either :
 To add a baseline, create a file and fill it the same way
 anssi.json is filled.
 
-The pass your baseline file in the command line :
+Then pass your baseline file in the command line :
 ```sh
 test.py sslcompare.py -u mytargetsite.com -b mybaseline.json
 ```
