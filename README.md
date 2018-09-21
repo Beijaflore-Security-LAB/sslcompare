@@ -39,4 +39,4 @@ test.py sslcompare.py -u mytargetsite.com -b mybaseline.json
    
 #### NOTES 
 
-TLS 1 is equivalent to TLS 1.1
+TLS 1 is equivalent to TLS 1.0
