@@ -1,5 +1,5 @@
 #### DESCRIPTION
-This python script compare tls cipher suites of a server to baselines.
+This python script compares tls cipher suites of a server to baselines.
 
 Cipher suites are retrieved with the testssl.sh shell script.
 
