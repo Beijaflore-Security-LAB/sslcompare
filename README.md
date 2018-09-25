@@ -37,7 +37,7 @@ anssi.json is filled.
 
 Then pass your baseline file in the command line :
 ```sh
-test.py sslcompare.py -u mytargetsite.com -b mybaseline.json
+python sslcompare.py -u mytargetsite.com -b mybaseline.json
 ```
 
    
