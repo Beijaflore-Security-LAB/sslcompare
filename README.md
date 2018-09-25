@@ -8,7 +8,7 @@ Cipher suites are retrieved with the testssl.sh shell script (https://github.com
 To launch the script :
 
 ```sh
- test.py sslcompare.py -u <url or ip> -b <baselinefile>
+ python sslcompare.py -u <url or ip> -b <baselinefile>
    -u : [MANDATORY] url or ip of the target
    -b : baseline file (json format). Default : anssi.json
 ```
