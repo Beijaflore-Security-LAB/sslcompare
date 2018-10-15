@@ -8,7 +8,7 @@ import json
 import os
 import sys, getopt
 import subprocess
-
+import datetime
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_BASELINE = os.path.join(CURRENT_DIR,"baselines","anssi.json")
@@ -117,5 +117,9 @@ def main(argv):
             print(suite,end='')
             print_color(" [DEPRECIATED]",'red')
 if __name__ == "__main__":
+    start_time = datetime.datetime.now()
+    print("[+] Start time : ",start_time)
     main(sys.argv[1:])
+    end_time = datetime.datetime.now()
+    print("[+] End time : ",start_time)
 
