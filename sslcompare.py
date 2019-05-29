@@ -121,5 +121,5 @@ if __name__ == "__main__":
     print("[+] Start time : ",start_time)
     main(sys.argv[1:])
     end_time = datetime.datetime.now()
-    print("[+] End time : ",start_time)
+    print("[+] End time : ",end_time)
 
