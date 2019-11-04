@@ -16,7 +16,7 @@ TESTSSL_PATH = os.path.join(CURRENT_DIR,"testssl.sh","testssl.sh")
 
 color_map = {'green':'\033[92m','yellow':'\033[93m','red':'\033[91m','blue':'\033[94m',
              'magenta':'\033[95m'} 
-PROTOCOLS = ["TLS 1", "TLS 1.1", "TLS 1.2"]
+PROTOCOLS = ["TLS 1", "TLS 1.1", "TLS 1.2","TLS 1.3"]
 
 def print_color(text,color):
     print(color_map[color] + text + '\033[0m')
@@ -28,14 +28,17 @@ def get_testssl_output(url):
     p1 = subprocess.Popen([TESTSSL_PATH,'-E',url], stdout=subprocess.PIPE)
     output = (p1.communicate()[0]).split('\n')
     cipher_suites = {}
-    protocols = ["TLS 1","TLS 1.1","TLS 1.2"]
+    protocols = ["TLS 1","TLS 1.1","TLS 1.2","TLS 1.3"]
     for protocol in protocols:
         cipher_suites[protocol] = []
         go = False
     for ligne in output:
         if "Done" in ligne :
             break
-        if "TLS 1.2" in ligne:
+	if "TLS 1.3" in ligne:
+            current_protocol = "TLS 1.3"
+            continue        
+	if "TLS 1.2" in ligne:
             current_protocol = "TLS 1.2"
             continue
         elif "TLS 1.1" in ligne:
@@ -84,7 +87,7 @@ def main(argv):
     target_suites = get_testssl_output(url)
     with open(baseline) as f:
         baseline_suites = json.load(f)
-    suite_categories = ['recommended','degraded','last hope','depreciated']
+    suite_categories = ['recommended','degraded','last hope','deprecated']
     for protocol in PROTOCOLS:
         print_color(protocol,'blue')
         suites = {}
@@ -99,7 +102,7 @@ def main(argv):
             elif suite in baseline_suites[protocol]['last hope']:
                 suites['last hope'].append(suite)
             else :
-                suites['depreciated'].append(suite)
+                suites['deprecated'].append(suite)
         # recommended
         for suite in suites['recommended']:
             print(suite,end='')
@@ -112,10 +115,10 @@ def main(argv):
         for suite in suites['last hope']:
             print(suite,end='')
             print_color(" [LAST HOPE]",'magenta')
-        # depreciated
-        for suite in suites['depreciated']:
+        # deprecated
+        for suite in suites['deprecated']:
             print(suite,end='')
-            print_color(" [DEPRECIATED]",'red')
+            print_color(" [DEPRECATED]",'red')
 if __name__ == "__main__":
     start_time = datetime.datetime.now()
     print("[+] Start time : ",start_time)

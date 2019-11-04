@@ -1,11 +1,12 @@
 #!/bin/sh
 #
-# License GPLv2, see ../LICENSE
+# This script compiles the "bad openssl" version, 1.0.2 supporting legacy
+# cryptography for Linux, FreeBSD and Darwin.
 #
-# instructions @ https://github.com/drwetter/testssl.sh/tree/2.9dev/bin
+# License GPLv2, see ../LICENSE
 
 
-STDOPTIONS="--prefix=/usr/ --openssldir=/etc/ssl -DOPENSSL_USE_BUILD_DATE enable-zlib \
+STDOPTIONS="--prefix=/usr/ -DOPENSSL_USE_BUILD_DATE enable-zlib \
 enable-ssl2 enable-ssl3 enable-ssl-trace enable-rc5 enable-rc2 \
 enable-gost enable-cms enable-md2 enable-mdc2 enable-ec enable-ec2m enable-ecdh enable-ecdsa \
 enable-seed enable-camellia enable-idea enable-rfc3779 experimental-jpake"
@@ -21,8 +22,11 @@ error() {
 clean() {
      case $NOCLEAN in
           yes|Y|YES) ;;
-          *) make clean
-     	[ $? -ne 0 ] && error "no openssl directory"
+          *)
+          if [ -e "Makefile" ]; then
+              make clean
+              [ $? -ne 0 ] && error "no openssl directory"
+          fi
 		;;
      esac
      return 0
@@ -86,7 +90,11 @@ testv6_patch
 if [ "$1" = krb ]; then
 	name2add=krb
 else
-	name2add=static
+	if [ $(uname) != "Darwin" ]; then
+		name2add=static
+	else
+		name2add=dynamic
+	fi
 fi
 
 echo "doing a build for $(uname).$(uname -m)".$name2add
@@ -96,20 +104,21 @@ sleep 3
 
 case $(uname) in
      Linux|FreeBSD)
+		openssldir_option='--openssldir=/etc/ssl'
 		case $(uname -m) in
          		i686|armv7l) clean
 				if [ "$1" = krb ]; then
-					./config $STDOPTIONS no-ec_nistp_64_gcc_128 --with-krb5-flavor=MIT
+					./config $openssldir_option $STDOPTIONS no-ec_nistp_64_gcc_128 --with-krb5-flavor=MIT
 				else
-					./config $STDOPTIONS no-ec_nistp_64_gcc_128 -static
+					./config $openssldir_option $STDOPTIONS no-ec_nistp_64_gcc_128 -static
 				fi
 				[ $? -ne 0 ] && error "configuring"
 				;;
 			x86_64|amd64) clean
                	if [ "$1" = krb ]; then
-					./config $STDOPTIONS enable-ec_nistp_64_gcc_128 --with-krb5-flavor=MIT
+					./config $openssldir_option $STDOPTIONS enable-ec_nistp_64_gcc_128 --with-krb5-flavor=MIT
 				else
-					./config $STDOPTIONS enable-ec_nistp_64_gcc_128 -static
+					./config $openssldir_option $STDOPTIONS enable-ec_nistp_64_gcc_128 -static
 				fi
 				[ $? -ne 0 ] && error "configuring"
 				;;
@@ -119,12 +128,16 @@ case $(uname) in
          esac
          ;;
      Darwin)
+		openssldir_option='--openssldir=/private/etc/ssl/'
 		case $(uname -m) in
-			x86_64) clean
-				echo "FIXME"
+			# No Kerberos (yet?) for Darwin. Static doesn't work for Darwin (#1204)
+			x86_64) clean || echo "nothing to clean"
+				./Configure $openssldir_option  $STDOPTIONS enable-ec_nistp_64_gcc_128 darwin64-x86_64-cc
+				[ $? -ne 0 ] && error "configuring"
           		;;
-			i386) clean
-				echo "FIXME"
+			i386) clean || echo "nothing to clean"
+				./config  $openssldir_option $STDOPTIONS no-ec_nistp_64_gcc_128 darwin64-x86_64-cc
+				[ $? -ne 0 ] && error "configuring"
 				;;
 		esac
 		;;
@@ -143,5 +156,5 @@ echo
 
 
 #  vim:ts=5:sw=5
-#  $Id: make-openssl.sh,v 1.19 2017/05/12 15:56:24 dirkw Exp $
+#  $Id: make-openssl.sh,v 1.20 2019/02/22 09:07:07 dirkw Exp $
 
