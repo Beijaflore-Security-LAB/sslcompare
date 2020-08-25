@@ -57,7 +57,7 @@ def print_usage():
 	-b : baseline file (json format). Default : anssi.json\n\n\
 	Examples :\n\n\
 	test.py sslcompare.py -u mytargetsite.com \n\
-	test.py sslcompare.py -u mytargetsite.com -b mybaseline.json\n\
+	test.py sslcompare.py -u mytargetsite.com -b /path/to/baseline.json\n\
 	")
 
 # Main function
@@ -65,7 +65,7 @@ def main(argv):
 	baseline = DEFAULT_BASELINE
 	url = ''
 	try:
-		opts, args = getopt.getopt(argv,"u:b",["url=","baseline="])
+		opts, args = getopt.getopt(argv,"u:b:",["url=","baseline="])
 	except getopt.GetoptError:
 		print_usage()
 		sys.exit(2)
@@ -73,7 +73,7 @@ def main(argv):
 		if opt in ("-u", "--host"):
 			url = arg
 		elif opt in ("-b", "--baseline"):
-			baseline = arg
+			baseline = os.path.join(CURRENT_DIR, arg)
 	if url == '':
 		print("You must pass an url as argument : python sslcompare.py -u <url or ip>")
 		print_usage()
