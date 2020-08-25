@@ -24,7 +24,7 @@ def print_color(text,color):
 # Parse testssl.sh output
 def get_testssl_output(url):
 	p1 = subprocess.Popen([TESTSSL_PATH,'-E',url], stdout=subprocess.PIPE)
-	output = (p1.communicate()[0]).split('\n')
+	output = (p1.communicate()[0]).decode().split('\n')
 	cipher_suites = {}
 	protocols = ["TLS 1","TLS 1.1","TLS 1.2","TLS 1.3"]
 	for protocol in protocols:
