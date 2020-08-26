@@ -88,7 +88,9 @@
 			"TLS_AES_128_GCM_SHA256",
 			"TLS_AES_128_CCM_SHA256"
 		],
-		"degraded": [],
+		"degraded": [
+			"TLS_AES_128_CCM_8_SHA256"
+		],
 		"last hope": []
 	}
 }
