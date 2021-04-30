@@ -68,6 +68,9 @@ def main(url, baseline, verbose=False):
                     break
 
                 elif "Testing" in line:
+                    if not (verbose or interesting_lines):
+                        click.echo("")
+
                     click.echo(line)
                     interesting_lines = True
 
