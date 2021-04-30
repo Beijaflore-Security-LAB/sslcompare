@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "sslcompare"
+version = "1.2.1"
+description = "Compares a server's cipher suites with a provided baseline"
+authors = [
+	"Arthur Le Corguille",
+	"William Gougam",
+	"Alexandre Janvrin"
+]
+license = "GPLv2"
+include = ["sslcompare/**/*"]
+
+[tool.poetry.scripts]
+sslcompare = "sslcompare.sslcompare:main"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+click = "^7.1.2"
+PyYAML = "^5.4.1"
+
+[tool.poetry.dev-dependencies]
+icecream = "^2.1.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
