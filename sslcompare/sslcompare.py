@@ -1,9 +1,13 @@
 #!/bin/env python3
 
 """
-sslcompare     : compare cipher suites to baselines.
+Compare cipher suites to baselines.
 
-Authors        : Arthur Le Corguille - William Gougam - Alexandre Janvrin.
+Authors :
+  - Arthur Le Corguille
+  - William Gougam
+  - Adrian Kalmar
+  - Alexandre Janvrin.
 """
 import re
 import shlex
@@ -97,7 +101,7 @@ def main(url, baseline, verbose=False):
                                 + click.style("[RECOMMENDED]", fg="green")
                             )
                         else:
-                            click.echo(line)
+                            click.echo(f" {'NOT OFFERED':<41}")
 
                     else:
                         cipher_suite = line.split()[-1]

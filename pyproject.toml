@@ -5,6 +5,7 @@ description = "Compares a server's cipher suites with a provided baseline"
 authors = [
 	"Arthur Le Corguille",
 	"William Gougam",
+	"Adrian Kalmar",
 	"Alexandre Janvrin"
 ]
 license = "GPLv2"
