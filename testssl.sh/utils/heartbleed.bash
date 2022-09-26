@@ -1,4 +1,4 @@
-#!/bin/bash 
+#!/usr/bin/env bash
 
 # POC bash socket implementation of heartbleed (CVE-2014-0160), see also http://heartbleed.com/
 # Author: Dirk Wetter, GPLv2 see https://testssl.sh/LICENSE.txt 
@@ -159,7 +159,7 @@ starttls_line0() {
      debugme echo "... received result: "
      cat $reply
      if [ -n "$2" ]; then
-          if egrep -q "$2" $reply; then
+          if grep -Eq "$2" $reply; then
                debugme echo "---> reply matched \"$2\""
                [ $DEBUG -eq 0 ] && rm $reply
                return 0 
@@ -303,5 +303,5 @@ echo
 
 exit $ret
 
-#  vim:tw=200:ts=5:sw=5:expandtab
+#  vim:ts=5:sw=5:expandtab
 #  $Id: heartbleed.bash,v 1.14 2015/07/06 19:26:38 dirkw Exp $ 

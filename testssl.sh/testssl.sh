@@ -3,23 +3,25 @@
 # vim:ts=5:sw=5:expandtab
 # we have a spaces softtab, that ensures readability with other editors too
 
-# testssl.sh is a program for spotting weak SSL encryption, ciphers, version and some
-# vulnerabilities or features
+# testssl.sh is a program for spotting weak SSL/TLS encryption, ciphers, protocols and some
+# vulnerabilities or features. It may or may be not distributed by your distribution.
+# The upstream versions are available (please leave the links intact):
 #
-# Devel version is available from    https://github.com/drwetter/testssl.sh
-# Stable version from                https://testssl.sh
-# Please file bugs at github!        https://github.com/drwetter/testssl.sh/issues
+# Development version       https://github.com/drwetter/testssl.sh
+# Stable version            https://testssl.sh
+# File bugs at GitHub       https://github.com/drwetter/testssl.sh/issues
 #
 # Project lead and initiator: Dirk Wetter, copyleft: 2007-today, contributions so far see CREDITS.md
 # Main contributions from David Cooper
+# Project lead and initiator: Dirk Wetter, copyleft: 2007-today.
+# Main contributions from David Cooper. Further contributors see CREDITS.md .
 #
-# License: GPLv2, see http://www.fsf.org/licensing/licenses/info/GPLv2.html
-# and accompanying license "LICENSE.txt". Redistribution + modification under this
+# License: GPLv2, see https://opensource.org/licenses/gpl-2.0.php and
+# accompanying license "LICENSE.txt". Redistribution + modification under this
 # license permitted.
-# If you enclose this script or parts of it in your software, it has to
-# be accompanied by the same license (see link) and the place where to get
-# the recent version of this program. Do not violate the license and if
-# you do not agree to all of these terms, do not use it in the first place.
+# If you enclose this program or parts of it in your software, it has to be
+# accompanied by the same license (see link). Do not violate the license.
+# If you do not agree to these terms, do not use it in the first place!
 #
 # OpenSSL, which is being used and maybe distributed via one of this projects'
 # web sites, is subject to their licensing: https://www.openssl.org/source/license.txt
@@ -30,13 +32,13 @@
 #
 # Please note:  USAGE WITHOUT ANY WARRANTY, THE SOFTWARE IS PROVIDED "AS IS".
 # USE IT AT your OWN RISK!
-# Seriously! The threat is you run this code on your computer and input could be /
-# is being supplied via untrusted sources.
+# Seriously! The threat is you run this code on your computer and untrusted input e.g.
+# could be supplied from a server you are querying.
 #
 # HISTORY:
 # Back in 2006 it all started with a few openssl commands...
 # That's because openssl is a such a good swiss army knife (see e.g.
-# wiki.openssl.org/index.php/Command_Line_Utilities) that it was difficult to resist
+# https://wiki.openssl.org/index.php/Command_Line_Utilities) that it was difficult to resist
 # wrapping some shell commands around it, which I used for my pen tests. This is how
 # everything started.
 # Now it has grown up, it has bash socket support for most features, which has been basically
@@ -51,6 +53,8 @@
 # cool and unique -- they are -- but probably you can achieve e.g. the same result with my favorite
 # interactive shell: zsh (zmodload zsh/net/socket -- checkout zsh/net/tcp) too! Oh, and btw.
 # ksh93 has socket support too.
+# Also bash is quite powerful if you use it appropriately: It can operate on patterns, process lines
+# and deal perfectly with regular expressions -- without external binaries.
 # /bin/bash though is way more often used within Linux and it's perfect for cross platform support.
 # MacOS X has it and also under Windows the MSYS2 extension or Cygwin as well as Bash on Windows (WSL)
 # has /bin/bash.
@@ -92,7 +96,7 @@ declare -r ALLOK=0                 # All is fine
 ########### Debugging helpers + profiling
 #
 declare -r PS4='|${LINENO}> \011${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
-DEBUGTIME=${DEBUGTIME:-false}                     # stackoverflow.com/questions/5014823/how-to-profile-a-bash-shell-script-slow-startup#20855353, profiling bash
+DEBUGTIME=${DEBUGTIME:-false}                     # https://stackoverflow.com/questions/5014823/how-to-profile-a-bash-shell-script-slow-startup#20855353
 DEBUG_ALLINONE=${DEBUG_ALLINONE:-false}           # true: do debugging in one screen (old behavior for testssl.sh and bash3's default
                                                   # false: needed for performance analysis or useful for just having an extra file
 DEBUG_ALLINONE=${SETX:-false}                     # SETX as a shortcut for old style debugging, overriding DEBUG_ALLINONE
@@ -111,86 +115,43 @@ fi
 
 ########### Traps! Make sure that temporary files are cleaned up after use in ANY case
 #
-trap "cleanup" QUIT EXIT
+trap "cleanup" EXIT
+trap "sig_cleanup" INT QUIT TERM
 trap "child_error" USR1
 
 
 ########### Internal definitions
 #
-declare -r VERSION="3.0rc5"
+declare -r VERSION="3.2rc1"
 declare -r SWCONTACT="dirk aet testssl dot sh"
-grep -E -q "dev|rc|beta" <<< "$VERSION" && \
+[[ "$VERSION" =~ dev|rc|beta ]] && \
      SWURL="https://testssl.sh/dev/" ||
      SWURL="https://testssl.sh/"
-declare -r CVS_REL="$(tail -5 "$0" | awk '/dirkw Exp/ { print $4" "$5" "$6}')"
-declare -r CVS_REL_SHORT="$(tail -5 "$0" | awk '/dirkw Exp/ { print $4 }')"
-if git log &>/dev/null; then
+if git rev-parse --is-inside-work-tree &>/dev/null; then
      declare -r GIT_REL="$(git log --format='%h %ci' -1 2>/dev/null | awk '{ print $1" "$2" "$3 }')"
-     declare -r GIT_REL_SHORT="$(git log --format='%h %ci' -1 2>/dev/null | awk '{ print $1 }')"
-     declare -r REL_DATE="$(git log --format='%h %ci' -1 2>/dev/null | awk '{ print $2 }')"
-else
-     declare -r REL_DATE="$(tail -5 "$0" | awk '/dirkw Exp/ { print $5 }')"
+     declare -r GIT_REL_SHORT="${GIT_REL%% *}"
+     declare -r REL_DATE_TIME="${GIT_REL#* }"
+     declare -r REL_DATE="${REL_DATE_TIME% *}"
 fi
 declare -r PROG_NAME="$(basename "$0")"
 declare -r RUN_DIR="$(dirname "$0")"
 declare -r SYSTEM="$(uname -s)"
 declare -r SYSTEMREV="$(uname -r)"
-SYSTEM2=""                                        # currently only being used for WSL = bash on windows
-TESTSSL_INSTALL_DIR="${TESTSSL_INSTALL_DIR:-""}"  # If you run testssl.sh and it doesn't find it necessary file automagically set TESTSSL_INSTALL_DIR
-CA_BUNDLES_PATH="${CA_BUNDLES_PATH:-""}"          # You can have your stores some place else
-ADDITIONAL_CA_FILES="${ADDITIONAL_CA_FILES:-""}"  # single file with a CA in PEM format or comma separated lists of them
-CIPHERS_BY_STRENGTH_FILE=""
-TLS_DATA_FILE=""                                  # mandatory file for socket-based handshakes
-OPENSSL_LOCATION=""
-HNAME="$(hostname)"
+HNAME="$(uname -n)"
 HNAME="${HNAME%%.*}"
-
 declare CMDLINE
+CMDLINE_PARSED=""                                 # This makes sure we don't let early fatal() write into files when files aren't created yet
 declare -r -a CMDLINE_ARRAY=("$@")                # When performing mass testing, the child processes need to be sent the
-declare -a MASS_TESTING_CMDLINE                   # command line in the form of an array (see #702 and http://mywiki.wooledge.org/BashFAQ/050).
-
-
-########### Some predefinitions: date, sed (we always use test and not try to determine
-#   capabilities by querying the OS)
-#
-HAS_GNUDATE=false
-HAS_FREEBSDDATE=false
-HAS_OPENBSDDATE=false
-if date -d @735275209 >/dev/null 2>&1; then
-     if date -r @735275209  >/dev/null 2>&1; then
-          # it can't do any conversion from a plain date output
-          HAS_OPENBSDDATE=true
-     else
-          HAS_GNUDATE=true
-     fi
-fi
-# FreeBSD and OS X date(1) accept "-f inputformat"
-date -j -f '%s' 1234567 >/dev/null 2>&1 && \
-     HAS_FREEBSDDATE=true
-
-echo A | sed -E 's/A//' >/dev/null 2>&1 && \
-     declare -r HAS_SED_E=true || \
-     declare -r HAS_SED_E=false
-
-########### Terminal defintions
-tty -s && \
-     declare -r INTERACTIVE=true || \
-     declare -r INTERACTIVE=false
-
-if [[ -z $TERM_WIDTH ]]; then                               # no batch file and no otherwise predefined TERM_WIDTH
-     if ! tput cols &>/dev/null || ! "$INTERACTIVE";then    # Prevent tput errors if running non interactive
-          export TERM_WIDTH=${COLUMNS:-80}
-     else
-          export TERM_WIDTH=${COLUMNS:-$(tput cols)}        # for custom line wrapping and dashes
-     fi
-fi
-TERM_CURRPOS=0                                              # custom line wrapping needs alter the current horizontal cursor pos
+declare -a MASS_TESTING_CMDLINE                   # command line in the form of an array (see #702 and https://mywiki.wooledge.org/BashFAQ/050).
+declare -a SKIP_TESTS=()                          # This array hold the checks to be skipped
 
 
 ########### Defining (and presetting) variables which can be changed
 #
-# Following variables make use of $ENV and can be used like "OPENSSL=<myprivate_path_to_openssl> ./testssl.sh <URI>"
-declare -x OPENSSL OPENSSL_TIMEOUT
+# Following variables make use of $ENV and can also be used like "<VAR>=<value> ./testssl.sh <URI>"
+declare -x OPENSSL
+OPENSSL_TIMEOUT=${OPENSSL_TIMEOUT:-""}  # Default connect timeout with openssl before we call the server side unreachable
+CONNECT_TIMEOUT=${CONNECT_TIMEOUT:-""}  # Default connect timeout with sockets before we call the server side unreachable
 PHONE_OUT=${PHONE_OUT:-false}           # Whether testssl can retrieve CRLs and OCSP
 FAST_SOCKET=${FAST_SOCKET:-false}       # EXPERIMENTAL feature to accelerate sockets -- DO NOT USE it for production
 COLOR=${COLOR:-2}                       # 3: Extra color (ciphers, curves), 2: Full color, 1: B/W only 0: No ESC at all
@@ -201,6 +162,8 @@ SNEAKY=${SNEAKY:-false}                 # is the referer and useragent we leave 
 QUIET=${QUIET:-false}                   # don't output the banner. By doing this you acknowledge usage term appearing in the banner
 SSL_NATIVE=${SSL_NATIVE:-false}         # we do per default bash sockets where possible "true": switch back to "openssl native"
 ASSUME_HTTP=${ASSUME_HTTP:-false}       # in seldom cases (WAF, old servers, grumpy SSL) service detection fails. "True" enforces HTTP checks
+BASICAUTH=${BASICAUTH:-""}              # HTTP basic auth credentials can be set here like user:pass
+REQHEADER=${REQHEADER:-""}              # HTTP custom request header can be set here like Header: content. Can be used multiple times.
 BUGS=${BUGS:-""}                        # -bugs option from openssl, needed for some BIG IP F5
 WARNINGS=${WARNINGS:-""}                # can be either off or batch
 DEBUG=${DEBUG:-0}                       # 1: normal output the files in /tmp/ are kept for further debugging purposes
@@ -218,14 +181,19 @@ CSVFILE="${CSVFILE:-""}"                # csvfile if used
 HTMLFILE="${HTMLFILE:-""}"              # HTML if used
 FNAME=${FNAME:-""}                      # file name to read commands from
 FNAME_PREFIX=${FNAME_PREFIX:-""}        # output filename prefix, see --outprefix
-APPEND=${APPEND:-false}                 # append to csv/json file instead of overwriting it
+APPEND=${APPEND:-false}                 # append to csv/json/html/log file
+OVERWRITE=${OVERWRITE:-false}           # overwriting csv/json/html/log file
 [[ -z "$NODNS" ]] && declare NODNS      # If unset it does all DNS lookups per default. "min" only for hosts or "none" at all
+NXCONNECT=${NXCONNECT:-invalid.}        # For WSL this helps avoiding DNS requests to "invalid." which windows seem to handle delayed
 HAS_IPv6=${HAS_IPv6:-false}             # if you have OpenSSL with IPv6 support AND IPv6 networking set it to yes
 ALL_CLIENTS=${ALL_CLIENTS:-false}       # do you want to run all client simulation form all clients supplied by SSLlabs?
 OFFENSIVE=${OFFENSIVE:-true}            # do you want to include offensive vulnerability tests which may cause blocking by an IDS?
+ADDTL_CA_FILES="${ADDTL_CA_FILES:-""}"  # single file with a CA in PEM format or comma separated lists of them
 
 ########### Tuning vars which cannot be set by a cmd line switch. Use instead e.g "HEADER_MAXSLEEP=10 ./testssl.sh <your_args_here>"
 #
+TESTSSL_INSTALL_DIR="${TESTSSL_INSTALL_DIR:-""}"  # If you run testssl.sh and it doesn't find it necessary file automagically set TESTSSL_INSTALL_DIR
+CA_BUNDLES_PATH="${CA_BUNDLES_PATH:-""}"          # You can have your CA stores some place else
 EXPERIMENTAL=${EXPERIMENTAL:-false}     # a development hook which allows us to disable code
 PROXY_WAIT=${PROXY_WAIT:-20}            # waiting at max 20 seconds for socket reply through proxy
 DNS_VIA_PROXY=${DNS_VIA_PROXY:-true}    # do DNS lookups via proxy. --ip=proxy reverses this
@@ -233,6 +201,7 @@ IGN_OCSP_PROXY=${IGN_OCSP_PROXY:-false} # Also when --proxy is supplied it is ig
 HEADER_MAXSLEEP=${HEADER_MAXSLEEP:-5}   # we wait this long before killing the process to retrieve a service banner / http header
 MAX_SOCKET_FAIL=${MAX_SOCKET_FAIL:-2}   # If this many failures for TCP socket connects are reached we terminate
 MAX_OSSL_FAIL=${MAX_OSSL_FAIL:-2}       # If this many failures for s_client connects are reached we terminate
+MAX_STARTTLS_FAIL=${MAX_STARTTLS_FAIL:-2}   # max number of STARTTLS handshake failures in plaintext phase
 MAX_HEADER_FAIL=${MAX_HEADER_FAIL:-2}   # If this many failures for HTTP GET are encountered we don't try again to get the header
 MAX_WAITSOCK=${MAX_WAITSOCK:-10}        # waiting at max 10 seconds for socket reply. There shouldn't be any reason to change this.
 CCS_MAX_WAITSOCK=${CCS_MAX_WAITSOCK:-5} # for the two CCS payload (each). There shouldn't be any reason to change this.
@@ -241,7 +210,7 @@ STARTTLS_SLEEP=${STARTTLS_SLEEP:-10}    # max time wait on a socket for STARTTLS
 FAST_STARTTLS=${FAST_STARTTLS:-true}    # at the cost of reliability decrease the handshakes for STARTTLS
 USLEEP_SND=${USLEEP_SND:-0.1}           # sleep time for general socket send
 USLEEP_REC=${USLEEP_REC:-0.2}           # sleep time for general socket receive
-HSTS_MIN=${HSTS_MIN:-179}               # >179 days is ok for HSTS
+HSTS_MIN=${HSTS_MIN:-180}               # >=180 days is ok for HSTS
      HSTS_MIN=$((HSTS_MIN * 86400))     # correct to seconds
 HPKP_MIN=${HPKP_MIN:-30}                # >=30 days should be ok for HPKP_MIN, practical hints?
      HPKP_MIN=$((HPKP_MIN * 86400))     # correct to seconds
@@ -250,13 +219,10 @@ DAYS2WARN2=${DAYS2WARN2:-30}            # days to warn before cert expires, thre
 VULN_THRESHLD=${VULN_THRESHLD:-1}       # if vulnerabilities to check >$VULN_THRESHLD we DON'T show a separate header line in the output each vuln. check
 UNBRACKTD_IPV6=${UNBRACKTD_IPV6:-false} # some versions of OpenSSL (like Gentoo) don't support [bracketed] IPv6 addresses
 NO_ENGINE=${NO_ENGINE:-false}           # if there are problems finding the (external) openssl engine set this to true
-declare -r CLIENT_MIN_PFS=5             # number of ciphers needed to run a test for PFS
+declare -r CLIENT_MIN_FS=5              # number of ciphers needed to run a test for FS
 CAPATH="${CAPATH:-/etc/ssl/certs/}"     # Does nothing yet (FC has only a CA bundle per default, ==> openssl version -d)
-GOOD_CA_BUNDLE=""                       # A bundle of CA certificates that can be used to validate the server's certificate
-CERTIFICATE_LIST_ORDERING_PROBLEM=false # Set to true if server sends a certificate list that contains a certificate
-                                        # that does not certify the one immediately preceding it. (See RFC 8446, Section 4.4.2)
-STAPLED_OCSP_RESPONSE=""
-HAS_DNS_SANS=false                      # Whether the certificate includes a subjectAltName extension with a DNS name or an application-specific identifier type.
+SOCAT="${SOCAT:-}"                      # For now we would need this for STARTTLS injection
+
 MEASURE_TIME_FILE=${MEASURE_TIME_FILE:-""}
 if [[ -n "$MEASURE_TIME_FILE" ]] && [[ -z "$MEASURE_TIME" ]]; then
      MEASURE_TIME=true
@@ -264,12 +230,21 @@ else
      MEASURE_TIME=${MEASURE_TIME:-false}
 fi
 DISPLAY_CIPHERNAMES="openssl"           # display OpenSSL ciphername (but both OpenSSL and RFC ciphernames in wide mode)
-declare -r UA_STD="TLS tester from $SWURL"
-declare -r UA_SNEAKY="Mozilla/5.0 (X11; Linux x86_64; rv:52.0) Gecko/20100101 Firefox/52.0"
+declare UA_STD="TLS tester from $SWURL"
+declare -r UA_SNEAKY="Mozilla/5.0 (X11; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0"
+SSL_RENEG_ATTEMPTS=${SSL_RENEG_ATTEMPTS:-6}       # number of times to check SSL Renegotiation
 
 ########### Initialization part, further global vars just being declared here
 #
+LC_COLLATE=""                           # ensures certain regex patterns work as expected and aren't localized, see setup_lc_collate()
+HAS_LOCALE=false
+SYSTEM2=""                              # currently only being used for WSL = bash on windows
 PRINTF=""                               # which external printf to use. Empty presets the internal one, see #1130
+CIPHERS_BY_STRENGTH_FILE=""
+TLS_DATA_FILE=""                        # mandatory file for socket-based handshakes
+OPENSSL=""                              # If you run this from GitHub it's ~/bin/openssl.$(uname).$(uname -m) otherwise /usr/bin/openssl
+OPENSSL2=""                             # When running from GitHub, this will be openssl version >=1.1.1 (auto determined)
+OPENSSL_LOCATION=""
 IKNOW_FNAME=false
 FIRST_FINDING=true                      # is this the first finding we are outputting to file?
 JSONHEADER=true                         # include JSON headers and footers in HTML file, if one is being created
@@ -280,25 +255,38 @@ GIVE_HINTS=false                        # give an additional info to findings
 SERVER_SIZE_LIMIT_BUG=false             # Some servers have either a ClientHello total size limit or a 128 cipher limit (e.g. old ASAs)
 MULTIPLE_CHECKS=false                   # need to know whether an MX record or a hostname resolves to multiple IPs to check
 CHILD_MASS_TESTING=${CHILD_MASS_TESTING:-false}
+PARENT_LOGFILE=""                       # logfile if mass testing and all output sent to a single file
+PARENT_JSONFILE=""                      # jsonfile if mass testing and all output sent to a single file
+PARENT_CSVFILE=""                       # csvfile if mass testing and all output sent to a single file
+PARENT_HTMLFILE=""                      # HTML if mass testing and all output sent to a single file
+TIMEOUT_CMD=""
 HAD_SLEPT=0
 NR_SOCKET_FAIL=0                        # Counter for socket failures
 NR_OSSL_FAIL=0                          # .. for OpenSSL connects
+NR_STARTTLS_FAIL=0                      # .. for STARTTLS failures
 NR_HEADER_FAIL=0                        # .. for HTTP_GET
 PROTOS_OFFERED=""                       # This keeps which protocol is being offered. See has_server_protocol().
+TLS12_CIPHER_OFFERED=""                 # This contains the hexcode of a cipher known to be supported by the server with TLS 1.2
 CURVES_OFFERED=""                       # This keeps which curves have been detected. Just for error handling
 KNOWN_OSSL_PROB=false                   # We need OpenSSL a few times. This variable is an indicator if we can't connect. Eases handling
-DETECTED_TLS_VERSION=""
+DETECTED_TLS_VERSION=""                 # .. as hex string, e.g. 0300 or 0303
+APP_TRAF_KEY_INFO=""                    # Information about the application traffic keys for a TLS 1.3 connection.
+TLS13_ONLY=false                        # Does the server support TLS 1.3 ONLY?
+OSSL_SHORTCUT=${OSSL_SHORTCUT:-false}   # Hack: if during the scan turns out the OpenSSL binary supports TLS 1.3 would be a better choice, this enables it.
 TLS_EXTENSIONS=""
+TLS13_CERT_COMPRESS_METHODS=""
+CERTIFICATE_TRANSPARENCY_SOURCE=""
+V2_HELLO_CIPHERSPEC_LENGTH=0
 declare -r NPN_PROTOs="spdy/4a2,spdy/3,spdy/3.1,spdy/2,spdy/1,http/1.1"
-# alpn_protos needs to be space-separated, not comma-seperated, including odd ones observed @ facebook and others, old ones like h2-17 omitted as they could not be found
+# alpn_protos needs to be space-separated, not comma-separated, including odd ones observed @ facebook and others, old ones like h2-17 omitted as they could not be found
 declare -r ALPN_PROTOs="h2 spdy/3.1 http/1.1 grpc-exp h2-fb spdy/1 spdy/2 spdy/3 stun.turn stun.nat-discovery webrtc c-webrtc ftp"
-declare -a SESS_RESUMPTION
 TEMPDIR=""
 TMPFILE=""
 ERRFILE=""
-CLIENT_AUTH=false
+CLIENT_AUTH="none"
+CLIENT_AUTH_CA_LIST=""
 TLS_TICKETS=false
-NO_SSL_SESSIONID=false
+NO_SSL_SESSIONID=true
 CERT_COMPRESSION=${CERT_COMPRESSION:-false}  # secret flag to set in addition to --devel for certificate compression
 HOSTCERT=""                                  # File with host certificate, without intermediate certificate
 HEADERFILE=""
@@ -319,24 +307,35 @@ NW_STR=""
 LEN_STR=""
 SNI=""
 POODLE=""                               # keep vulnerability status for TLS_FALLBACK_SCSV
+
+# Initialize OpenSSL variables (and others)
 OSSL_NAME=""                            # openssl name, in case of LibreSSL it's LibreSSL
 OSSL_VER=""                             # openssl version, will be auto-determined
 OSSL_VER_MAJOR=0
 OSSL_VER_MINOR=0
 OSSL_VER_APPENDIX="none"
 CLIENT_PROB_NO=1
-HAS_DH_BITS=${HAS_DH_BITS:-false}       # initialize openssl variables
+
+GOOD_CA_BUNDLE=""                       # A bundle of CA certificates that can be used to validate the server's certificate
+CERTIFICATE_LIST_ORDERING_PROBLEM=false # Set to true if server sends a certificate list that contains a certificate
+                                        # that does not certify the one immediately preceding it. (See RFC 8446, Section 4.4.2)
+STAPLED_OCSP_RESPONSE=""
+HAS_DNS_SANS=false                      # Whether the certificate includes a subjectAltName extension with a DNS name or an application-specific identifier type.
+HAS_DH_BITS=${HAS_DH_BITS:-false}       # These are variables which are set by find_openssl_binary()
+HAS_CURVES=false
 OSSL_SUPPORTED_CURVES=""
 HAS_SSL2=false
 HAS_SSL3=false
 HAS_TLS13=false
 HAS_X448=false
 HAS_X25519=false
+HAS_SIGALGS=false
 HAS_PKUTIL=false
 HAS_PKEY=false
 HAS_NO_SSL2=false
 HAS_NOSERVERNAME=false
 HAS_CIPHERSUITES=false
+HAS_SECLEVEL=false
 HAS_COMP=false
 HAS_NO_COMP=false
 HAS_ALPN=false
@@ -344,15 +343,32 @@ HAS_NPN=false
 HAS_FALLBACK_SCSV=false
 HAS_PROXY=false
 HAS_XMPP=false
+HAS_XMPP_SERVER=false
 HAS_POSTGRES=false
 HAS_MYSQL=false
 HAS_LMTP=false
+HAS_SIEVE=false
 HAS_NNTP=false
 HAS_IRC=false
 HAS_CHACHA20=false
 HAS_AES128_GCM=false
 HAS_AES256_GCM=false
 HAS_ZLIB=false
+HAS_UDS=false
+HAS_UDS2=false
+HAS_ENABLE_PHA=false
+HAS_DIG=false
+HAS_DIG_R=true
+DIG_R="-r"
+HAS_HOST=false
+HAS_DRILL=false
+HAS_NSLOOKUP=false
+HAS_IDN=false
+HAS_IDN2=false
+HAS_AVAHIRESOLVE=false
+HAS_DIG_NOIDNOUT=false
+HAS_XXD=false
+
 OSSL_CIPHERS_S=""
 PORT=443                                # unless otherwise auto-determined, see below
 NODE=""
@@ -376,11 +392,15 @@ STARTTLS_PROTOCOL=""
 OPTIMAL_PROTO=""                        # Need this for IIS6 (sigh) + OpenSSL 1.0.2, otherwise some handshakes will fail see
                                         # https://github.com/PeterMosmans/openssl/issues/19#issuecomment-100897892
 STARTTLS_OPTIMAL_PROTO=""               # Same for STARTTLS, see https://github.com/drwetter/testssl.sh/issues/188
+OPTIMAL_SOCKETS_PROTO=""                # Same for tls_sockets(). -- not yet used
+ALL_FAILED_SOCKETS=true                 # Set to true if all attempts to connect to server using tls_sockets/sslv2_sockets failed
 TLS_TIME=""                             # To keep the value of TLS server timestamp
 TLS_NOW=""                              # Similar
 TLS_DIFFTIME_SET=false                  # Tells TLS functions to measure the TLS difftime or not
 NOW_TIME=""
 HTTP_TIME=""
+HTTP_AGE=""                             # Age Header, see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Age + RFC 7234
+REQHEADERS=()
 GET_REQ11=""
 START_TIME=0                            # time in epoch when the action started
 END_TIME=0                              # .. ended
@@ -389,8 +409,16 @@ LAST_TIME=0                             # only used for performance measurements
 SERVER_COUNTER=0                        # Counter for multiple servers
 
 TLS_LOW_BYTE=""                         # For "secret" development stuff, see -q below
-HEX_CIPHER=""                           # "
+HEX_CIPHER=""                           #                -- " --
 
+GRADE_CAP=""                            # Keeps track of the current grading cap
+GRADE_CAP_REASONS=()                    # Keeps track of all the reasons why grades are capped
+GRADE_WARNINGS=()                       # Keeps track of all the grade warnings
+KEY_EXCH_SCORE=100                      # Keeps track of the score for category 2 "Key Exchange Strength"
+CIPH_STR_BEST=0                         # Keeps track of the best bit size for category 3 "Cipher Strength"
+CIPH_STR_WORST=100000                   # Keeps track of the worst bit size for category 3 "Cipher Strength"
+                                        # Intentionally set very high, so it can be set to 0, if necessary
+TRUSTED1ST=""                           # Contains the `-trusted_first` flag, if this version of openssl supports it
 
 ########### Global variables for parallel mass testing
 #
@@ -419,6 +447,44 @@ declare TLS_CIPHER_EXPORT=()
 declare TLS_CIPHER_OSSL_SUPPORTED=()
 declare TLS13_OSSL_CIPHERS="TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_CCM_SHA256:TLS_AES_128_CCM_8_SHA256"
 
+
+########### Some predefinitions: date, sed (we always use tests for binaries and NOT try to determine
+#   capabilities by querying the OS)
+#
+HAS_GNUDATE=false
+HAS_FREEBSDDATE=false
+HAS_OPENBSDDATE=false
+if date -d @735275209 >/dev/null 2>&1; then
+     if date -r @735275209  >/dev/null 2>&1; then
+          # It can't do any conversion from a plain date output.
+          HAS_OPENBSDDATE=true
+     else
+          HAS_GNUDATE=true
+     fi
+fi
+# FreeBSD and OS X date(1) accept "-f inputformat", so do newer OpenBSD versions >~ 6.6.
+date -j -f '%s' 1234567 >/dev/null 2>&1 && \
+     HAS_FREEBSDDATE=true
+
+echo A | sed -E 's/A//' >/dev/null 2>&1 && \
+     declare -r HAS_SED_E=true || \
+     declare -r HAS_SED_E=false
+
+########### Terminal definitions
+tty -s && \
+     declare -r INTERACTIVE=true || \
+     declare -r INTERACTIVE=false
+
+if [[ -z $TERM_WIDTH ]]; then                               # No batch file and no otherwise predefined TERM_WIDTH
+     if ! tput cols &>/dev/null || ! "$INTERACTIVE";then    # Prevent tput errors if running non interactive
+          export TERM_WIDTH=${COLUMNS:-80}
+     else
+          export TERM_WIDTH=${COLUMNS:-$(tput cols)}        # For custom line wrapping and dashes
+     fi
+fi
+TERM_CURRPOS=0                                              # Custom line wrapping needs alter the current horizontal cursor pos
+
+
 ########### Severity functions and globals
 #
 INFO=0
@@ -430,35 +496,35 @@ CRITICAL=4
 SEVERITY_LEVEL=0
 
 set_severity_level() {
-   local severity=$1
+     local severity=$1
 
-   if [[ "$severity" == LOW ]]; then
-           SEVERITY_LEVEL=$LOW
-   elif [[ "$severity" == MEDIUM ]]; then
-           SEVERITY_LEVEL=$MEDIUM
-   elif [[ "$severity" == HIGH ]]; then
-           SEVERITY_LEVEL=$HIGH
-   elif [[ "$severity" == CRITICAL ]]; then
-           SEVERITY_LEVEL=$CRITICAL
-   else
-        # WARN and FATAL will always be logged as the represent scanning problems
-        echo "Supported severity levels are LOW, MEDIUM, HIGH, CRITICAL!"
-        help 1
-   fi
+     if [[ "$severity" == LOW ]]; then
+          SEVERITY_LEVEL=$LOW
+     elif [[ "$severity" == MEDIUM ]]; then
+          SEVERITY_LEVEL=$MEDIUM
+     elif [[ "$severity" == HIGH ]]; then
+          SEVERITY_LEVEL=$HIGH
+     elif [[ "$severity" == CRITICAL ]]; then
+          SEVERITY_LEVEL=$CRITICAL
+     else
+          # WARN and FATAL will always be logged as the represent scanning problems
+          echo "Supported severity levels are LOW, MEDIUM, HIGH, CRITICAL!"
+          help 1
+     fi
 }
 
 show_finding() {
-   local severity=$1
+     local severity=$1
 
-   ( [[ "$severity" == DEBUG ]] ) ||
-   ( [[ "$severity" == INFO ]] && [[ $SEVERITY_LEVEL -le $INFO ]] ) ||
-   ( [[ "$severity" == OK ]] && [[ $SEVERITY_LEVEL -le $OK ]] ) ||
-   ( [[ "$severity" == LOW ]] && [[ $SEVERITY_LEVEL -le $LOW ]] ) ||
-   ( [[ "$severity" == MEDIUM ]] && [[ $SEVERITY_LEVEL -le $MEDIUM ]] ) ||
-   ( [[ "$severity" == HIGH ]] && [[ $SEVERITY_LEVEL -le $HIGH ]] ) ||
-   ( [[ "$severity" == CRITICAL ]] && [[ $SEVERITY_LEVEL -le $CRITICAL ]] ) ||
-   ( [[ "$severity" == WARN ]] ) ||
-   ( [[ "$severity" == FATAL ]] )
+     [[ "$severity" == DEBUG ]] ||
+     ( [[ "$severity" == INFO ]] && [[ $SEVERITY_LEVEL -le $INFO ]] ) ||
+     ( [[ "$severity" == OK ]] && [[ $SEVERITY_LEVEL -le $OK ]] ) ||
+     ( [[ "$severity" == LOW ]] && [[ $SEVERITY_LEVEL -le $LOW ]] ) ||
+     ( [[ "$severity" == MEDIUM ]] && [[ $SEVERITY_LEVEL -le $MEDIUM ]] ) ||
+     ( [[ "$severity" == HIGH ]] && [[ $SEVERITY_LEVEL -le $HIGH ]] ) ||
+     ( [[ "$severity" == CRITICAL ]] && [[ $SEVERITY_LEVEL -le $CRITICAL ]] ) ||
+     [[ "$severity" == WARN ]] ||
+     [[ "$severity" == FATAL ]]
 }
 
 ########### Output functions
@@ -468,39 +534,38 @@ html_reserved(){
      local output
      "$do_html" || return 0
      #sed  -e 's/\&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g" <<< "$1"
-     output="${1//\&/\&amp;}"
-     output="${output//</\&lt;}"
-     output="${output//>/\&gt;}"
-     output="${output//\"/\&quot;}"
-     output="${output//\'/\&apos;}"
-     tm_out "$output"
+     output="${1//&/&amp;}"
+     output="${output//</&lt;}"
+     output="${output//>/&gt;}"
+     output="${output//\"/&quot;}"
+     output="${output//\'/&apos;}"
+     printf -- "%s" "$output"
      return 0
 }
 
 html_out() {
      "$do_html" || return 0
-     [[ -n "$HTMLFILE" ]] && [[ ! -d "$HTMLFILE" ]] && printf -- "%b" "${1//%/%%}" >> "$HTMLFILE"
-     # here and other printf's: a little bit of sanitizing with bash internal search&replace -- otherwise printf will hiccup at '%'. '--' and %b do the rest.
+     [[ -n "$HTMLFILE" ]] && [[ ! -d "$HTMLFILE" ]] && printf -- "%b" "$1" >> "$HTMLFILE"
 }
 
 # This is intentionally the same.
-safe_echo()  { printf -- "%b" "${1//%/%%}"; }
-tm_out()     { printf -- "%b" "${1//%/%%}"; }
-tmln_out()   { printf -- "%b" "${1//%/%%}\n"; }
+safe_echo()  { printf -- "%b" "$1"; }
+tm_out()     { printf -- "%b" "$1"; }
+tmln_out()   { printf -- "%b" "$1\n"; }
 
-out()   { printf -- "%b" "${1//%/%%}"; html_out "$1"; }
-outln() { printf -- "%b" "${1//%/%%}\n"; html_out "$1\n"; }
+out()   { printf -- "%b" "$1"; html_out "$(html_reserved "$1")"; }
+outln() { printf -- "%b" "$1\n"; html_out "$(html_reserved "$1")\n"; }
 
 #TODO: Still no shell injection safe but if just run it from the cmd line: that's fine
 
-# Color print functions, see also http://www.tldp.org/HOWTO/Bash-Prompt-HOWTO/x329.html
+# Color print functions, see also https://www.tldp.org/HOWTO/Bash-Prompt-HOWTO/x329.html
 tm_liteblue()   { [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && tm_out "\033[0;32m$1" || tm_out "\033[0;34m$1" ) || tm_out "$1"; tm_off; }    # not yet used
-pr_liteblue()   { tm_liteblue "$1"; [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && html_out "<span style=\"color:#00cd00;\">$(html_reserved "$1")</span>" || html_out "<span style=\"color:#0000ee;\">$(html_reserved "$1")</span>" ) || html_out "$(html_reserved "$1")"; }
+pr_liteblue()   { tm_liteblue "$1"; [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && html_out "<span style=\"color:#008817;\">$(html_reserved "$1")</span>" || html_out "<span style=\"color:#0000ee;\">$(html_reserved "$1")</span>" ) || html_out "$(html_reserved "$1")"; }
 tmln_liteblue() { tm_liteblue "$1"; tmln_out; }
 prln_liteblue() { pr_liteblue "$1"; outln; }
 
 tm_blue()       { [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && tm_out "\033[1;32m$1" || tm_out "\033[1;34m$1" ) || tm_out "$1"; tm_off; }    # used for head lines of single tests
-pr_blue()       { tm_blue "$1"; [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && html_out "<span style=\"color:lime;font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "<span style=\"color:#5c5cff;font-weight:bold;\">$(html_reserved "$1")</span>" ) || html_out "$(html_reserved "$1")"; }
+pr_blue()       { tm_blue "$1"; [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && html_out "<span style=\"color:#008817;font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "<span style=\"color:#5c5cff;font-weight:bold;\">$(html_reserved "$1")</span>" ) || html_out "$(html_reserved "$1")"; }
 tmln_blue()     { tm_blue "$1"; tmln_out; }
 prln_blue()     { pr_blue "$1"; outln; }
 
@@ -513,61 +578,61 @@ prln_warning()  { pr_warning "$1"; outln; }
 tm_magenta()    { [[ "$COLOR" -ge 2 ]] && tm_out "\033[1;35m$1" || tm_underline "$1"; tm_off; }                   # fatal error: quitting because of this!
 tmln_magenta()  { tm_magenta "$1"; tmln_out; }
 # different as warning above?
-pr_magenta()    { tm_magenta "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:magenta;font-weight:bold;\">$(html_reserved "$1")</span>" || ( [[ "$COLOR" -eq 1 ]] && html_out "<u>$(html_reserved "$1")</u>" || html_out "$(html_reserved "$1")" ); }
+pr_magenta()    { tm_magenta "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:#be32d0;font-weight:bold;\">$(html_reserved "$1")</span>" || ( [[ "$COLOR" -eq 1 ]] && html_out "<u>$(html_reserved "$1")</u>" || html_out "$(html_reserved "$1")" ); }
 prln_magenta()  { pr_magenta "$1"; outln; }
 
 tm_litecyan()   { [[ "$COLOR" -ge 2 ]] && tm_out "\033[0;36m$1" || tm_out "$1"; tm_off; }                         # not yet used
 tmln_litecyan() { tm_litecyan "$1"; tmln_out; }
-pr_litecyan()   { tm_litecyan "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:#00cdcd;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
+pr_litecyan()   { tm_litecyan "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:#168092;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
 prln_litecyan() { pr_litecyan "$1"; outln; }
 
 tm_cyan()       { [[ "$COLOR" -ge 2 ]] && tm_out "\033[1;36m$1" || tm_out "$1"; tm_off; }                         # additional hint
 tmln_cyan()     { tm_cyan "$1"; tmln_out; }
-pr_cyan()       { tm_cyan "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:cyan;font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
+pr_cyan()       { tm_cyan "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:#0d7ea2;font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
 prln_cyan()     { pr_cyan "$1"; outln; }
 
 tm_litegrey()   { [[ "$COLOR" -ne 0 ]] && tm_out "\033[0;37m$1" || tm_out "$1"; tm_off; }                         # ... https://github.com/drwetter/testssl.sh/pull/600#issuecomment-276129876
 tmln_litegrey() { tm_litegrey "$1"; tmln_out; }                                                                   # not really usable on a black background, see ..
 prln_litegrey() { pr_litegrey "$1"; outln; }
-pr_litegrey()   { tm_litegrey "$1"; [[ "$COLOR" -ne 0 ]] && html_out "<span style=\"color:darkgray;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
+pr_litegrey()   { tm_litegrey "$1"; [[ "$COLOR" -ne 0 ]] && html_out "<span style=\"color:#71767a;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
 
 tm_grey()       { [[ "$COLOR" -ne 0 ]] && tm_out "\033[1;30m$1" || tm_out "$1"; tm_off; }
-pr_grey()       { tm_grey "$1"; [[ "$COLOR" -ne 0 ]] && html_out "<span style=\"color:#7f7f7f;font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
+pr_grey()       { tm_grey "$1"; [[ "$COLOR" -ne 0 ]] && html_out "<span style=\"color:#757575;font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
 tmln_grey()     { tm_grey "$1"; tmln_out; }
 prln_grey()     { pr_grey "$1"; outln; }
 
 tm_svrty_good()   { [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && tm_out "\033[0;34m$1" || tm_out "\033[0;32m$1" ) || tm_out "$1"; tm_off; }   # litegreen (liteblue), This is good
 tmln_svrty_good() { tm_svrty_good "$1"; tmln_out; }
-pr_svrty_good()   { tm_svrty_good "$1"; [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && html_out "<span style=\"color:#0000ee;\">$(html_reserved "$1")</span>" || html_out "<span style=\"color:#00cd00;\">$(html_reserved "$1")</span>" ) || html_out "$(html_reserved "$1")"; }
+pr_svrty_good()   { tm_svrty_good "$1"; [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && html_out "<span style=\"color:#0000ee;\">$(html_reserved "$1")</span>" || html_out "<span style=\"color:#008817;\">$(html_reserved "$1")</span>" ) || html_out "$(html_reserved "$1")"; }
 prln_svrty_good() { pr_svrty_good "$1"; outln; }
 
 tm_svrty_best()   { [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && tm_out "\033[1;34m$1" || tm_out "\033[1;32m$1" ) ||  tm_out "$1"; tm_off; }  # green (blue), This is the best
 tmln_svrty_best() { tm_svrty_best "$1"; tmln_out; }
-pr_svrty_best()   { tm_svrty_best "$1"; [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && html_out "<span style=\"color:#5c5cff;font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "<span style=\"color:lime;font-weight:bold;\">$(html_reserved "$1")</span>" ) || html_out "$(html_reserved "$1")"; }
+pr_svrty_best()   { tm_svrty_best "$1"; [[ "$COLOR" -ge 2 ]] && ( "$COLORBLIND" && html_out "<span style=\"color:#5c5cff;font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "<span style=\"color:#008817;font-weight:bold;\">$(html_reserved "$1")</span>" ) || html_out "$(html_reserved "$1")"; }
 prln_svrty_best() { pr_svrty_best "$1"; outln; }
 
 tm_svrty_low()     { [[ "$COLOR" -ge 2 ]] && tm_out "\033[1;33m$1" || tm_out "$1"; tm_off; }         # yellow brown | academic or minor problem
 tmln_svrty_low()   { tm_svrty_low "$1"; tmln_out; }
-pr_svrty_low()     { tm_svrty_low "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:#cdcd00;font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
+pr_svrty_low()     { tm_svrty_low "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:#a86437;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
 prln_svrty_low()   { pr_svrty_low "$1"; outln; }
 
 tm_svrty_medium()  { [[ "$COLOR" -ge 2 ]] && tm_out "\033[0;33m$1" || tm_out "$1"; tm_off; }         # brown | it is not a bad problem but you shouldn't do this
-pr_svrty_medium()  { tm_svrty_medium "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:#cd8000;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
+pr_svrty_medium()  { tm_svrty_medium "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:#c05600;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
 tmln_svrty_medium(){ tm_svrty_medium "$1"; tmln_out; }
 prln_svrty_medium(){ pr_svrty_medium "$1"; outln; }
 
 tm_svrty_high()    { [[ "$COLOR" -ge 2 ]] && tm_out "\033[0;31m$1" || tm_bold "$1"; tm_off; }               # litered
-pr_svrty_high()    { tm_svrty_high "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:#cd0000;\">$(html_reserved "$1")</span>" || ( [[ "$COLOR" -eq 1 ]] && html_out "<span style=\"font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")" ); }
+pr_svrty_high()    { tm_svrty_high "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:#e52207;\">$(html_reserved "$1")</span>" || ( [[ "$COLOR" -eq 1 ]] && html_out "<span style=\"font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")" ); }
 tmln_svrty_high()  { tm_svrty_high "$1"; tmln_out; }
 prln_svrty_high()  { pr_svrty_high "$1"; outln; }
 
 tm_svrty_critical()   { [[ "$COLOR" -ge 2 ]] && tm_out "\033[1;31m$1" || tm_bold "$1"; tm_off; }           # red
-pr_svrty_critical()   { tm_svrty_critical "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:red;font-weight:bold;\">$(html_reserved "$1")</span>" || ( [[ "$COLOR" -eq 1 ]] && html_out "<span style=\"font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")" ); }
+pr_svrty_critical()   { tm_svrty_critical "$1"; [[ "$COLOR" -ge 2 ]] && html_out "<span style=\"color:#e52207;font-weight:bold;\">$(html_reserved "$1")</span>" || ( [[ "$COLOR" -eq 1 ]] && html_out "<span style=\"font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")" ); }
 tmln_svrty_critical() { tm_svrty_critical "$1"; tmln_out; }
 prln_svrty_critical() { pr_svrty_critical "$1"; outln; }
 
 tm_deemphasize()      { tm_out "$1"; }                                                                   # hook for a weakened screen output, see #600
-pr_deemphasize()      { tm_deemphasize "$1"; html_out "<span style=\"color:darkgray;\">$(html_reserved "$1")</span>"; }
+pr_deemphasize()      { tm_deemphasize "$1"; html_out "<span style=\"color:#71767a;\">$(html_reserved "$1")</span>"; }
 tmln_deemphasize()    { tm_deemphasize "$1"; tmln_out; }
 prln_deemphasize()    { pr_deemphasize "$1"; outln; }
 
@@ -580,7 +645,9 @@ pr_bold()       { tm_bold "$1"; [[ "$COLOR" -ne 0 ]] && html_out "<span style=\"
 prln_bold()     { pr_bold "$1" ; outln; }
 
 NO_ITALICS=false
-if [[ $SYSTEM == OpenBSD ]]; then
+if [[ $TERM == screen ]]; then
+     NO_ITALICS=true
+elif [[ $SYSTEM == OpenBSD ]]; then
      NO_ITALICS=true
 elif [[ $SYSTEM == FreeBSD ]]; then
      if [[ ${SYSTEMREV%\.*} -le 9 ]]; then
@@ -608,7 +675,7 @@ pr_reverse()      { tm_reverse "$1"; [[ "$COLOR" -ne 0 ]] && html_out "<span sty
 pr_reverse_bold() { tm_reverse_bold "$1"; [[ "$COLOR" -ne 0 ]] && html_out "<span style=\"color:white;background-color:black;font-weight:bold;\">$(html_reserved "$1")</span>" || html_out "$(html_reserved "$1")"; }
 
 #pr_headline() { pr_blue "$1"; }
-#http://misc.flogisoft.com/bash/tip_colors_and_formatting
+#https://misc.flogisoft.com/bash/tip_colors_and_formatting
 
 #pr_headline() { [[ "$COLOR" -ge 2 ]] && out "\033[1;30m\033[47m$1" || out "$1"; tm_off; }
 tm_headline()   { [[ "$COLOR" -ne 0 ]] && tm_out "\033[1m\033[4m$1" || tm_out "$1"; tm_off; }
@@ -637,7 +704,7 @@ pr_url()     { tm_out "$1"; html_out "<a href=\"$1\" style=\"color:black;text-de
 pr_boldurl() { tm_bold "$1"; html_out "<a href=\"$1\" style=\"font-weight:bold;color:black;text-decoration:none;\">$1</a>"; }
 
 ### color switcher (see e.g. https://linuxtidbits.wordpress.com/2008/08/11/output-color-on-bash-scripts/
-###                          http://www.tldp.org/HOWTO/Bash-Prompt-HOWTO/x405.html
+###                          https://www.tldp.org/HOWTO/Bash-Prompt-HOWTO/x405.html
 ### no output support for HTML!
 set_color_functions() {
      local ncurses_tput=true
@@ -706,430 +773,7 @@ set_color_functions() {
      # FreeBSD 10 understands ESC codes like 'echo -e "\e[3mfoobar\e[23m"', but also no tput for italics
 }
 
-strip_quote() {
-     # remove color codes (see http://www.commandlinefu.com/commands/view/3584/remove-color-codes-special-characters-with-sed)
-     #  \', leading and all trailing spaces
-     sed -e "s,$(echo -e "\033")\[[0-9;]*[a-zA-Z],,g" \
-          -e "s/\"/\\'/g" \
-          -e 's/^ *//g' \
-          -e 's/ *$//g' <<< "$1"
-}
-
-# " deconfuse vim\'s syntax highlighting ;-)
-
-#################### JSON FILE FORMATTING ####################
-
-fileout_json_footer() {
-     if "$do_json"; then
-          if [[ "$SCAN_TIME" -eq 0 ]]; then
-               fileout_json_finding "scanTime" "WARN" "Scan interrupted" "" "" ""
-          elif [[ $SEVERITY_LEVEL -lt $LOW ]] ; then
-               # no scan time in --severity=low and above, also needed for Travis, hackish...
-               fileout_json_finding "scanTime" "INFO" $SCAN_TIME "" "" ""
-          fi
-          printf "]\n" >> "$JSONFILE"
-     fi
-     if "$do_pretty_json"; then
-          if [[ "$SCAN_TIME" -eq 0 ]]; then
-               echo -e "          ],\n                    \"scanTime\"  : \"Scan interrupted\"\n}" >> "$JSONFILE"
-          else
-               echo -e "          ],\n                    \"scanTime\"  : ${SCAN_TIME}\n}" >> "$JSONFILE"
-          fi
-     fi
-}
-
-fileout_json_section() {
-     case $1 in
-           0) echo -e    "                    \"pretest\"           : [" ;;
-           1) echo -e    "                    \"singleCipher\"      : [" ;;
-           2) echo -e ",\n                    \"protocols\"         : [" ;;
-           3) echo -e ",\n                    \"grease\"            : [" ;;
-           4) echo -e ",\n                    \"ciphers\"           : [" ;;
-           5) echo -e ",\n                    \"pfs\"               : [" ;;
-           6) echo -e ",\n                    \"serverPreferences\" : [" ;;
-           7) echo -e ",\n                    \"serverDefaults\"    : [" ;;
-           8) echo -e ",\n                    \"headerResponse\"    : [" ;;
-           9) echo -e ",\n                    \"vulnerabilities\"   : [" ;;
-          10) echo -e ",\n                    \"cipherTests\"       : [" ;;
-          11) echo -e ",\n                    \"browserSimulations\": [" ;;
-           *) echo "invalid section" ;;
-     esac
-}
-
-fileout_section_header() {
-    local str=""
-    "$2" && str="$(fileout_section_footer false)"
-    "$do_pretty_json" && FIRST_FINDING=true && (printf "%s%s\n" "$str" "$(fileout_json_section "$1")") >> "$JSONFILE"
-    SECTION_FOOTER_NEEDED=true
-}
-
-# arg1: whether to end object too
-fileout_section_footer() {
-     "$do_pretty_json" && printf "\n                    ]" >> "$JSONFILE"
-     "$do_pretty_json" && "$1" && echo -e "\n          }" >> "$JSONFILE"
-     SECTION_FOOTER_NEEDED=false
-}
-
-fileout_json_print_parameter() {
-     local parameter="$1"
-     local filler="$2"
-     local value="$3"
-     local not_last="$4"
-     local spaces=""
-
-     "$do_json" && \
-         spaces="              " || \
-         spaces="                                "
-     if [[ -n "$value" ]] || [[ "$parameter" == finding ]]; then
-          printf "%s%s%s%s" "$spaces" "\"$parameter\"" "$filler" ": \"$value\"" >> "$JSONFILE"
-          "$not_last" && printf ",\n" >> "$JSONFILE"
-     fi
-}
-
-fileout_json_finding() {
-     local target
-     local finding="$3"
-     local cve="$4"
-     local cwe="$5"
-     local hint="$6"
-
-     if "$do_json"; then
-          "$FIRST_FINDING" || echo -n "," >> "$JSONFILE"
-          echo -e "         {"  >> "$JSONFILE"
-          fileout_json_print_parameter "id" "           " "$1" true
-          fileout_json_print_parameter "ip" "           " "$NODE/$NODEIP" true
-          fileout_json_print_parameter "port" "         " "$PORT" true
-          fileout_json_print_parameter "severity" "     " "$2" true
-          fileout_json_print_parameter "cve" "          " "$cve" true
-          fileout_json_print_parameter "cwe" "          " "$cwe" true
-          "$GIVE_HINTS" && fileout_json_print_parameter "hint" "         " "$hint" true
-          fileout_json_print_parameter "finding" "      " "$finding" false
-          echo -e "\n          }" >> "$JSONFILE"
-    fi
-    if "$do_pretty_json"; then
-        if [[ "$1" == service ]]; then
-            if [[ $SERVER_COUNTER -gt 1 ]]; then
-                echo "          ," >> "$JSONFILE"
-            fi
-            target="$NODE"
-            $do_mx_all_ips && target="$URI"
-            echo -e "          {
-                    \"targetHost\"      : \"$target\",
-                    \"ip\"              : \"$NODEIP\",
-                    \"port\"            : \"$PORT\",
-                    \"rDNS\"            : \"$rDNS\",
-                    \"service\"         : \"$finding\"," >> "$JSONFILE"
-            $do_mx_all_ips && echo -e "                    \"hostname\"        : \"$NODE\","  >> "$JSONFILE"
-         else
-             ("$FIRST_FINDING" && echo -n "                            {" >> "$JSONFILE") || echo -n ",{" >> "$JSONFILE"
-             echo -e -n "\n"  >> "$JSONFILE"
-             fileout_json_print_parameter "id" "           " "$1" true
-             fileout_json_print_parameter "severity" "     " "$2" true
-             fileout_json_print_parameter "cve" "          " "$cve" true
-             fileout_json_print_parameter "cwe" "          " "$cwe" true
-             "$GIVE_HINTS" && fileout_json_print_parameter "hint" "         " "$hint" true
-             fileout_json_print_parameter "finding" "      " "$finding" false
-             echo -e -n "\n                           }" >> "$JSONFILE"
-         fi
-    fi
-}
-
-##################### FILE FORMATTING #########################
-
-fileout_pretty_json_banner() {
-     local target
-
-     if ! "$do_mass_testing"; then
-        [[ -z "$NODE" ]] && parse_hn_port "${URI}"
-        # NODE, URL_PATH, PORT, IPADDR and IP46ADDR is set now  --> wrong place
-        target="$NODE"
-        $do_mx_all_ips && target="$URI"
-     fi
-
-     echo -e "          \"Invocation\"  : \"$PROG_NAME $CMDLINE\",
-          \"at\"          : \"$HNAME:$OPENSSL_LOCATION\",
-          \"version\"     : \"$VERSION ${GIT_REL_SHORT:-$CVS_REL_SHORT} from $REL_DATE\",
-          \"openssl\"     : \"$OSSL_NAME $OSSL_VER from $OSSL_BUILD_DATE\",
-          \"startTime\"   : \"$START_TIME\",
-          \"scanResult\"  : ["
-}
-
-fileout_banner() {
-     if "$JSONHEADER"; then
-          # "$do_json" &&                    # here we maybe should add a banner, too
-          "$do_pretty_json" && (printf "%s\n" "$(fileout_pretty_json_banner)") >> "$JSONFILE"
-     fi
-}
-
-fileout_separator() {
-     if "$JSONHEADER"; then
-          "$do_pretty_json" && echo "          ," >> "$JSONFILE"
-          "$do_json" && echo -n "," >> "$JSONFILE"
-     fi
-}
-
-fileout_footer() {
-     if "$JSONHEADER"; then
-          fileout_json_footer
-     fi
-     # CSV: no footer
-     return 0
-}
-
-fileout_insert_warning() {
-     # See #815. Make sure we don't mess up the JSON PRETTY format if we complain with a client side warning.
-     # This should only be called if an *extra* warning will be printed (previously: 'fileout <extra_warning_ID> "WARN" '
-     # arg1: json identifier,  arg2: normally "WARN",  arg3: finding
-     #
-     # Also, we have to be careful with any form of mass testing so that a warning won't lead to an invalid JSON
-     # file. As any child will do any check as well (to be reconsidered later), we don't need also the parent to issue
-     # warnings upfront, see #1169. As a detection we'll use --file/-iL as in the children jobs it'll be removed:
-     [[ "$CMDLINE=" =~ --file ]] && return 0
-     [[ "$CMDLINE=" =~ -iL ]] && return 0
-     # Note we still have the message on screen + in HTML which is not as optimal as it could be
-
-     if "$do_pretty_json"; then
-          echo -e "          \"clientProblem${CLIENT_PROB_NO}\" : [" >>"$JSONFILE"
-          CLIENT_PROB_NO=$((CLIENT_PROB_NO + 1))
-          FIRST_FINDING=true       # make sure we don't have a comma here
-     fi
-     fileout "$1" "$2" "$3"
-     if "$do_pretty_json"; then
-          echo -e "\n          ]," >>"$JSONFILE"
-     fi
-}
-
-fileout_csv_finding() {
-     safe_echo "\"$1\"," >> "$CSVFILE"
-     safe_echo "\"$2\"," >> "$CSVFILE"
-     safe_echo "\"$3\"," >> "$CSVFILE"
-     safe_echo "\"$4\"," >> "$CSVFILE"
-     safe_echo "\"$5\"," >> "$CSVFILE"
-     safe_echo "\"$6\"," >> "$CSVFILE"
-     if "$GIVE_HINTS"; then
-          safe_echo "\"$7\"," >> "$CSVFILE"
-          safe_echo "\"$8\"\n" >> "$CSVFILE"
-     else
-          safe_echo "\"$7\"\n" >> "$CSVFILE"
-     fi
-}
-
-
-# ID, SEVERITY, FINDING, CVE, CWE, HINT
-fileout() {
-     local severity="$2"
-     local cve="$4"
-     local cwe="$5"
-     local hint="$6"
-
-     if ( "$do_pretty_json" && [[ "$1" == service ]] ) || show_finding "$severity"; then
-         local finding=$(strip_lf "$(newline_to_spaces "$(strip_quote "$3")")")           # additional quotes will mess up screen output
-         [[ -e "$JSONFILE" ]] && [[ ! -d "$JSONFILE" ]] && fileout_json_finding "$1" "$severity" "$finding" "$cve" "$cwe" "$hint"
-         "$do_csv" && [[ -n "$CSVFILE" ]] && [[ ! -d "$CSVFILE" ]] && \
-               fileout_csv_finding "$1" "$NODE/$NODEIP" "$PORT" "$severity" "$finding" "$cve" "$cwe" "$hint"
-     "$FIRST_FINDING" && FIRST_FINDING=false
-     fi
-}
-
-
-json_header() {
-     local fname_prefix
-     local filename_provided=false
-
-     [[ -n "$JSONFILE" ]] && [[ ! -d "$JSONFILE" ]] && filename_provided=true
-     # Similar to HTML: Don't create headers and footers in the following scenarios:
-     #  * no JSON/CSV output is being created.
-     #  * mass testing is being performed and each test will have its own file.
-     #  * this is an individual test within a mass test and all output is being placed in a single file.
-     ! "$do_json" && ! "$do_pretty_json" && JSONHEADER=false && return 0
-     "$do_mass_testing" && ! "$filename_provided" && JSONHEADER=false && return 0
-     "$CHILD_MASS_TESTING" && "$filename_provided" && JSONHEADER=false && return 0
-
-     if "$do_display_only"; then
-          fname_prefix="local-ciphers"
-     elif "$do_mass_testing"; then
-          :
-     elif "$do_mx_all_ips"; then
-          fname_prefix="${FNAME_PREFIX}mx-${URI}"
-     else
-          # ensure NODE, URL_PATH, PORT, IPADDR and IP46ADDR are set
-          ! "$filename_provided" && [[ -z "$NODE" ]] && parse_hn_port "${URI}"
-          fname_prefix="${FNAME_PREFIX}${NODE}_p${PORT}"
-     fi
-     if [[ -z "$JSONFILE" ]]; then
-          JSONFILE="$fname_prefix-$(date +"%Y%m%d-%H%M".json)"
-     elif [[ -d "$JSONFILE" ]]; then
-          JSONFILE="$JSONFILE/${fname_prefix}-$(date +"%Y%m%d-%H%M".json)"
-     fi
-     # Silently reset APPEND var if the file doesn't exist as otherwise it won't be created
-     if "$APPEND" && [[ ! -s "$JSONFILE" ]]; then
-          APPEND=false
-     fi
-     if "$APPEND"; then
-          JSONHEADER=false
-     else
-          [[ -s "$JSONFILE" ]] && fatal "non-empty \"$JSONFILE\" exists. Either use \"--append\" or (re)move it" $ERR_FCREATE
-          "$do_json" && echo "[" > "$JSONFILE"
-          "$do_pretty_json" && echo "{" > "$JSONFILE"
-     fi
-     return 0
-}
-
-
-csv_header() {
-     local fname_prefix
-     local filename_provided=false
-
-     [[ -n "$CSVFILE" ]] && [[ ! -d "$CSVFILE" ]] && filename_provided=true
-     # CSV similar to JSON
-     ! "$do_csv" && CSVHEADER=false && return 0
-     "$do_mass_testing" && ! "$filename_provided" && CSVHEADER=false && return 0
-     "$CHILD_MASS_TESTING" && "$filename_provided" && CSVHEADER=false && return 0
-
-     if "$do_display_only"; then
-          fname_prefix="local-ciphers"
-     elif "$do_mass_testing"; then
-          :
-     elif "$do_mx_all_ips"; then
-          fname_prefix="${FNAME_PREFIX}mx-${URI}"
-     else
-          # ensure NODE, URL_PATH, PORT, IPADDR and IP46ADDR are set
-          ! "$filename_provided" && [[ -z "$NODE" ]] && parse_hn_port "${URI}"
-          fname_prefix="${FNAME_PREFIX}${NODE}_p${PORT}"
-     fi
-     if [[ -z "$CSVFILE" ]]; then
-          CSVFILE="${fname_prefix}-$(date +"%Y%m%d-%H%M".csv)"
-     elif [[ -d "$CSVFILE" ]]; then
-          CSVFILE="$CSVFILE/${fname_prefix}-$(date +"%Y%m%d-%H%M".csv)"
-     fi
-     # Silently reset APPEND var if the file doesn't exist as otherwise it won't be created
-     if "$APPEND" && [[ ! -s "$CSVFILE" ]]; then
-          APPEND=false
-     fi
-     if "$APPEND"; then
-          CSVHEADER=false
-     else
-          [[ -s "$CSVFILE" ]] && fatal "non-empty \"$CSVFILE\" exists. Either use \"--append\" or (re)move it" $ERR_FCREATE
-          touch "$CSVFILE"
-          if "$GIVE_HINTS"; then
-               fileout_csv_finding "id" "fqdn/ip" "port" "severity" "finding" "cve" "cwe" "hint"
-          else
-               fileout_csv_finding "id" "fqdn/ip" "port" "severity" "finding" "cve" "cwe"
-          fi
-     fi
-     return 0
-}
-
-
-################# JSON FILE FORMATTING END. HTML START ####################
-
-html_header() {
-     local fname_prefix
-     local filename_provided=false
-
-     [[ -n "$HTMLFILE" ]] && [[ ! -d "$HTMLFILE" ]] && filename_provided=true
-     # Don't create HTML headers and footers in the following scenarios:
-     #  * HTML output is not being created.
-     #  * mass testing is being performed and each test will have its own HTML file.
-     #  * this is an individual test within a mass test and all HTML output is being placed in a single file.
-     ! "$do_html" && HTMLHEADER=false && return 0
-     "$do_mass_testing" && ! "$filename_provided" && HTMLHEADER=false && return 0
-     "$CHILD_MASS_TESTING" && "$filename_provided" && HTMLHEADER=false && return 0
-
-     if "$do_display_only"; then
-          fname_prefix="local-ciphers"
-     elif "$do_mass_testing"; then
-          :
-     elif "$do_mx_all_ips"; then
-          fname_prefix="${FNAME_PREFIX}mx-${URI}"
-     else
-          # ensure NODE, URL_PATH, PORT, IPADDR and IP46ADDR are set
-          ! "$filename_provided" && [[ -z "$NODE" ]] && parse_hn_port "${URI}"
-          fname_prefix="${FNAME_PREFIX}${NODE}_p${PORT}"
-     fi
-     if [[ -z "$HTMLFILE" ]]; then
-          HTMLFILE="$fname_prefix-$(date +"%Y%m%d-%H%M".html)"
-     elif [[ -d "$HTMLFILE" ]]; then
-          HTMLFILE="$HTMLFILE/$fname_prefix-$(date +"%Y%m%d-%H%M".html)"
-     fi
-     # Silently reset APPEND var if the file doesn't exist as otherwise it won't be created
-     if "$APPEND" && [[ ! -s "$HTMLFILE" ]]; then
-          APPEND=false
-     fi
-     if "$APPEND"; then
-          HTMLHEADER=false
-     else
-          [[ -s "$HTMLFILE" ]] && fatal "non-empty \"$HTMLFILE\" exists. Either use \"--append\" or (re)move it" $ERR_FCREATE
-          html_out "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n"
-          html_out "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\n"
-          html_out "<!-- This file was created with testssl.sh. https://testssl.sh -->\n"
-          html_out "<html xmlns=\"http://www.w3.org/1999/xhtml\">\n"
-          html_out "<head>\n"
-          html_out "<meta http-equiv=\"Content-Type\" content=\"application/xml+xhtml; charset=UTF-8\" />\n"
-          html_out "<title>testssl.sh</title>\n"
-          html_out "</head>\n"
-          html_out "<body>\n"
-          html_out "<pre>\n"
-     fi
-     return 0
-}
-
-html_banner() {
-     if "$CHILD_MASS_TESTING" && "$HTMLHEADER"; then
-          html_out "## Scan started as: \"$PROG_NAME $CMDLINE\"\n"
-          html_out "## at $HNAME:$OPENSSL_LOCATION\n"
-          html_out "## version testssl: $VERSION ${GIT_REL_SHORT:-$CVS_REL_SHORT} from $REL_DATE\n"
-          html_out "## version openssl: \"$OSSL_NAME $OSSL_VER\" from \"$OSSL_BUILD_DATE\")\n\n"
-     fi
-}
-
-html_footer() {
-     if "$HTMLHEADER"; then
-          html_out "</pre>\n"
-          html_out "</body>\n"
-          html_out "</html>\n"
-     fi
-     return 0
-}
-
-################# HTML FILE FORMATTING END ####################
-
-prepare_logging() {
-     # arg1: for testing mx records name we put a name of logfile in here, otherwise we get strange file names
-     local fname_prefix="$1"
-     local filename_provided=false
-
-     [[ -n "$LOGFILE" ]] && [[ ! -d "$LOGFILE" ]] && filename_provided=true
-
-     # Similar to html_header():
-     ! "$do_logging" && return 0
-     "$do_mass_testing" && ! "$filename_provided" && return 0
-     "$CHILD_MASS_TESTING" && "$filename_provided" && return 0
-
-     [[ -z "$fname_prefix" ]] && fname_prefix="${FNAME_PREFIX}${NODE}_p${PORT}"
-
-     if [[ -z "$LOGFILE" ]]; then
-          LOGFILE="$fname_prefix-$(date +"%Y%m%d-%H%M".log)"
-     elif [[ -d "$LOGFILE" ]]; then
-          # actually we were instructed to place all files in a DIR instead of the current working dir
-          LOGFILE="$LOGFILE/$fname_prefix-$(date +"%Y%m%d-%H%M".log)"
-     else
-          : # just for clarity: a log file was specified, no need to do anything else
-     fi
-
-     if ! "$APPEND"; then
-          [[ -s "$LOGFILE" ]] && fatal "non-empty \"$LOGFILE\" exists. Either use \"--append\" or (re)move it" $ERR_FCREATE
-     fi
-     tmln_out "## Scan started as: \"$PROG_NAME $CMDLINE\"" >>"$LOGFILE"
-     tmln_out "## at $HNAME:$OPENSSL_LOCATION" >>"$LOGFILE"
-     tmln_out "## version testssl: $VERSION ${GIT_REL_SHORT:-$CVS_REL_SHORT} from $REL_DATE" >>"$LOGFILE"
-     tmln_out "## version openssl: \"$OSSL_VER\" from \"$OSSL_BUILD_DATE\")\n" >>"$LOGFILE"
-     exec > >(tee -a -i "$LOGFILE")
-}
-
-################### FILE FORMATTING END #########################
-
-###### START helper function definitions ######
+###### START universal helper function definitions ######
 
 if [[ "${BASH_VERSINFO[0]}" == 3 ]]; then
      # older bash can do this only (MacOS X), even SLES 11, see #697
@@ -1145,21 +789,14 @@ get_last_char() {
 }
                          # Checking for last char. If already a separator supplied, we don't need an additional one
 debugme() {
-     [[ "$DEBUG" -ge 2 ]] && "$@"
+     [[ "$DEBUG" -ge 2 ]] && "$@" >&2
      return 0
 }
 
+debugme1() { [[ "$DEBUG" -ge 1 ]] && "$@" >&2; }
+
 hex2dec() {
      echo $((16#$1))
-}
-
-# convert 414243 into ABC
-hex2ascii() {
-          for (( i=0; i<${#1}; i+=2 )); do
-               # 2>/dev/null added because 'warning: command substitution: ignored null byte in input'
-               # --> didn't help though
-               printf "\x${1:$i:2}" 2>/dev/null
-          done
 }
 
 # convert decimal number < 256 to hex
@@ -1176,14 +813,10 @@ dec04hex() {
 
 # trim spaces for BSD and old sed
 count_lines() {
-     #echo "${$(wc -l <<< "$1")// /}"
-     # ^^ bad substitution under bash, zsh ok. For some reason this does the trick:
      echo $(wc -l <<< "$1")
 }
 
 count_words() {
-     #echo "${$(wc -w <<< "$1")// /}"
-     # ^^ bad substitution under bash, zsh ok. For some reason this does the trick:
      echo $(wc -w <<< "$1")
 }
 
@@ -1191,19 +824,125 @@ count_ciphers() {
      echo $(wc -w <<< "${1//:/ }")
 }
 
+count_chars() {
+     echo $(wc -c <<< "$1")
+}
+
+newline_to_spaces() {
+     tr '\n' ' ' <<< "$1" | sed 's/ $//'
+}
+
+colon_to_spaces() {
+     echo "${1//:/ }"
+}
+
+strip_lf() {
+     tr -d '\n' <<< "$1" | tr -d '\r'
+}
+
+strip_spaces() {
+     echo "${1// /}"
+}
+
+# https://web.archive.org/web/20121022051228/http://codesnippets.joyent.com/posts/show/1816
+strip_leading_space() {
+     printf "%s" "${1#"${1%%[![:space:]]*}"}"
+}
+strip_trailing_space() {
+     printf "%s" "${1%"${1##*[![:space:]]}"}"
+}
+
+is_number() {
+     [[ "$1" =~ ^[1-9][0-9]*$ ]] && \
+          return 0 || \
+          return 1
+}
+
+strip_quote() (
+     # Note: parens in function definition here force this into a separate
+     # shell, preventing extglob from affecting the code outside this function
+     shopt -s extglob
+     # Remove color codes
+     OUT=${1//$'\e['*([0-9;])[a-zA-Z]}
+     # Replace quotes
+     OUT=${OUT//\"/\'}
+     strip_leading_space "$(
+          strip_trailing_space "$OUT"
+     )"
+)
+
+is_ipv4addr() {
+     local octet="(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
+     local ipv4address="$octet\\.$octet\\.$octet\\.$octet"
+
+     [[ -z "$1" ]] && return 1
+
+     # Check that $1 contains an IPv4 address and nothing else
+     [[ "$1" =~ $ipv4address ]] && [[ "$1" == $BASH_REMATCH ]] && \
+          return 0 || \
+          return 1
+}
+
+# See RFC 4291, Section 2.2
+is_ipv6addr() {
+     local ipv6seg="[0-9A-Fa-f]{1,4}"
+     local octet="(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
+     local ipv4address="$octet\\.$octet\\.$octet\\.$octet"
+     local ipv6address
+
+     ipv6address="($ipv6seg:){7}(:|$ipv6seg)"
+     ipv6address+="|($ipv6seg:){6}(:|:$ipv6seg|$ipv4address)"
+     ipv6address+="|($ipv6seg:){5}(:|(:$ipv6seg){1,2}|:$ipv4address)"
+     ipv6address+="|($ipv6seg:){4}(:|(:$ipv6seg){1,3}|:($ipv6seg:){0,1}$ipv4address)"
+     ipv6address+="|($ipv6seg:){3}(:|(:$ipv6seg){1,4}|:($ipv6seg:){0,2}$ipv4address)"
+     ipv6address+="|($ipv6seg:){2}(:|(:$ipv6seg){1,5}|:($ipv6seg:){0,3}$ipv4address)"
+     ipv6address+="|($ipv6seg:){1}(:|(:$ipv6seg){1,6}|:($ipv6seg:){0,4}$ipv4address)"
+     ipv6address+="|:((:$ipv6seg){1,7}|:($ipv6seg:){0,5}$ipv4address)"
+
+     [[ -z "$1" ]] && return 1
+
+     # Check that $1 contains an IPv4 address and nothing else
+     [[ "$1" =~ $ipv6address ]] && [[ "$1" == $BASH_REMATCH ]] && \
+          return 0 || \
+          return 1
+}
+
+join_by() {
+     # joins an array using a custom delimiter https://web.archive.org/web/20201222183540/https://stackoverflow.com/questions/1527049/how-can-i-join-elements-of-an-array-in-bash/17841619#17841619
+     local d=$1
+     shift
+     local f=$1
+     shift
+     printf %s "$f" "${@/#/$d}";
+}
+
+###### END universal helper function definitions ######
+
+###### START ServerHello/OpenSSL/F5 function definitions ######
+
 #arg1: TLS 1.2 and below ciphers
 #arg2: TLS 1.3 ciphers
 #arg3: options (e.g., -V)
-actually_supported_ciphers() {
+actually_supported_osslciphers() {
+     local ciphers="$1"
      local tls13_ciphers="$TLS13_OSSL_CIPHERS"
+     local options="$3 "
 
-     [[ "$2" != "ALL" ]] && tls13_ciphers="$2"
-     if "$HAS_CIPHERSUITES"; then
-          $OPENSSL ciphers $3 $OSSL_CIPHERS_S -ciphersuites "$tls13_ciphers" "$1" 2>/dev/null || echo ""
-     elif [[ -n "$tls13_ciphers" ]]; then
-          $OPENSSL ciphers $3 $OSSL_CIPHERS_S "$tls13_ciphers:$1" 2>/dev/null || echo ""
+     [[ "$2" != ALL ]] && tls13_ciphers="$2"
+     "$HAS_SECLEVEL" && [[ -n "$ciphers" ]] && ciphers="@SECLEVEL=0:$1"
+     # With OpenSSL 1.0.2 the only way to exclude SSLv2 ciphers is to use the -tls1 option.
+     # However, with newer versions of OpenSSL, the -tls1 option excludes TLSv1.2 ciphers.
+     if "$HAS_SSL2"; then
+          options="${options//-no_ssl2 /-tls1 }"
      else
-          $OPENSSL ciphers $OSSL_CIPHERS_S $3 "$1" 2>/dev/null || echo ""
+          options="${options//-no_ssl2 /}"
+     fi
+     if "$HAS_CIPHERSUITES"; then
+          $OPENSSL ciphers $options $OSSL_CIPHERS_S -ciphersuites "$tls13_ciphers" "$ciphers" 2>/dev/null || echo ""
+     elif [[ -n "$tls13_ciphers" ]]; then
+          $OPENSSL ciphers $options $OSSL_CIPHERS_S "$tls13_ciphers:$ciphers" 2>/dev/null || echo ""
+     else
+          $OPENSSL ciphers $OSSL_CIPHERS_S $options "$ciphers" 2>/dev/null || echo ""
      fi
 }
 
@@ -1234,37 +973,19 @@ strip_inconsistent_ciphers() {
      return 0
 }
 
-newline_to_spaces() {
-     tr '\n' ' ' <<< "$1" | sed 's/ $//'
-}
-
-colon_to_spaces() {
-     echo "${1//:/ }"
-}
-
-strip_lf() {
-     tr -d '\n' <<< "$1" | tr -d '\r'
-}
-
-strip_spaces() {
-     echo "${1// /}"
-}
-
-# https://web.archive.org/web/20121022051228/http://codesnippets.joyent.com/posts/show/1816
-strip_leading_space() {
-     printf "%s" "${1#"${1%%[![:space:]]*}"}"
-}
-strip_trailing_space() {
-     printf "%s" "${1%"${1##*[![:space:]]}"}"
-}
-
-
 # retrieve cipher from ServerHello (via openssl)
 get_cipher() {
      local cipher=""
-     local server_hello="$(< "$1")"
+     local server_hello="$(cat -v "$1")"
+     # This and two other following instances are not best practice and normally a useless use of "cat", see
+     # https://web.archive.org/web/20160711205930/http://porkmail.org/era/unix/award.html#uucaletter
+     # However there seem to be cases where the preferred  $(< "$1")  logic has a problem.
+     # Especially with bash 3.2 (Mac OS X) and when on the server side binary chars
+     # are returned, see https://stackoverflow.com/questions/7427262/how-to-read-a-file-into-a-variable-in-shell#22607352
+     # and https://github.com/drwetter/testssl.sh/issues/1292
+     # Performance measurements showed no to barely measurable penalty (1s displayed in 9 tries).
 
-     if [[ "$server_hello" =~ Cipher\ *:\ ([A-Z0-9]+-[A-Za-z0-9\-]+|TLS_[A-Za-z0-9_]+) ]]; then
+     if [[ "$server_hello" =~ Cipher\ *:\ ([A-Z0-9]+-[A-Za-z0-9\-]+|TLS_[A-Za-z0-9_]+|SSL_[A-Za-z0-9_]+) ]]; then
           cipher="${BASH_REMATCH##* }"
      elif [[ "$server_hello" =~ (New|Reused)", "(SSLv[23]|TLSv1(\.[0-3])?(\/SSLv3)?)", Cipher is "([A-Z0-9]+-[A-Za-z0-9\-]+|TLS_[A-Za-z0-9_]+) ]]; then
           cipher="${BASH_REMATCH##* }"
@@ -1275,7 +996,7 @@ get_cipher() {
 # retrieve protocol from ServerHello (via openssl)
 get_protocol() {
      local protocol=""
-     local server_hello="$(< "$1")"
+     local server_hello="$(cat -v "$1")"
 
      if [[ "$server_hello" =~ Protocol\ *:\ (SSLv[23]|TLSv1(\.[0-3])?) ]]; then
           protocol="${BASH_REMATCH##* }"
@@ -1291,37 +1012,6 @@ get_protocol() {
           protocol="TLSv1.3"
      fi
      tm_out "$protocol"
-}
-
-is_number() {
-     [[ "$1" =~ ^[1-9][0-9]*$ ]] && \
-          return 0 || \
-          return 1
-}
-
-is_ipv4addr() {
-     local octet="(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
-     local ipv4address="$octet\\.$octet\\.$octet\\.$octet"
-
-     [[ -z "$1" ]] && return 1
-     # more than numbers, important for hosts like AAA.BBB.CCC.DDD.in-addr.arpa.DOMAIN.TLS
-     [[ -n $(tr -d '0-9\.' <<< "$1") ]] && return 1
-
-     grep -Eq "$ipv4address" <<< "$1" && \
-          return 0 || \
-          return 1
-}
-
-# a bit easier
-is_ipv6addr() {
-     [[ -z "$1" ]] && return 1
-     # less than 2x ":"
-     [[ $(count_lines "$(tr ':' '\n' <<< "$1")") -le 1 ]] && \
-          return 1
-     #check on chars allowed:
-     [[ -n "$(tr -d '0-9:a-fA-F ' <<< "$1" | sed -e '/^$/d')" ]] && \
-          return 1
-     return 0
 }
 
 # now some function for the integrated BIGIP F5 Cookie detector (see https://github.com/drwetter/F5-BIGIP-Decoder)
@@ -1346,8 +1036,8 @@ f5_ip_oldstyle() {
      local a b c d
 
      tmp="${1/%.*}"                     # until first dot
-     tmp="$(printf "%x8" "$tmp")"       # convert the whole thing to hex, now back to ip (reversed notation:
-     tmp="$(f5_hex2ip $tmp)"               # transform to ip with reversed notation
+     tmp="$(printf "%08x" "$tmp")"      # convert the whole thing to hex, now back to ip (reversed notation:
+     tmp="$(f5_hex2ip $tmp)"            # transform to ip with reversed notation
      IFS="." read -r a b c d <<< "$tmp" # reverse it
      echo $d.$c.$b.$a
 }
@@ -1361,7 +1051,7 @@ f5_port_decode() {
      tmp="$(printf "%04x" "${tmp}")"    # to hex
      if [[ ${#tmp} -eq 4 ]]; then
           :
-     elif [[ ${#tmp} -eq 3 ]]; then          # fill it up with leading zeros if needed
+     elif [[ ${#tmp} -eq 3 ]]; then     # fill it up with leading zeros if needed
           tmp=0${tmp}
      elif [[ ${#tmp} -eq 2 ]]; then
           tmp=00${tmp}
@@ -1369,9 +1059,542 @@ f5_port_decode() {
      echo $((16#${tmp:2:2}${tmp:0:2}))  # reverse order and convert it from hex to dec
 }
 
+###### END universal helper function definitions ######
 
 
-###### END helper function definitions ######
+###### START scoring function definitions ######
+
+# Sets the grade cap to ARG1
+# arg1: A grade to set ("A", "B", "C", "D", "E", "F", "M", or "T")
+# arg2: A reason why (e.g. "Vulnerable to CRIME")
+set_grade_cap() {
+     "$do_rating" || return 0
+     GRADE_CAP_REASONS+=("Grade capped to $1. $2")
+
+     # Always set special attributes. These are hard caps, due to name mismatch or cert being invalid
+     if [[ "$1" == T || "$1" == M ]]; then
+          GRADE_CAP="$1"
+     # Only keep track of the lowest grade cap, since a higher grade cap won't do anything (F = lowest, A = highest)
+     elif  [[ ! "$GRADE_CAP" > "$1" ]]; then
+          GRADE_CAP="$1"
+     fi
+     return 0
+}
+
+# Sets a grade warning, as specified by the grade specification
+# arg1: A warning message
+set_grade_warning() {
+     "$do_rating" || return 0
+     GRADE_WARNINGS+=("$1")
+     return 0
+}
+
+# Sets the score for Category 2 (Key Exchange Strength)
+# arg1: Short key algorithm ("EC", "DH", "RSA", ...), or "DHE" for ephemeral key size
+# arg2: key size (number of bits)
+set_key_str_score() {
+     local type=$1
+     local size=$2
+
+     "$do_rating" || return 0
+
+     if [[ $type == EC || $type == EdDSA ]]; then
+          if [[ $size -lt 110 ]] && [[ $KEY_EXCH_SCORE -ge 20 ]]; then
+               KEY_EXCH_SCORE=20
+          elif [[ $size -lt 123 ]] && [[ $KEY_EXCH_SCORE -ge 40 ]]; then
+               KEY_EXCH_SCORE=40
+          elif [[ $size -lt 163 ]] && [[ $KEY_EXCH_SCORE -ge 80 ]]; then
+               KEY_EXCH_SCORE=80
+          elif [[ $size -lt 225 ]] && [[ $KEY_EXCH_SCORE -ge 90 ]]; then
+               KEY_EXCH_SCORE=90
+          fi
+     else
+          if [[ $size -lt 512 ]] && [[ $KEY_EXCH_SCORE -ge 20 ]]; then
+               KEY_EXCH_SCORE=20
+          elif [[ $size -lt 1024 ]] && [[ $KEY_EXCH_SCORE -ge 40 ]]; then
+               KEY_EXCH_SCORE=40
+          elif [[ $size -lt 2048 ]] && [[ $KEY_EXCH_SCORE -ge 80 ]]; then
+               KEY_EXCH_SCORE=80
+          elif [[ $size -lt 4096 ]] && [[ $KEY_EXCH_SCORE -ge 90 ]]; then
+               KEY_EXCH_SCORE=90
+          fi
+     fi
+     return 0
+}
+
+# Sets the best and worst bit size key, used to grade Category 3 (Cipher Strength)
+# This function itself doesn't actually set a score; its just in the name to keep it logical (score == rating function)
+# arg1: a bit size
+set_ciph_str_score() {
+     local size=$1
+
+     "$do_rating" || return 0
+
+     [[ $size -gt $CIPH_STR_BEST ]] && CIPH_STR_BEST=$size
+     [[ $size -lt $CIPH_STR_WORST ]] && CIPH_STR_WORST=$size
+
+     [[ $size -lt 112 || $size == None ]] && set_grade_cap "F" "Using cipher suites weaker than 112 bits"
+
+     return 0
+}
+
+###### END scoring function definitions ######
+
+##################### START output file formatting functions #########################
+#################### START JSON file functions ####################
+
+fileout_json_footer() {
+     if "$do_json"; then
+          if [[ "$SCAN_TIME" -eq 0 ]]; then
+               fileout_json_finding "scanTime" "WARN" "Scan interrupted" "" "" ""
+          elif [[ $SEVERITY_LEVEL -lt $LOW ]] ; then
+               # no scan time in --severity=low and above, also needed for Travis, hackish...
+               fileout_json_finding "scanTime" "INFO" $SCAN_TIME "" "" ""
+          fi
+          printf "]\n" >> "$JSONFILE"
+     fi
+     if "$do_pretty_json"; then
+          if [[ "$SCAN_TIME" -eq 0 ]]; then
+               echo -e "          ],\n                    \"scanTime\"  : \"Scan interrupted\"\n}" >> "$JSONFILE"
+          else
+               echo -e "          ],\n                    \"scanTime\"  : ${SCAN_TIME}\n}" >> "$JSONFILE"
+          fi
+     fi
+}
+
+fileout_json_section() {
+     case $1 in
+           0) echo -e    "                    \"pretest\"           : [" ;;
+           1) echo -e    "                    \"singleCipher\"      : [" ;;
+           2) echo -e ",\n                    \"protocols\"         : [" ;;
+           3) echo -e ",\n                    \"grease\"            : [" ;;
+           4) echo -e ",\n                    \"ciphers\"           : [" ;;
+           5) echo -e ",\n                    \"serverPreferences\" : [" ;;
+           6) echo -e ",\n                    \"fs\"                : [" ;;
+           7) echo -e ",\n                    \"serverDefaults\"    : [" ;;
+           8) echo -e ",\n                    \"headerResponse\"    : [" ;;
+           9) echo -e ",\n                    \"vulnerabilities\"   : [" ;;
+          10) echo -e ",\n                    \"cipherTests\"       : [" ;;
+          11) echo -e ",\n                    \"browserSimulations\": [" ;;
+          12) echo -e ",\n                    \"rating\"            : [" ;;
+           *) echo "invalid section" ;;
+     esac
+}
+
+fileout_section_header() {
+     local str=""
+     "$2" && str="$(fileout_section_footer false)"
+     "$do_pretty_json" && FIRST_FINDING=true && (printf "%s%s\n" "$str" "$(fileout_json_section "$1")") >> "$JSONFILE"
+     SECTION_FOOTER_NEEDED=true
+}
+
+# arg1: whether to end object too
+fileout_section_footer() {
+     "$do_pretty_json" && FIRST_FINDING=false && printf "\n                    ]" >> "$JSONFILE"
+     "$do_pretty_json" && "$1" && echo -e "\n          }" >> "$JSONFILE"
+     SECTION_FOOTER_NEEDED=false
+}
+
+fileout_json_print_parameter() {
+     local parameter="$1"
+     local filler="$2"
+     local value="$3"
+     local not_last="$4"
+     local spaces=""
+
+     "$do_json" && \
+          spaces="              " || \
+          spaces="                                "
+     if [[ -n "$value" ]] || [[ "$parameter" == finding ]]; then
+          printf -- "%b%b%b%b" "$spaces" "\"$parameter\"" "$filler" ": \"$value\"" >> "$JSONFILE"
+          "$not_last" && printf ",\n" >> "$JSONFILE"
+     fi
+}
+
+fileout_json_finding() {
+     local target
+     local finding="$3"
+     local cve="$4"
+     local cwe="$5"
+     local hint="$6"
+
+     if "$do_json"; then
+          "$FIRST_FINDING" || echo -n "," >> "$JSONFILE"
+          echo -e "         {"  >> "$JSONFILE"
+          fileout_json_print_parameter "id" "           " "$1" true
+          fileout_json_print_parameter "ip" "           " "$NODE/$NODEIP" true
+          fileout_json_print_parameter "port" "         " "$PORT" true
+          fileout_json_print_parameter "severity" "     " "$2" true
+          fileout_json_print_parameter "cve" "          " "$cve" true
+          fileout_json_print_parameter "cwe" "          " "$cwe" true
+          "$GIVE_HINTS" && fileout_json_print_parameter "hint" "         " "$hint" true
+          fileout_json_print_parameter "finding" "      " "$finding" false
+          echo -e "\n          }" >> "$JSONFILE"
+     fi
+     if "$do_pretty_json"; then
+          if [[ "$1" == service ]]; then
+               if [[ $SERVER_COUNTER -gt 1 ]]; then
+                    echo "          ," >> "$JSONFILE"
+               elif ! "$FIRST_FINDING"; then
+                    echo -n "," >> "$JSONFILE"
+               fi
+               target="$NODE"
+               $do_mx_all_ips && target="$URI"
+               echo -e "          {
+                    \"targetHost\"      : \"$target\",
+                    \"ip\"              : \"$NODEIP\",
+                    \"port\"            : \"$PORT\",
+                    \"rDNS\"            : \"$rDNS\",
+                    \"service\"         : \"$finding\"," >> "$JSONFILE"
+               $do_mx_all_ips && echo -e "                    \"hostname\"        : \"$NODE\","  >> "$JSONFILE"
+          else
+               ("$FIRST_FINDING" && echo -n "                            {" >> "$JSONFILE") || echo -n ",{" >> "$JSONFILE"
+               echo -e -n "\n"  >> "$JSONFILE"
+               fileout_json_print_parameter "id" "           " "$1" true
+               fileout_json_print_parameter "severity" "     " "$2" true
+               fileout_json_print_parameter "cve" "          " "$cve" true
+               fileout_json_print_parameter "cwe" "          " "$cwe" true
+               "$GIVE_HINTS" && fileout_json_print_parameter "hint" "         " "$hint" true
+               fileout_json_print_parameter "finding" "      " "$finding" false
+               echo -e -n "\n                           }" >> "$JSONFILE"
+          fi
+     fi
+}
+
+fileout_pretty_json_banner() {
+     local target
+
+     if ! "$do_mass_testing"; then
+          [[ -z "$NODE" ]] && parse_hn_port "${URI}"
+          # NODE, URL_PATH, PORT, IPADDR and IP46ADDR is set now  --> wrong place
+          target="$NODE"
+          $do_mx_all_ips && target="$URI"
+     fi
+
+     echo -e "          \"Invocation\"  : \"$PROG_NAME $CMDLINE\",
+          \"at\"          : \"$HNAME:$OPENSSL_LOCATION\",
+          \"version\"     : \"$VERSION $GIT_REL_SHORT\",
+          \"openssl\"     : \"$OSSL_NAME $OSSL_VER from $OSSL_BUILD_DATE\",
+          \"startTime\"   : \"$START_TIME\",
+          \"scanResult\"  : ["
+}
+
+fileout_banner() {
+     if "$JSONHEADER"; then
+          # "$do_json" &&                    # here we maybe should add a banner, too
+          "$do_pretty_json" && FIRST_FINDING=true && (printf "%s\n" "$(fileout_pretty_json_banner)") >> "$JSONFILE"
+     fi
+}
+
+fileout_separator() {
+     if "$JSONHEADER"; then
+          "$do_pretty_json" && echo "          ," >> "$JSONFILE"
+          "$do_json" && echo -n "," >> "$JSONFILE"
+     fi
+}
+
+fileout_footer() {
+     if "$JSONHEADER"; then
+          fileout_json_footer
+     fi
+     # CSV: no footer
+     return 0
+}
+
+fileout_insert_warning() {
+     # See #815. Make sure we don't mess up the JSON PRETTY format if we complain with a client side warning.
+     # This should only be called if an *extra* warning will be printed (previously: 'fileout <extra_warning_ID> "WARN" '
+     # arg1: json identifier,  arg2: normally "WARN",  arg3: finding
+     #
+     # Also, we have to be careful with any form of mass testing so that a warning won't lead to an invalid JSON
+     # file. As any child will do any check as well (to be reconsidered later), we don't need also the parent to issue
+     # warnings upfront, see #1169. As a detection we'll use --file/-iL as in the children jobs it'll be removed:
+     [[ "$CMDLINE=" =~ --file ]] && return 0
+     [[ "$CMDLINE=" =~ -iL ]] && return 0
+     # Note we still have the message on screen + in HTML which is not as optimal as it could be
+
+     if "$do_pretty_json" && "$JSONHEADER"; then
+          echo -e "          \"clientProblem${CLIENT_PROB_NO}\" : [" >>"$JSONFILE"
+          CLIENT_PROB_NO=$((CLIENT_PROB_NO + 1))
+          FIRST_FINDING=true       # make sure we don't have a comma here
+     fi
+     fileout "$1" "$2" "$3"
+     if "$do_pretty_json"; then
+          if "$JSONHEADER"; then
+               echo -e "\n          ]," >>"$JSONFILE"
+          else
+               echo -e ", " >>"$JSONFILE"
+          fi
+          FIRST_FINDING=true
+     fi
+}
+
+fileout_csv_finding() {
+     safe_echo "\"$1\"," >> "$CSVFILE"
+     safe_echo "\"$2\"," >> "$CSVFILE"
+     safe_echo "\"$3\"," >> "$CSVFILE"
+     safe_echo "\"$4\"," >> "$CSVFILE"
+     safe_echo "\"$5\"," >> "$CSVFILE"
+     safe_echo "\"$6\"," >> "$CSVFILE"
+     if "$GIVE_HINTS"; then
+          safe_echo "\"$7\"," >> "$CSVFILE"
+          safe_echo "\"$8\"\n" >> "$CSVFILE"
+     else
+          safe_echo "\"$7\"\n" >> "$CSVFILE"
+     fi
+}
+
+
+# ID, SEVERITY, FINDING, CVE, CWE, HINT
+fileout() {
+     local severity="$2"
+     local cve="$4"
+     local cwe="$5"
+     local hint="$6"
+
+     if ( "$do_pretty_json" && [[ "$1" == service ]] ) || show_finding "$severity"; then
+          local finding=$(strip_lf "$(newline_to_spaces "$(strip_quote "$3")")")           # additional quotes will mess up screen output
+          finding="${finding//\\n/ }"
+          [[ -e "$JSONFILE" ]] && [[ ! -d "$JSONFILE" ]] && fileout_json_finding "$1" "$severity" "$finding" "$cve" "$cwe" "$hint"
+          "$do_csv" && [[ -n "$CSVFILE" ]] && [[ ! -d "$CSVFILE" ]] && \
+               fileout_csv_finding "$1" "$NODE/$NODEIP" "$PORT" "$severity" "$finding" "$cve" "$cwe" "$hint"
+          "$FIRST_FINDING" && FIRST_FINDING=false
+     fi
+}
+
+
+json_header() {
+     local fname_prefix
+     local filename_provided=false
+
+     if [[ -n "$PARENT_JSONFILE" ]]; then
+          [[ -n "$JSONFILE" ]] && fatal "Can't write to both $PARENT_JSONFILE and $JSONFILE" $ERR_CMDLINE
+          JSONFILE="$PARENT_JSONFILE"
+     fi
+     [[ -n "$JSONFILE" ]] && [[ ! -d "$JSONFILE" ]] && filename_provided=true
+     # Similar to HTML: Don't create headers and footers in the following scenarios:
+     #  * no JSON/CSV output is being created.
+     #  * mass testing is being performed and each test will have its own file.
+     #  * this is an individual test within a mass test and all output is being placed in a single file.
+     ! "$do_json" && ! "$do_pretty_json" && JSONHEADER=false && return 0
+     "$do_mass_testing" && ! "$filename_provided" && JSONHEADER=false && return 0
+     "$CHILD_MASS_TESTING" && "$filename_provided" && [[ -n "$PARENT_JSONFILE" ]] && JSONHEADER=false && return 0
+
+     if "$do_display_only"; then
+          fname_prefix="local-ciphers"
+     elif "$do_mass_testing"; then
+          :
+     elif "$do_mx_all_ips"; then
+          fname_prefix="${FNAME_PREFIX}mx-${URI}"
+     else
+          # ensure NODE, URL_PATH, PORT, IPADDR and IP46ADDR are set
+          ! "$filename_provided" && [[ -z "$NODE" ]] && parse_hn_port "${URI}"
+          fname_prefix="${FNAME_PREFIX}${NODE}_p${PORT}"
+     fi
+     if [[ -z "$JSONFILE" ]]; then
+          JSONFILE="$fname_prefix-$(date +"%Y%m%d-%H%M".json)"
+     elif [[ -d "$JSONFILE" ]]; then
+          JSONFILE="$JSONFILE/${fname_prefix}-$(date +"%Y%m%d-%H%M".json)"
+     fi
+     # Silently reset APPEND var if the file doesn't exist as otherwise it won't be created
+     if "$APPEND" && [[ ! -s "$JSONFILE" ]]; then
+          APPEND=false
+     fi
+     if "$APPEND"; then
+          JSONHEADER=false
+     else
+          if [[ -s "$JSONFILE" ]]; then
+               "$OVERWRITE" || fatal "non-empty \"$JSONFILE\" exists. Either use \"--append\" or (re)move it" $ERR_FCREATE
+               cp /dev/null "$JSONFILE"
+          fi
+          "$do_json" && echo "[" > "$JSONFILE"
+          "$do_pretty_json" && echo "{" > "$JSONFILE"
+     fi
+     return 0
+}
+
+
+csv_header() {
+     local fname_prefix
+     local filename_provided=false
+
+     if [[ -n "$PARENT_CSVFILE" ]]; then
+          [[ -n "$CSVFILE" ]] && fatal "Can't write to both $PARENT_CSVFILE and $CSVFILE" $ERR_CMDLINE
+          CSVFILE="$PARENT_CSVFILE"
+     fi
+     [[ -n "$CSVFILE" ]] && [[ ! -d "$CSVFILE" ]] && filename_provided=true
+     # CSV similar to JSON
+     ! "$do_csv" && CSVHEADER=false && return 0
+     "$do_mass_testing" && ! "$filename_provided" && CSVHEADER=false && return 0
+     "$CHILD_MASS_TESTING" && "$filename_provided" && [[ -n "$PARENT_CSVFILE" ]] && CSVHEADER=false && return 0
+
+     if "$do_display_only"; then
+          fname_prefix="local-ciphers"
+     elif "$do_mass_testing"; then
+          :
+     elif "$do_mx_all_ips"; then
+          fname_prefix="${FNAME_PREFIX}mx-${URI}"
+     else
+          # ensure NODE, URL_PATH, PORT, IPADDR and IP46ADDR are set
+          ! "$filename_provided" && [[ -z "$NODE" ]] && parse_hn_port "${URI}"
+          fname_prefix="${FNAME_PREFIX}${NODE}_p${PORT}"
+     fi
+     if [[ -z "$CSVFILE" ]]; then
+          CSVFILE="${fname_prefix}-$(date +"%Y%m%d-%H%M".csv)"
+     elif [[ -d "$CSVFILE" ]]; then
+          CSVFILE="$CSVFILE/${fname_prefix}-$(date +"%Y%m%d-%H%M".csv)"
+     fi
+     # Silently reset APPEND var if the file doesn't exist as otherwise it won't be created
+     if "$APPEND" && [[ ! -s "$CSVFILE" ]]; then
+          APPEND=false
+     fi
+     if "$APPEND"; then
+          CSVHEADER=false
+     else
+          if [[ -s "$CSVFILE" ]]; then
+               "$OVERWRITE" || fatal "non-empty \"$CSVFILE\" exists. Either use \"--append\" or (re)move it" $ERR_FCREATE
+               cp /dev/null "$CSVFILE"
+          fi
+          touch "$CSVFILE"
+          if "$GIVE_HINTS"; then
+               fileout_csv_finding "id" "fqdn/ip" "port" "severity" "finding" "cve" "cwe" "hint"
+          else
+               fileout_csv_finding "id" "fqdn/ip" "port" "severity" "finding" "cve" "cwe"
+          fi
+     fi
+     return 0
+}
+
+
+################# END JSON file functions. START HTML functions ####################
+
+html_header() {
+     local fname_prefix
+     local filename_provided=false
+
+     if [[ -n "$PARENT_HTMLFILE" ]]; then
+          [[ -n "$HTMLFILE" ]] && fatal "Can't write to both $PARENT_HTMLFILE and $HTMLFILE" $ERR_CMDLINE
+          HTMLFILE="$PARENT_HTMLFILE"
+     fi
+     [[ -n "$HTMLFILE" ]] && [[ ! -d "$HTMLFILE" ]] && filename_provided=true
+     # Don't create HTML headers and footers in the following scenarios:
+     #  * HTML output is not being created.
+     #  * mass testing is being performed and each test will have its own HTML file.
+     #  * this is an individual test within a mass test and all HTML output is being placed in a single file.
+     ! "$do_html" && HTMLHEADER=false && return 0
+     "$do_mass_testing" && ! "$filename_provided" && HTMLHEADER=false && return 0
+     "$CHILD_MASS_TESTING" && "$filename_provided" && [[ -n "$PARENT_HTMLFILE" ]] && HTMLHEADER=false && return 0
+
+     if "$do_display_only"; then
+          fname_prefix="local-ciphers"
+     elif "$do_mass_testing"; then
+          :
+     elif "$do_mx_all_ips"; then
+          fname_prefix="${FNAME_PREFIX}mx-${URI}"
+     else
+          # ensure NODE, URL_PATH, PORT, IPADDR and IP46ADDR are set
+          ! "$filename_provided" && [[ -z "$NODE" ]] && parse_hn_port "${URI}"
+          fname_prefix="${FNAME_PREFIX}${NODE}_p${PORT}"
+     fi
+     if [[ -z "$HTMLFILE" ]]; then
+          HTMLFILE="$fname_prefix-$(date +"%Y%m%d-%H%M".html)"
+     elif [[ -d "$HTMLFILE" ]]; then
+          HTMLFILE="$HTMLFILE/$fname_prefix-$(date +"%Y%m%d-%H%M".html)"
+     fi
+     # Silently reset APPEND var if the file doesn't exist as otherwise it won't be created
+     if "$APPEND" && [[ ! -s "$HTMLFILE" ]]; then
+          APPEND=false
+     fi
+     if "$APPEND"; then
+          HTMLHEADER=false
+     else
+          if [[ -s "$HTMLFILE" ]]; then
+               "$OVERWRITE" || fatal "non-empty \"$HTMLFILE\" exists. Either use \"--append\" or (re)move it" $ERR_FCREATE
+               cp /dev/null "$HTMLFILE"
+          fi
+          html_out "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n"
+          html_out "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\n"
+          html_out "<!-- This file was created with testssl.sh. https://testssl.sh -->\n"
+          html_out "<html xmlns=\"http://www.w3.org/1999/xhtml\">\n"
+          html_out "<head>\n"
+          html_out "<meta http-equiv=\"Content-Type\" content=\"application/xhtml+xml; charset=UTF-8\" />\n"
+          html_out "<title>testssl.sh</title>\n"
+          html_out "</head>\n"
+          html_out "<body>\n"
+          html_out "<pre>\n"
+     fi
+     return 0
+}
+
+html_banner() {
+     if "$CHILD_MASS_TESTING" && "$HTMLHEADER"; then
+          html_out "## Scan started as: \"$PROG_NAME $CMDLINE\"\n"
+          html_out "## at $HNAME:$OPENSSL_LOCATION\n"
+          html_out "## version testssl: $VERSION ${GIT_REL_SHORT} from $REL_DATE\n"
+          html_out "## version openssl: \"$OSSL_NAME $OSSL_VER\" from \"$OSSL_BUILD_DATE\")\n\n"
+     fi
+}
+
+html_footer() {
+     if "$HTMLHEADER"; then
+          html_out "</pre>\n"
+          html_out "</body>\n"
+          html_out "</html>\n"
+     fi
+     return 0
+}
+
+################# END HTML file functions ####################
+
+prepare_logging() {
+     # arg1: for testing mx records name we put a name of logfile in here, otherwise we get strange file names
+     local fname_prefix="$1"
+     local filename_provided=false
+
+     if [[ -n "$PARENT_LOGFILE" ]]; then
+          [[ -n "$LOGFILE" ]] && fatal "Can't write to both $PARENT_LOGFILE and $LOGFILE" $ERR_CMDLINE
+          LOGFILE="$PARENT_LOGFILE"
+     fi
+     [[ -n "$LOGFILE" ]] && [[ ! -d "$LOGFILE" ]] && filename_provided=true
+
+     # Similar to html_header():
+     ! "$do_logging" && return 0
+     "$do_mass_testing" && ! "$filename_provided" && return 0
+     "$CHILD_MASS_TESTING" && "$filename_provided" && [[ -n "$PARENT_LOGFILE" ]] && return 0
+
+     [[ -z "$fname_prefix" ]] && fname_prefix="${FNAME_PREFIX}${NODE}_p${PORT}"
+
+     if [[ -z "$LOGFILE" ]]; then
+          LOGFILE="$fname_prefix-$(date +"%Y%m%d-%H%M".log)"
+     elif [[ -d "$LOGFILE" ]]; then
+          # actually we were instructed to place all files in a DIR instead of the current working dir
+          LOGFILE="$LOGFILE/$fname_prefix-$(date +"%Y%m%d-%H%M".log)"
+     else
+          : # just for clarity: a log file was specified, no need to do anything else
+     fi
+
+     if ! "$APPEND"; then
+          if [[ -s "$LOGFILE" ]]; then
+               "$OVERWRITE" || fatal "non-empty \"$LOGFILE\" exists. Either use \"--append\" or (re)move it" $ERR_FCREATE
+               cp /dev/null "$LOGFILE"
+          fi
+     fi
+     tmln_out "## Scan started as: \"$PROG_NAME $CMDLINE\"" >>"$LOGFILE"
+     tmln_out "## at $HNAME:$OPENSSL_LOCATION" >>"$LOGFILE"
+     tmln_out "## version testssl: $VERSION ${GIT_REL_SHORT} from $REL_DATE" >>"$LOGFILE"
+     tmln_out "## version openssl: \"$OSSL_VER\" from \"$OSSL_BUILD_DATE\")\n" >>"$LOGFILE"
+     exec > >(tee -a -i "$LOGFILE")
+}
+
+################### END all file output functions #########################
+
+# prints a string of n spaces (n < 80)
+print_n_spaces() {
+     local -i n="$1"
+     local spaces="                                                                                "
+
+     out "${spaces:0:n}"
+}
 
 # prints out multiple lines in $1, left aligned by spaces in $2
 out_row_aligned() {
@@ -1427,7 +1650,7 @@ out_row_aligned_max_width() {
           tm_out "${text:0:i}"
           [[ $i -eq $len ]] && break
           len=$len-$i-1
-          i=$i+1
+          i+=1
           text="${text:i:len}"
           first=false
           [[ $len -eq 0 ]] && break
@@ -1444,26 +1667,24 @@ out_row_aligned_max_width_by_entry() {
 
      resp="$(out_row_aligned_max_width "$text" "$spaces" "$max_width")"
      while read -d " " entry; do
-        if [[ -n "$entry" ]]; then
-             $print_function "$entry"
-        elif [[ -n "$prev_entry" ]]; then
-             outln; out " "
-        fi
-        out " "
-        prev_entry="$entry"
-    done <<< "$resp"
+          if [[ -n "$entry" ]]; then
+               $print_function "$entry"
+          elif [[ -n "$prev_entry" ]]; then
+               outln; out " "
+          fi
+          out " "
+          prev_entry="$entry"
+     done <<< "$resp"
 }
 
 print_fixed_width() {
      local text="$1"
-     local -i i len width="$2"
+     local -i len width="$2"
      local print_function="$3"
 
      len=${#text}
      $print_function "$text"
-     for (( i=len; i <= width; i++ )); do
-          out " "
-     done
+     print_n_spaces "$((width-len+1))"
 }
 
 # saves $TMPFILE or file supplied in $2 under name "$TEMPDIR/$NODEIP.$1".
@@ -1480,7 +1701,7 @@ tmpfile_handle() {
 
 # arg1: line with comment sign, tabs and so on
 filter_input() {
-     sed -e 's/#.*$//' -e '/^$/d' <<< "$1" | tr -d '\n' | tr -d '\t'
+     sed -e 's/#.*$//' -e '/^$/d' <<< "$1" | tr -d '\n' | tr -d '\t' | tr -d '\r'
 }
 
 # Dl's any URL (arg1) via HTTP 1.1 GET from port 80, arg2: file to store http body.
@@ -1563,7 +1784,7 @@ http_get() {
 # There the environment variable is used automatically
 # Currently it is being used by check_pwnedkeys() only.
 http_get_header() {
-     local proto z
+     local proto
      local node="" query=""
      local dl="$2"
      local useragent="$UA_STD"
@@ -1588,7 +1809,7 @@ http_get_header() {
           # assume the GET protocol we query is using http -- http_proxy is the $ENV not for the connection TO
           # the proxy, but for the protocol we query THROUGH the proxy
           if [[ -z "$PROXY" ]]; then
-                headers="$(wget --no-proxy -q -S -U $''"$useragent"'' -O /dev/null "$1" 2>&1)"
+               headers="$(wget --no-proxy -q -S -U $''"$useragent"'' -O /dev/null "$1" 2>&1)"
           else
                if [[ -z "$http_proxy" ]]; then
                     headers="$(http_proxy=http://$PROXYIP:$PROXYPORT wget -q -S  -U $''"$useragent"'' -O /dev/null "$1" 2>&1)"
@@ -1693,9 +1914,9 @@ check_revocation_crl() {
      [[ -n "$GOOD_CA_BUNDLE" ]] || return 0
      scheme="$(tolower "${crl%%://*}")"
      # The code for obtaining CRLs only supports LDAP, HTTP, and HTTPS URLs.
-     [[ "$scheme" == "http" ]] || [[ "$scheme" == "https" ]] || [[ "$scheme" == "ldap" ]] || return 0
+     [[ "$scheme" == http ]] || [[ "$scheme" == https ]] || [[ "$scheme" == ldap ]] || return 0
      tmpfile=$TEMPDIR/${NODE}-${NODEIP}.${crl##*\/} || exit $ERR_FCREATE
-     if [[ "$scheme" == "ldap" ]]; then
+     if [[ "$scheme" == ldap ]]; then
           ldap_get "$crl" "$tmpfile" "$jsonID"
           success=$?
      else
@@ -1717,10 +1938,10 @@ check_revocation_crl() {
           fileout "$jsonID" "WARN" "conversion of CRL to PEM format failed"
           return 1
      fi
-     if grep -q "\-\-\-\-\-BEGIN CERTIFICATE\-\-\-\-\-" $TEMPDIR/intermediatecerts.pem; then
-          $OPENSSL verify -crl_check -CAfile <(cat $ADDITIONAL_CA_FILES "$GOOD_CA_BUNDLE" "${tmpfile%%.crl}.pem") -untrusted $TEMPDIR/intermediatecerts.pem $HOSTCERT &> "${tmpfile%%.crl}.err"
+     if grep -qe '-----BEGIN CERTIFICATE-----' $TEMPDIR/intermediatecerts.pem; then
+          $OPENSSL verify -crl_check -CAfile <(cat $ADDTL_CA_FILES "$GOOD_CA_BUNDLE" "${tmpfile%%.crl}.pem") -untrusted $TEMPDIR/intermediatecerts.pem $HOSTCERT &> "${tmpfile%%.crl}.err"
      else
-          $OPENSSL verify -crl_check -CAfile <(cat $ADDITIONAL_CA_FILES "$GOOD_CA_BUNDLE" "${tmpfile%%.crl}.pem") $HOSTCERT &> "${tmpfile%%.crl}.err"
+          $OPENSSL verify -crl_check -CAfile <(cat $ADDTL_CA_FILES "$GOOD_CA_BUNDLE" "${tmpfile%%.crl}.pem") $HOSTCERT &> "${tmpfile%%.crl}.err"
      fi
      if [[ $? -eq 0 ]]; then
           out ", "
@@ -1728,16 +1949,18 @@ check_revocation_crl() {
           fileout "$jsonID" "OK" "not revoked"
      else
           retcode=$(awk '/error [1-9][0-9]? at [0-9]+ depth lookup:/ { if (!found) {print $2; found=1} }' "${tmpfile%%.crl}.err")
-          if [[ "$retcode" == "23" ]]; then # see verify_retcode_helper()
+          if [[ "$retcode" == 23 ]]; then # see verify_retcode_helper()
                out ", "
                pr_svrty_critical "revoked"
                fileout "$jsonID" "CRITICAL" "revoked"
+               set_grade_cap "T" "Certificate revoked"
           else
                retcode="$(verify_retcode_helper "$retcode")"
                out " $retcode"
                retcode="${retcode#(}"
                retcode="${retcode%)}"
                fileout "$jsonID" "WARN" "$retcode"
+               set_grade_cap "T" "Issues with certificate $retcode"
                if [[ $DEBUG -ge 2 ]]; then
                     outln
                     cat "${tmpfile%%.crl}.err"
@@ -1765,38 +1988,41 @@ check_revocation_ocsp() {
           fileout "$jsonID" "WARN" "Revocation not tested as openssl ocsp doesn't support a proxy"
           return 0
      fi
-     grep -q "\-\-\-\-\-BEGIN CERTIFICATE\-\-\-\-\-" $TEMPDIR/intermediatecerts.pem || return 0
+     grep -qe '-----BEGIN CERTIFICATE-----' $TEMPDIR/intermediatecerts.pem || return 0
      tmpfile=$TEMPDIR/${NODE}-${NODEIP}.${uri##*\/} || exit $ERR_FCREATE
      if [[ -n "$stapled_response" ]]; then
-          > "$TEMPDIR/stapled_ocsp_response.dd"
-          asciihex_to_binary_file "$stapled_response" "$TEMPDIR/stapled_ocsp_response.dd"
+          hex2binary "$stapled_response" > "$TEMPDIR/stapled_ocsp_response.dd"
           $OPENSSL ocsp -no_nonce -respin "$TEMPDIR/stapled_ocsp_response.dd" \
                -issuer $TEMPDIR/hostcert_issuer.pem -verify_other $TEMPDIR/intermediatecerts.pem \
-               -CAfile <(cat $ADDITIONAL_CA_FILES "$GOOD_CA_BUNDLE") -cert $HOSTCERT -text &> "$tmpfile"
+               -CAfile <(cat $ADDTL_CA_FILES "$GOOD_CA_BUNDLE") -cert $HOSTCERT -text &> "$tmpfile"
      else
           host_header=${uri##http://}
           host_header=${host_header%%/*}
-          if [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == "1.1.0"* ]] || [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == "1.1.1"* ]]; then
+          if [[ "$OSSL_NAME" =~ LibreSSL ]]; then
+               host_header="-header Host ${host_header}"
+          elif [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == 1.1.0* ]] || [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == 1.1.1* ]] || \
+               [[ $OSSL_VER_MAJOR == 3 ]]; then
                host_header="-header Host=${host_header}"
           else
                host_header="-header Host ${host_header}"
           fi
           $OPENSSL ocsp -no_nonce ${host_header} -url "$uri" \
                -issuer $TEMPDIR/hostcert_issuer.pem -verify_other $TEMPDIR/intermediatecerts.pem \
-               -CAfile <(cat $ADDITIONAL_CA_FILES "$GOOD_CA_BUNDLE") -cert $HOSTCERT -text &> "$tmpfile"
+               -CAfile <(cat $ADDTL_CA_FILES "$GOOD_CA_BUNDLE") -cert $HOSTCERT -text &> "$tmpfile"
      fi
      if [[ $? -eq 0 ]] && grep -Fq "Response verify OK" "$tmpfile"; then
           response="$(grep -F "$HOSTCERT: " "$tmpfile")"
           response="${response#$HOSTCERT: }"
           response="${response%\.}"
-          if [[ "$response" =~ "good" ]]; then
+          if [[ "$response" =~ good ]]; then
                out ", "
                pr_svrty_good "not revoked"
                fileout "$jsonID" "OK" "not revoked"
-          elif [[ "$response" =~ "revoked" ]]; then
+          elif [[ "$response" =~ revoked ]]; then
                out ", "
                pr_svrty_critical "revoked"
                fileout "$jsonID" "CRITICAL" "revoked"
+               set_grade_cap "T" "Certificate revoked"
           else
                out ", "
                pr_warning "error querying OCSP responder"
@@ -1845,56 +2071,72 @@ wait_kill(){
      return 3                 # means killed
 }
 
-# parse_date date format input-format
-if "$HAS_GNUDATE"; then  # Linux and NetBSD
+# Convert date formats -- we always use GMT=UTC here
+# argv1: source date string
+# argv2: dest date string
+if "$HAS_GNUDATE"; then            # Linux and NetBSD
      parse_date() {
-          LC_ALL=C date -d "$1" "$2"
+          LC_ALL=C TZ=GMT date -d "$1" "$2"
      }
-elif "$HAS_FREEBSDDATE"; then # FreeBSD and OS X
+elif "$HAS_FREEBSDDATE"; then      # FreeBSD, OS X and newer (~6.6) OpenBSD versions
      parse_date() {
-          LC_ALL=C date -j -f "$3" "$2" "$1"
+          LC_ALL=C TZ=GMT date -j -f "$3" "$2" "$1"
      }
 elif "$HAS_OPENBSDDATE"; then
+     # We basically echo it as a conversion as we want it is too difficult. Approach for that would be:
+     #  printf '%s\n' "$1" | awk '{ printf "%04d%02d%02d\n", $4, $2, (index("JanFebMarAprMayJunJulAugSepOctNovDec",$1)+2)/3}'
+     # 4: year, 1: month, 2: day, $3: time  (e.g. "Dec 8 10:16:13 2016")
+     # This way we could also kind of convert args to epoch but as newer OpenBSDs "date" behave like FreeBSD
      parse_date() {
-          # we just echo it as a conversion as we want it is not possible
-          echo "$1"
+          local tmp=""
+          if [[ $2 == +%s* ]]; then
+               echo "${1// GMT}"
+          else
+               tmp="$(printf '%s\n' "$1" | awk '{ printf "%04d-%02d-%02d %08s\n", $4, (index("JanFebMarAprMayJunJulAugSepOctNovDec",$1)+2)/3, $2, $3 }')"
+               echo "${tmp%:*}"         # remove seconds, result now is in line with GNU date 2016-12-08 10:16
+          fi
      }
 else
      parse_date() {
-          LC_ALL=C date -j "$2" "$1"
+          LC_ALL=C TZ=GMT date -j "$2" "$1"
      }
 fi
 
-# arg1: An ASCII-HEX string
-# arg2: file name
-# Append $arg1 in binary format to $arg2
-asciihex_to_binary_file(){
-     local string="$1"
-     local file="$2"
-     local -i len
-     local -i i ip2 ip4 ip6 ip8 ip10 ip12 ip14
-     local -i remainder
 
-     len=${#string}
+# Print $arg1 in binary format. arg1: An ASCII-HEX string
+# The string represented by $arg1 may be binary data (a certificate or public
+# key) or a text string (e.g., ASCII-encoded text).
+hex2binary() {
+     local s="$1"
+     local -i i len remainder
+
+     len=${#s}
      [[ $len%2 -ne 0 ]] && return 1
 
-     for (( i=0; i <= len-16 ; i=i+16 )); do
-          ip2=$i+2; ip4=$i+4; ip6=$i+6; ip8=$i+8; ip10=$i+10; ip12=$i+12; ip14=$i+14
-          printf -- "\x${string:i:2}\x${string:ip2:2}\x${string:ip4:2}\x${string:ip6:2}\x${string:ip8:2}\x${string:ip10:2}\x${string:ip12:2}\x${string:ip14:2}" >> "$file"
-     done
+     if "$HAS_XXD"; then
+          xxd -r -p <<< "$s"
+     else
+          for (( i=0; i <= len-16 ; i+=16 )); do
+               printf -- "\x${s:i:2}\x${s:$((i+2)):2}\x${s:$((i+4)):2}\x${s:$((i+6)):2}\x${s:$((i+8)):2}\x${s:$((i+10)):2}\x${s:$((i+12)):2}\x${s:$((i+14)):2}"
+          done
 
-     ip2=$i+2; ip4=$i+4; ip6=$i+6; ip8=$i+8; ip10=$i+10; ip12=$i+12; ip14=$i+14
-     remainder=$len-$i
-     case $remainder in
-           2) printf -- "\x${string:i:2}" >> "$file" ;;
-           4) printf -- "\x${string:i:2}\x${string:ip2:2}" >> "$file" ;;
-           6) printf -- "\x${string:i:2}\x${string:ip2:2}\x${string:ip4:2}" >> "$file" ;;
-           8) printf -- "\x${string:i:2}\x${string:ip2:2}\x${string:ip4:2}\x${string:ip6:2}" >> "$file" ;;
-          10) printf -- "\x${string:i:2}\x${string:ip2:2}\x${string:ip4:2}\x${string:ip6:2}\x${string:ip8:2}" >> "$file" ;;
-          12) printf -- "\x${string:i:2}\x${string:ip2:2}\x${string:ip4:2}\x${string:ip6:2}\x${string:ip8:2}\x${string:ip10:2}" >> "$file" ;;
-          14) printf -- "\x${string:i:2}\x${string:ip2:2}\x${string:ip4:2}\x${string:ip6:2}\x${string:ip8:2}\x${string:ip10:2}\x${string:ip12:2}" >> "$file" ;;
-     esac
+          remainder=$((len-i))
+          case $remainder in
+                2) printf -- "\x${s:i:2}" ;;
+                4) printf -- "\x${s:i:2}\x${s:$((i+2)):2}" ;;
+                6) printf -- "\x${s:i:2}\x${s:$((i+2)):2}\x${s:$((i+4)):2}" ;;
+                8) printf -- "\x${s:i:2}\x${s:$((i+2)):2}\x${s:$((i+4)):2}\x${s:$((i+6)):2}" ;;
+               10) printf -- "\x${s:i:2}\x${s:$((i+2)):2}\x${s:$((i+4)):2}\x${s:$((i+6)):2}\x${s:$((i+8)):2}" ;;
+               12) printf -- "\x${s:i:2}\x${s:$((i+2)):2}\x${s:$((i+4)):2}\x${s:$((i+6)):2}\x${s:$((i+8)):2}\x${s:$((i+10)):2}" ;;
+               14) printf -- "\x${s:i:2}\x${s:$((i+2)):2}\x${s:$((i+4)):2}\x${s:$((i+6)):2}\x${s:$((i+8)):2}\x${s:$((i+10)):2}\x${s:$((i+12)):2}" ;;
+          esac
+     fi
      return 0
+}
+
+# convert 414243 into ABC
+hex2ascii() {
+     hex2binary $1
 }
 
 # arg1: text string
@@ -1920,14 +2162,14 @@ s_client_options() {
      local ciphers="notpresent" tls13_ciphers="notpresent"
 
      # Extract the TLSv1.3 ciphers and the non-TLSv1.3 ciphers
-     if [[ " $options " =~ " -cipher " ]]; then
+     if [[ " $options " =~ \ -cipher\  ]]; then
           ciphers="${options#* -cipher }"
           ciphers="${ciphers%% *}"
           options="${options//-cipher $ciphers/}"
           ciphers="${ciphers##\'}"
           ciphers="${ciphers%%\'}"
      fi
-     if [[ " $options " =~ " -ciphersuites " ]]; then
+     if [[ " $options " =~ \ -ciphersuites\  ]]; then
           tls13_ciphers="${options#* -ciphersuites }"
           tls13_ciphers="${tls13_ciphers%% *}"
           options="${options//-ciphersuites $tls13_ciphers/}"
@@ -1944,7 +2186,7 @@ s_client_options() {
      # server_name extension unless the -noservername option is provided. So, if
      # the command line doesn't include -servername and the -noservername option is
      # supported, then add -noservername to the options.
-     "$HAS_NOSERVERNAME" && [[ ! " $options " =~ " -servername " ]] && options+=" -noservername"
+     "$HAS_NOSERVERNAME" && [[ ! " $options " =~ \ -servername\  ]] && options+=" -noservername"
 
      # Newer versions of OpenSSL have dropped support for the -no_ssl2 option, so
      # remove any -no_ssl2 option if the option isn't supported. (Since versions of
@@ -1952,12 +2194,16 @@ s_client_options() {
      # isn't needed for these versions of OpenSSL.)
      ! "$HAS_NO_SSL2" && options="${options//-no_ssl2/}"
 
+     # The -enable_pha option causes the Post-Handshake Authentication extension to be sent.
+     # It is only supported by OpenSSL 1.1.1 and newer.
+     ! "$HAS_ENABLE_PHA" && options="${options//-enable_pha/}"
+
      # At least one server will fail under some circumstances if compression methods are offered.
      # So, only offer compression methods if necessary for the test. In OpenSSL 1.1.0 and
      # 1.1.1 compression is only offered if the "-comp" option is provided.
      # OpenSSL 1.0.0, 1.0.1, and 1.0.2 offer compression unless the "-no_comp" option is provided.
      # OpenSSL 0.9.8 does not support either the "-comp" or the "-no_comp" option.
-     if [[ " $options " =~ " -comp " ]]; then
+     if [[ " $options " =~ \ -comp\  ]]; then
           # Compression is needed for the test. So, remove "-comp" if it isn't supported, but
           # otherwise make no changes.
           ! "$HAS_COMP" && options="${options//-comp/}"
@@ -1979,6 +2225,13 @@ s_client_options() {
           options+=" -no_tls1_3"
      fi
 
+     if "$HAS_SECLEVEL"; then
+          if [[ "$ciphers" == notpresent ]]; then
+               [[ ! " $options " =~ \ -tls1_3\  ]] && ciphers="@SECLEVEL=0:ALL:COMPLEMENTOFALL"
+          elif [[ -n "$ciphers" ]]; then
+               ciphers="@SECLEVEL=0:$ciphers"
+          fi
+     fi
      if [[ "$ciphers" != notpresent ]] || [[ "$tls13_ciphers" != notpresent ]]; then
           if ! "$HAS_CIPHERSUITES"; then
                [[ "$ciphers" == notpresent ]] && ciphers=""
@@ -1999,26 +2252,50 @@ s_client_options() {
      # OpenSSL's name for secp256r1 is prime256v1. So whenever we encounter this
      # (e.g. client simulations) we replace it with the name which OpenSSL understands
      # This shouldn't be needed. We have this here as a last resort
-     if [[ "$1" =~ " -curves " ]]; then
+     if [[ "$1" =~ \ -curves\  ]]; then
+          ! "$HAS_CURVES" && options="${options// -curves / -groups }"
           [[ "$1" =~ secp192r1 ]] && options="${options//secp192r1/prime192v1}"
           [[ "$1" =~ secp256r1 ]] && options="${options//secp256r1/prime256v1}"
      fi
-     tm_out "$options"
+     # $keyopts may be set as an environment variable to enable client authentication (see PR #1383)
+     tm_out "$options $keyopts"
 }
 
 ###### check code starts here ######
 
 # determines whether the port has an HTTP service running or not (plain TLS, no STARTTLS)
-# arg1 could be the protocol determined as "working". IIS6 needs that
+# arg1 could be the protocol determined as "working". IIS6 needs that.
+#
 service_detection() {
      local -i was_killed
 
-     if ! "$CLIENT_AUTH"; then
-          # SNI is not standardized for !HTTPS but fortunately for other protocols s_client doesn't seem to care
-          printf "$GET_REQ11" | $OPENSSL s_client $(s_client_options "$1 -quiet $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE &
-          wait_kill $! $HEADER_MAXSLEEP
-          was_killed=$?
-          head $TMPFILE | grep -aq '^HTTP\/' && SERVICE=HTTP
+     if [[ "$CLIENT_AUTH" != required ]]; then
+          if ! "$HAS_TLS13" && "$TLS13_ONLY"; then
+               # Using sockets is a lot slower than using OpenSSL, and it is
+               # not as reliable, but if OpenSSL can't connect to the server,
+               # trying with sockets is better than not even trying.
+               tls_sockets "04" "$TLS13_CIPHER" "all+" "" "" false
+               if [[ $? -eq 0 ]]; then
+                    plaintext="$(tm_out "$GET_REQ11" | hexdump -v -e '16/1 "%02X"')"
+                    plaintext="${plaintext%%[!0-9A-F]*}"
+                    send_app_data "$plaintext"
+                    if [[ $? -eq 0 ]]; then
+                         receive_app_data true
+                         [[ $? -eq 0 ]] || > "$TMPFILE"
+                    else
+                         > "$TMPFILE"
+                    fi
+                    send_close_notify "$DETECTED_TLS_VERSION"
+               else
+                    > "$TMPFILE"
+               fi
+          else
+               # SNI is not standardized for !HTTPS but fortunately for other protocols s_client doesn't seem to care
+               tm_out "$GET_REQ11" | $OPENSSL s_client $(s_client_options "$1 -quiet $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE &
+               wait_kill $! $HEADER_MAXSLEEP
+               was_killed=$?
+          fi
+          head $TMPFILE | grep -aq '^HTTP/' && SERVICE=HTTP
           [[ -z "$SERVICE" ]] && head $TMPFILE | grep -waq "SMTP|ESMTP|Exim|IdeaSmtpServer|Kerio Connect|Postfix" && SERVICE=SMTP   # I know some overlap here
           [[ -z "$SERVICE" ]] && head $TMPFILE | grep -Ewaq "POP|Gpop|MailEnable POP3 Server|OK Dovecot|Cyrus POP3" && SERVICE=POP  # I know some overlap here
           [[ -z "$SERVICE" ]] && head $TMPFILE | grep -Ewaq "IMAP|IMAP4|Cyrus IMAP4IMAP4rev1|IMAP4REV1|Gimap" && SERVICE=IMAP       # I know some overlap here
@@ -2041,7 +2318,7 @@ service_detection() {
                out " $SERVICE, thus skipping HTTP specific checks"
                fileout "${jsonID}" "INFO" "$SERVICE, thus skipping HTTP specific checks"
                ;;
-          *)   if "$CLIENT_AUTH"; then
+          *)   if [[ "$CLIENT_AUTH" == required ]]; then
                     out " certificate-based authentication => skipping all HTTP checks"
                     echo "certificate-based authentication => skipping all HTTP checks" >$TMPFILE
                     fileout "${jsonID}" "INFO" "certificate-based authentication => skipping all HTTP checks"
@@ -2071,7 +2348,11 @@ service_detection() {
 #
 connectivity_problem() {
      if [[ $1 -lt $2 ]]; then
-          prln_warning " Oops: $3"
+          if "$TLS13_ONLY" && ! "$HAS_TLS13"; then
+               :
+          else
+               prln_warning " Oops: $3"
+          fi
           return 0
      fi
      if [[ $1 -ge $2 ]]; then
@@ -2106,32 +2387,29 @@ run_http_header() {
 
      pr_bold " HTTP Status Code           "
      [[ -z "$1" ]] && url="/" || url="$1"
-     if [[ "$SOCKETHEADER" == true ]]; then
-          :
-          #FIXME: would be great to complete the handshake and then e.g. tunnel HTTP over it
+     tm_out "$GET_REQ11" | $OPENSSL s_client $(s_client_options "$OPTIMAL_PROTO $BUGS -quiet -ign_eof -connect $NODEIP:$PORT $PROXY $SNI") >$HEADERFILE 2>$ERRFILE &
+     wait_kill $! $HEADER_MAXSLEEP
+     if [[ $? -eq 0 ]]; then
+          # Issue HTTP GET again as it properly finished within $HEADER_MAXSLEEP and didn't hang.
+          # Doing it again in the foreground to get an accurate header time
+          tm_out "$GET_REQ11" | $OPENSSL s_client $(s_client_options "$OPTIMAL_PROTO $BUGS -quiet -ign_eof -connect $NODEIP:$PORT $PROXY $SNI") >$HEADERFILE 2>$ERRFILE
+          NOW_TIME=$(date "+%s")
+          HTTP_TIME=$(awk -F': ' '/^date:/ { print $2 }  /^Date:/ { print $2 }' $HEADERFILE)
+          HTTP_AGE=$(awk -F': ' '/^[aA][gG][eE]: / { print $2 }' $HEADERFILE)
+          HAD_SLEPT=0
      else
-          printf "$GET_REQ11" | $OPENSSL s_client $(s_client_options "$OPTIMAL_PROTO $BUGS -quiet -ign_eof -connect $NODEIP:$PORT $PROXY $SNI") >$HEADERFILE 2>$ERRFILE &
-          wait_kill $! $HEADER_MAXSLEEP
-          if [[ $? -eq 0 ]]; then
-               # Issue HTTP GET again as it properly finished within $HEADER_MAXSLEEP and didn't hang.
-               # Doing it again in the foreground to get an accurate header time
-               printf "$GET_REQ11" | $OPENSSL s_client $(s_client_options "$OPTIMAL_PROTO $BUGS -quiet -ign_eof -connect $NODEIP:$PORT $PROXY $SNI") >$HEADERFILE 2>$ERRFILE
-               NOW_TIME=$(date "+%s")
+          # 1st GET request hung and needed to be killed. Check whether it succeeded anyway:
+          if grep -Eiaq "XML|HTML|DOCTYPE|HTTP|Connection" $HEADERFILE; then
+               # correct by seconds we slept, HAD_SLEPT comes from wait_kill()
+               NOW_TIME=$(($(date "+%s") - HAD_SLEPT))
                HTTP_TIME=$(awk -F': ' '/^date:/ { print $2 }  /^Date:/ { print $2 }' $HEADERFILE)
-               HAD_SLEPT=0
+               HTTP_AGE=$(awk -F': ' '/^[aA][gG][eE]: / { print $2 }' $HEADERFILE)
           else
-               # 1st GET request hung and needed to be killed. Check whether it succeeded anyway:
-               if grep -Eiaq "XML|HTML|DOCTYPE|HTTP|Connection" $HEADERFILE; then
-                    # correct by seconds we slept, HAD_SLEPT comes from wait_kill()
-                    NOW_TIME=$(($(date "+%s") - HAD_SLEPT))
-                    HTTP_TIME=$(awk -F': ' '/^date:/ { print $2 }  /^Date:/ { print $2 }' $HEADERFILE)
-               else
-                    prln_warning " likely HTTP header requests failed (#lines: $(wc -l $HEADERFILE | awk '{ print $1 }'))"
-                    [[ "$DEBUG" -lt 1 ]] & outln "Rerun with DEBUG>=1 and inspect $HEADERFILE\n"
-                    fileout "HTTP_status_code" "WARN" "HTTP header request failed"
-                    debugme cat $HEADERFILE
-                    ((NR_HEADER_FAIL++))
-               fi
+               prln_warning " likely HTTP header requests failed (#lines: $(wc -l $HEADERFILE | awk '{ print $1 }'))"
+               [[ "$DEBUG" -lt 1 ]] && outln "Rerun with DEBUG>=1 and inspect $HEADERFILE\n"
+               fileout "HTTP_status_code" "WARN" "HTTP header request failed"
+               debugme cat $HEADERFILE
+               ((NR_HEADER_FAIL++))
           fi
      fi
      if [[ ! -s $HEADERFILE ]]; then
@@ -2157,13 +2435,17 @@ run_http_header() {
      fi
 
      # Populate vars for HTTP time
-     debugme echo "$NOW_TIME: $HTTP_TIME"
+     [[ -n "$HTTP_AGE" ]] && HTTP_AGE="$(strip_lf "$HTTP_AGE")"
+     [[ -n "$HTTP_TIME" ]] && HTTP_TIME="$(strip_lf "$HTTP_TIME")"
+     debugme echo "NOW_TIME: $NOW_TIME | HTTP_AGE: $HTTP_AGE | HTTP_TIME: $HTTP_TIME"
 
-     # delete from pattern til the end. We ignore any leading spaces (e.g. www.amazon.de)
-     sed -e '/<HTML>/,$d' -e '/<html>/,$d' -e '/<\!DOCTYPE/,$d' -e '/<\!doctype/,$d' \
-         -e '/<XML/,$d' -e '/<xml/,$d' -e '/<\?XML/,$d' -e '/<?xml/,$d' $HEADERFILE >$HEADERFILE.tmp
-         # ^^^ Attention: filtering is for html body only as of now, doesn't work for other content yet
-     mv $HEADERFILE.tmp $HEADERFILE
+     # Quit on first empty line to catch 98% of the cases. Next pattern is there because the SEDs tested
+     # so far seem not to be fine with header containing x0d x0a (CRLF) which is the usual case.
+     # So we also trigger also on any sign on a single line which is not alphanumeric (plus _)
+     sed -e '/^$/q' -e '/^[^a-zA-Z_0-9]$/q' $HEADERFILE >$HEADERFILE.tmp
+     # Now to be more sure we delete from '<' or '{' maybe with a leading blank until the end
+     sed -e '/^ *<.*$/d' -e '/^ *{.*$/d'  $HEADERFILE.tmp >$HEADERFILE
+     debugme echo -e "---\n $(< $HEADERFILE) \n---"
 
      HTTP_STATUS_CODE=$(awk '/^HTTP\// { print $2 }' $HEADERFILE 2>>$ERRFILE)
      msg_thereafter=$(awk -F"$HTTP_STATUS_CODE" '/^HTTP\// { print $2 }' $HEADERFILE 2>>$ERRFILE)   # dirty trick to use the status code as a
@@ -2222,12 +2504,11 @@ run_http_header() {
 match_ipv4_httpheader() {
      local octet="(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
      local ipv4address="$octet\\.$octet\\.$octet\\.$octet"
-     local whitelisted_header="pagespeed|page-speed|^Content-Security-Policy|^MicrosoftSharePointTeamServices|^X-OWA-Version|^Location|^Server: PRTG"
+     local excluded_header="pagespeed|page-speed|^Content-Security-Policy|^MicrosoftSharePointTeamServices|^X-OWA-Version|^Location|^Server: "
      local your_ip_msg="(check if it's your IP address or e.g. a cluster IP)"
-     local result
+     local headers result
      local first=true
      local spaces="                              "
-     local count
      local jsonID="ipv4_in_header"
      local cwe="CWE-212"
      local cve=""
@@ -2236,26 +2517,24 @@ match_ipv4_httpheader() {
           run_http_header "$1" || return 1
      fi
 
-     # Whitelist some headers as they are mistakenly identified as ipv4 address. Issues #158, #323. Also facebook has a CSP rule for 127.0.0.1
-     if grep -Evai "$whitelisted_header" $HEADERFILE | grep -Eiq "$ipv4address"; then
+     # Exclude some headers as they are mistakenly identified as ipv4 address. Issues #158, #323.
+     # Also facebook used to have a CSP rule for 127.0.0.1
+     headers="$(grep -Evai "$excluded_header" $HEADERFILE)"
+     if [[ "$headers" =~ $ipv4address ]]; then
           pr_bold " IPv4 address in header       "
-          count=0
           while read line; do
-               result="$(grep -E "$ipv4address" <<< "$line")"
-               result=$(strip_lf "$result")
-               if [[ -n "$result" ]]; then
-                    if ! $first; then
-                         out "$spaces"
-                         your_ip_msg=""
-                    else
-                         first=false
-                    fi
-                    pr_svrty_medium "$result"
-                    outln "\n$spaces$your_ip_msg"
-                    fileout "$jsonID" "MEDIUM" "$result $your_ip_msg" "$cve" "$cwe"
+               [[ "$line" =~ $ipv4address ]] || continue
+               result=$(strip_lf "$line")
+               if ! $first; then
+                    out "$spaces"
+                    your_ip_msg=""
+               else
+                    first=false
                fi
-               count=$count+1
-          done < $HEADERFILE
+               pr_svrty_medium "$result"
+               outln "\n$spaces$your_ip_msg"
+               fileout "$jsonID" "MEDIUM" "$result $your_ip_msg" "$cve" "$cwe"
+          done <<< "$headers"
      fi
 }
 
@@ -2265,7 +2544,7 @@ run_http_date() {
      local spaces="                              "
      jsonID="HTTP_clock_skew"
 
-     if [[ $SERVICE != "HTTP" ]] || "$CLIENT_AUTH"; then
+     if [[ $SERVICE != HTTP ]] || [[ "$CLIENT_AUTH" == required ]]; then
           return 0
      fi
      if [[ ! -s $HEADERFILE ]]; then
@@ -2273,26 +2552,36 @@ run_http_date() {
      fi
      pr_bold " HTTP clock skew              "
      if [[ -n "$HTTP_TIME" ]]; then
-          HTTP_TIME="$(strip_lf "$HTTP_TIME")"
           if "$HAS_OPENBSDDATE"; then
-               # we can't normalize the date under OpenBSD thus no subtraction is possible
+               # We won't normalize the date under an OpenBSD thus no subtraction is feasible
                outln "remote: $HTTP_TIME"
-               out "${spaces}local:  $(date)"
-               fileout "$jsonID" "INFO" "$HTTP_TIME - $(date)"
+               out "${spaces}local:  $(LC_ALL=C TZ=GMT date "+%a, %d %b %Y %T %Z")"
+               fileout "$jsonID" "INFO" "$HTTP_TIME - $(TZ=GMT date "+%a, %d %b %Y %T %Z")"
           else
+               # modifying the global from string to a number
                HTTP_TIME="$(parse_date "$HTTP_TIME" "+%s" "%a, %d %b %Y %T %Z" 2>>$ERRFILE)"
-               difftime=$((HTTP_TIME - NOW_TIME))
+               difftime=$((HTTP_TIME + HTTP_AGE - NOW_TIME))
                [[ $difftime != "-"* ]] && [[ $difftime != "0" ]] && difftime="+$difftime"
                # process was killed, so we need to add an error
                [[ $HAD_SLEPT -ne 0 ]] && difftime="$difftime (± 1.5)"
                out "$difftime sec from localtime";
                fileout "$jsonID" "INFO" "$difftime seconds from localtime"
           fi
+          if [[ -n "$HTTP_TIME" ]]; then
+               # out " (HTTP header time: $HTTP_TIME)"
+               fileout "HTTP_headerTime" "INFO" "$HTTP_TIME"
+          fi
+          if [[ -n "$HTTP_AGE" ]]; then
+               outln
+               pr_bold " HTTP Age"
+               out " (RFC 7234)          $HTTP_AGE"
+               fileout "HTTP_headerAge" "INFO" "$HTTP_AGE seconds"
+          fi
      else
           out "Got no HTTP time, maybe try different URL?";
           fileout "$jsonID" "INFO" "Got no HTTP time, maybe try different URL?"
      fi
-     debugme tm_out ", epoch: $HTTP_TIME"
+     debugme tm_out ", HTTP_TIME + HTTP_AGE in epoch: $HTTP_TIME / $HTTP_AGE"
      outln
      match_ipv4_httpheader "$1"
      return 0
@@ -2314,12 +2603,12 @@ match_httpheader_key() {
      local first=$4
      local -i nr=0
 
-     nr=$(grep -Eaicw "^ *$key:" $HEADERFILE)
+     nr=$(grep -Eaic "^ *$key:" $HEADERFILE)
      if [[ $nr -eq 0 ]]; then
           HEADERVALUE=""
           return 0
      elif [[ $nr -eq 1 ]]; then
-          HEADERVALUE="$(grep -Eiaw "^ *$key:" $HEADERFILE)"
+          HEADERVALUE="$(grep -Eia "^ *$key:" $HEADERFILE)"
           HEADERVALUE="${HEADERVALUE#*:}"                        # remove leading part=key to colon
           HEADERVALUE="$(strip_lf "$HEADERVALUE")"
           HEADERVALUE="$(strip_leading_space "$HEADERVALUE")"
@@ -2332,7 +2621,7 @@ match_httpheader_key() {
           pr_svrty_medium " ${nr}x"
           outln " -- checking first one only"
           out "$spaces"
-          HEADERVALUE="$(fgrep -Faiw "$key:" $HEADERFILE | head -1)"
+          HEADERVALUE="$(grep -Fai "$key:" $HEADERFILE | head -1)"
           HEADERVALUE="${HEADERVALUE#*:}"
           HEADERVALUE="$(strip_lf "$HEADERVALUE")"
           HEADERVALUE="$(strip_leading_space "$HEADERVALUE")"
@@ -2375,7 +2664,7 @@ run_hsts() {
      match_httpheader_key "Strict-Transport-Security" "HSTS" "$spaces" "true"
      if [[ $? -ne 0 ]]; then
           echo "$HEADERVALUE" >$TMPFILE
-          hsts_age_sec=$(sed -e 's/[^0-9]*//g' <<< $HEADERVALUE)
+          hsts_age_sec="${HEADERVALUE//[^0-9]/}"
           debugme echo "hsts_age_sec: $hsts_age_sec"
           if [[ -n $hsts_age_sec ]]; then
                hsts_age_days=$(( hsts_age_sec / 86400))
@@ -2383,17 +2672,20 @@ run_hsts() {
                hsts_age_days=-1
           fi
           if [[ $hsts_age_days -eq -1 ]]; then
-               pr_svrty_medium "misconfiguration: HSTS max-age (recommended > 15552000 seconds = 180 days ) is required but missing"
-               fileout "${jsonID}_time" "MEDIUM" "misconfiguration, parameter max-age (recommended > 15552000 seconds = 180 days) missing"
+               pr_svrty_medium "misconfiguration: HSTS max-age (recommended > $HSTS_MIN seconds = $((HSTS_MIN/86400)) days ) is required but missing"
+               fileout "${jsonID}_time" "MEDIUM" "misconfiguration, parameter max-age (recommended > $HSTS_MIN seconds = $((HSTS_MIN/86400)) days) missing"
+               set_grade_cap "A" "HSTS max-age is misconfigured"
           elif [[ $hsts_age_sec -eq 0 ]]; then
                pr_svrty_low "HSTS max-age is set to 0. HSTS is disabled"
                fileout "${jsonID}_time" "LOW" "0. HSTS is disabled"
-          elif [[ $hsts_age_sec -gt $HSTS_MIN ]]; then
+               set_grade_cap "A" "HSTS is disabled"
+          elif [[ $hsts_age_sec -ge $HSTS_MIN ]]; then
                pr_svrty_good "$hsts_age_days days" ; out "=$hsts_age_sec s"
                fileout "${jsonID}_time" "OK" "$hsts_age_days days (=$hsts_age_sec seconds) > $HSTS_MIN seconds"
           else
-               pr_svrty_medium "$hsts_age_sec s = $hsts_age_days days is too short ( >=$HSTS_MIN seconds recommended)"
+               pr_svrty_medium "$hsts_age_sec s = $hsts_age_days days is too short ( >= $HSTS_MIN seconds recommended)"
                fileout "${jsonID}_time" "MEDIUM" "max-age too short. $hsts_age_days days (=$hsts_age_sec seconds) < $HSTS_MIN seconds"
+               set_grade_cap "A" "HSTS max-age is too short"
           fi
           if includeSubDomains "$TMPFILE"; then
                fileout "${jsonID}_subdomains" "OK" "includes subdomains"
@@ -2411,6 +2703,7 @@ run_hsts() {
      else
           pr_svrty_low "not offered"
           fileout "$jsonID" "LOW" "not offered"
+          set_grade_cap "A" "HSTS is not offered"
      fi
      outln
 
@@ -2439,27 +2732,28 @@ run_hpkp() {
      pr_bold " Public Key Pinning           "
      grep -aiw '^Public-Key-Pins' $HEADERFILE >$TMPFILE                    # TMPFILE includes report-only
      if [[ $? -eq 0 ]]; then
-          if [[ $(grep -aciw '^Public-Key-Pins:' $TMPFILE) -gt 1 ]]; then
+          if [[ $(grep -aci '^Public-Key-Pins:' $TMPFILE) -gt 1 ]]; then
                pr_svrty_medium "Misconfiguration, multiple Public-Key-Pins headers"
                outln ", taking first line"
                fileout "HPKP_error" "MEDIUM" "multiple Public-Key-Pins in header"
-               first_hpkp_header="$(grep -aiw '^Public-Key-Pins:' $TMPFILE | head -1)"
+               first_hpkp_header="$(grep -ai '^Public-Key-Pins:' $TMPFILE | head -1)"
                # we only evaluate the keys here, unless they a not present
                out "$spaces "
-          elif [[ $(grep -aciw '^Public-Key-Pins-Report-Only:' $TMPFILE) -gt 1 ]]; then
+               set_grade_cap "A" "Problems with HTTP Public Key Pinning (HPKP)"
+          elif [[ $(grep -aci '^Public-Key-Pins-Report-Only:' $TMPFILE) -gt 1 ]]; then
                outln "Multiple HPKP headers (Report-Only), taking first line"
                fileout "HPKP_notice" "INFO" "multiple Public-Key-Pins-Report-Only in header"
-               first_hpkp_header="$(grep -aiw '^Public-Key-Pins-Report-Only:' $TMPFILE | head -1)"
+               first_hpkp_header="$(grep -ai '^Public-Key-Pins-Report-Only:' $TMPFILE | head -1)"
                out "$spaces "
-          elif [[ $(grep -Eaciw '^Public-Key-Pins:|^Public-Key-Pins-Report-Only:' $TMPFILE) -eq 2 ]]; then
+          elif [[ $(grep -Eaci '^Public-Key-Pins:|^Public-Key-Pins-Report-Only:' $TMPFILE) -eq 2 ]]; then
                outln "Public-Key-Pins + Public-Key-Pins-Report-Only detected. Continue with first one"
-               first_hpkp_header="$(grep -aiw '^Public-Key-Pins:' $TMPFILE)"
+               first_hpkp_header="$(grep -ai '^Public-Key-Pins:' $TMPFILE)"
                out "$spaces "
-          elif [[ $(grep -aciw '^Public-Key-Pins:' $TMPFILE) -eq 1 ]]; then
-               first_hpkp_header="$(grep -aiw '^Public-Key-Pins:' $TMPFILE)"
+          elif [[ $(grep -aci '^Public-Key-Pins:' $TMPFILE) -eq 1 ]]; then
+               first_hpkp_header="$(grep -ai '^Public-Key-Pins:' $TMPFILE)"
           else
                outln "Public-Key-Pins-Only detected"
-               first_hpkp_header="$(grep -aiw '^Public-Key-Pins-Report-Only:' $TMPFILE)"
+               first_hpkp_header="$(grep -ai '^Public-Key-Pins-Report-Only:' $TMPFILE)"
                out "$spaces "
                fileout "HPKP_SPKIs" "INFO" "Only Public-Key-Pins-Report-Only"
           fi
@@ -2472,6 +2766,7 @@ run_hpkp() {
           if [[ $hpkp_nr_keys -eq 1 ]]; then
                pr_svrty_high "Only one key pinned (NOT ok), means the site may become unavailable in the future, "
                fileout "HPKP_SPKIs" "HIGH" "Only one key pinned"
+               set_grade_cap "A" "Problems with HTTP Public Key Pinning (HPKP)"
           else
                pr_svrty_good "$hpkp_nr_keys"
                out " keys, "
@@ -2492,6 +2787,7 @@ run_hpkp() {
                out "$hpkp_age_sec s = "
                pr_svrty_medium "$hpkp_age_days days (< $HPKP_MIN s = $((HPKP_MIN / 86400)) days is not good enough)"
                fileout "HPKP_age" "MEDIUM" "age is set to $hpkp_age_days days ($hpkp_age_sec sec) < $HPKP_MIN s = $((HPKP_MIN / 86400)) days is not good enough."
+               set_grade_cap "A" "Problems with HTTP Public Key Pinning (HPKP)"
           fi
 
           if includeSubDomains "$TMPFILE"; then
@@ -2523,7 +2819,7 @@ run_hpkp() {
           $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS $PROXY -showcerts -connect $NODEIP:$PORT $SNI")  </dev/null >$TMPFILE 2>$ERRFILE
           # Place the server's certificate in $HOSTCERT and any intermediate
           # certificates that were provided in $TEMPDIR/intermediatecerts.pem
-          # http://backreference.org/2010/05/09/ocsp-verification-with-openssl/
+          # https://backreference.org/2010/05/09/ocsp-verification-with-openssl/
           awk -v n=-1 "/Certificate chain/ {start=1}
                   /-----BEGIN CERTIFICATE-----/{ if (start) {inc=1; n++} }
                   inc { print > (\"$TEMPDIR/level\" n \".crt\") }
@@ -2649,11 +2945,13 @@ run_hpkp() {
                "$has_backup_spki" && out "$spaces"       # we had a few lines with backup SPKIs already
                prln_svrty_high " No matching key for SPKI found "
                fileout "HPKP_SPKImatch" "HIGH" "None of the SPKI match your host certificate, intermediate CA or known root CAs. Bricked site?"
+               set_grade_cap "A" "Problems with HTTP Public Key Pinning (HPKP)"
           fi
 
           if ! "$has_backup_spki"; then
                prln_svrty_high " No backup keys found. Loss/compromise of the currently pinned key(s) will lead to bricked site. "
                fileout "HPKP_backup" "HIGH" "No backup keys found. Loss/compromise of the currently pinned key(s) will lead to bricked site."
+               set_grade_cap "A" "Problems with HTTP Public Key Pinning (HPKP)"
           fi
      else
           outln "--"
@@ -2665,11 +2963,11 @@ run_hpkp() {
 }
 
 emphasize_stuff_in_headers(){
-     local html_brown="<span style=\\\"color:olive;\\\">"
-     local html_yellow="<span style=\\\"color:olive;font-weight:bold;\\\">"
+     local html_brown="<span style=\\\"color:#8a7237;\\\">"
+     local html_yellow="<span style=\\\"color:#8a7237;font-weight:bold;\\\">"
      local html_off="<\\/span>"
 
-# see http://www.grymoire.com/Unix/Sed.html#uh-3
+# see https://www.grymoire.com/Unix/Sed.html#uh-3
 #    outln "$1" | sed "s/[0-9]*/$brown&${off}/g"
      tmln_out "$1" | sed -e "s/\([0-9]\)/${brown}\1${off}/g" \
           -e "s/Unix/${yellow}Unix${off}/g" \
@@ -2690,6 +2988,7 @@ emphasize_stuff_in_headers(){
           -e "s/CentOS/${yellow}CentOS${off}/g" \
           -e "s/Via/${yellow}Via${off}/g" \
           -e "s/X-Forwarded/${yellow}X-Forwarded${off}/g" \
+          -e "s/X-TYPO3-Parsetime/${yellow}X-TYPO3-Parsetime${off}/g" \
           -e "s/Liferay-Portal/${yellow}Liferay-Portal${off}/g" \
           -e "s/X-Cache-Lookup/${yellow}X-Cache-Lookup${off}/g" \
           -e "s/X-Cache/${yellow}X-Cache${off}/g" \
@@ -2737,6 +3036,7 @@ emphasize_stuff_in_headers(){
                     -e "s/CentOS/${html_yellow}CentOS${html_off}/g" \
                     -e "s/Via/${html_yellow}Via${html_off}/g" \
                     -e "s/X-Forwarded/${html_yellow}X-Forwarded${html_off}/g" \
+                    -e "s/X-TYPO3-Parsetime/${yellow}X-TYPO3-Parsetime${html_off}/g" \
                     -e "s/Liferay-Portal/${html_yellow}Liferay-Portal${html_off}/g" \
                     -e "s/X-Cache-Lookup/${html_yellow}X-Cache-Lookup${html_off}/g" \
                     -e "s/X-Cache/${html_yellow}X-Cache${html_off}/g" \
@@ -2753,13 +3053,13 @@ emphasize_stuff_in_headers(){
                     -e "s/X-Runtime/${html_yellow}X-Runtime${html_off}/g" \
                     -e "s/X-Rack-Cache/${html_yellow}X-Rack-Cache${html_off}/g" \
                     -e "s/X-Pingback/${html_yellow}X-Pingback${html_off}/g" \
-                    -e "s/X-Permitted-Cross-Domain-Policies/${yellow}X-Permitted-Cross-Domain-Policies${html_off}/g" \
+                    -e "s/X-Permitted-Cross-Domain-Policies/${html_yellow}X-Permitted-Cross-Domain-Policies${html_off}/g" \
                     -e "s/X-AspNet-Version/${html_yellow}X-AspNet-Version${html_off}/g")" \
                     -e "s/x-note/${html_yellow}x-note${html_off}/g" \
                     -e "s/X-Global-Transaction-ID/${html_yellow}X-Global-Transaction-ID${html_off}/g" \
                     -e "s/x-global-transaction-id/${html_yellow}x-global-transaction-id${html_off}/g" \
                     -e "s/Alt-Svc/${html_yellow}Alt-Svc${html_off}/g" \
-                    -e "s/system-wsgw-management-loopback/${yellow}system-wsgw-management-loopback${html_off}/g"
+                    -e "s/system-wsgw-management-loopback/${html_yellow}system-wsgw-management-loopback${html_off}/g"
 #FIXME: this is double code. The pattern to emphasize would fit better into
 # one function.
 # Also we need another function like run_other_header as otherwise "Link" "Alt-Svc" will never be found.
@@ -2816,7 +3116,7 @@ run_appl_banner() {
           run_http_header "$1" || return 1
      fi
      pr_bold " Application banner           "
-     grep -Eai '^X-Powered-By|^X-AspNet-Version|^X-Version|^Liferay-Portal|^X-OWA-Version^|^MicrosoftSharePointTeamServices' $HEADERFILE >$TMPFILE
+     grep -Eai '^X-Powered-By|^X-AspNet-Version|^X-Version|^Liferay-Portal|^X-TYPO3-Parsetime|^X-OWA-Version^|^MicrosoftSharePointTeamServices' $HEADERFILE >$TMPFILE
      if [[ $? -ne 0 ]]; then
           outln "--"
           fileout "$jsonID" "INFO" "No application banner found"
@@ -2997,9 +3297,7 @@ run_cookie_flags() {     # ARG1: Path
 
 
 run_security_headers() {
-     local good_header="X-Frame-Options X-XSS-Protection X-Content-Type-Options Content-Security-Policy X-Content-Security-Policy X-WebKit-CSP Content-Security-Policy-Report-Only Expect-CT"
-     local other_header="Access-Control-Allow-Origin Upgrade X-Served-By Referrer-Policy X-UA-Compatible"
-     local header
+     local header header_output svrty header_and_svrty
      local first=true
      local spaces="                              "
      local have_header=false
@@ -3009,33 +3307,44 @@ run_security_headers() {
      fi
 
      pr_bold " Security headers             "
-     for header in $good_header; do
-          [[ "$DEBUG" -ge 5 ]] &&  echo "testing \"$header\""
+     # X-XSS-Protection is useless and at worst harmful, see https://news.ycombinator.com/item?id=20472947
+     for header_and_svrty in "X-Frame-Options OK" \
+                             "X-Content-Type-Options OK" \
+                             "Content-Security-Policy OK" \
+                             "X-Content-Security-Policy OK" \
+                             "X-WebKit-CSP OK" \
+                             "Content-Security-Policy-Report-Only OK" \
+                             "Expect-CT OK" \
+                             "Permissions-Policy OK" \
+                             "X-XSS-Protection INFO" \
+                             "Access-Control-Allow-Origin INFO" \
+                             "Upgrade INFO" \
+                             "X-Served-By INFO" \
+                             "Referrer-Policy INFO" \
+                             "X-UA-Compatible INFO" \
+                             "Cache-Control INFO" \
+                             "Pragma INFO"; do
+          read header svrty <<< "${header_and_svrty}"
+          [[ "$DEBUG" -ge 5 ]] &&  echo "testing \"$header\" (severity \"$svrty\")"
           match_httpheader_key "$header" "$header" "$spaces" "$first"
           if [[ $? -ge 1 ]]; then
                have_header=true
                if "$first"; then
                     first=false
                fi
-               pr_svrty_good "$header"
-               outln " $(out_row_aligned_max_width "$HEADERVALUE" "$spaces" $TERM_WIDTH)"
-               fileout "$header" "OK" "$HEADERVALUE"
+               case "$svrty" in
+                    OK) pr_svrty_good "$header" ;;
+                    LOW) pr_svrty_low "$header" ;;
+                    INFO) out "$header" ;;
+               esac
+               # Include $header when determining where to insert line breaks, but print $header
+               # separately.
+               header_output="$(out_row_aligned_max_width "${header:2}: $HEADERVALUE" "$spaces  " $TERM_WIDTH)"
+               outln "${header_output#${header:2}}"
+               fileout "$header" "$svrty" "$HEADERVALUE"
           fi
      done
 
-     for header in $other_header; do
-          [[ "$DEBUG" -ge 5 ]] &&  echo "testing \"$header\""
-          match_httpheader_key "$header" "$header" "$spaces" "$first"
-          if [[ $? -ge 1 ]]; then
-               have_header=true
-               if "$first"; then
-                    first=false
-               fi
-               pr_litecyan "$header"
-               outln " $HEADERVALUE"     # shouldn't be that long
-               fileout "$header" "INFO" "$header: $HEADERVALUE"
-          fi
-     done
      #TODO: I am not testing for the correctness or anything stupid yet, e.g. "X-Frame-Options: allowall" or Access-Control-Allow-Origin: *
 
      if ! "$have_header"; then
@@ -3048,7 +3357,7 @@ run_security_headers() {
 }
 
 
-# #1: string with 2 opensssl codes, output is same in NSS/ssllabs terminology
+# #1: string with 2 openssl codes, output is same in NSS/ssllabs terminology
 normalize_ciphercode() {
      if [[ "${1:2:2}" == "00" ]]; then
           tm_out "$(tolower "x${1:7:2}")"
@@ -3080,21 +3389,21 @@ prettyprint_local() {
      neat_header
 
      if [[ -z "$1" ]]; then
-          actually_supported_ciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-V" | while read -r hexcode dash ciph sslvers kx auth enc mac export ; do       # -V doesn't work with openssl < 1.0
+          while read -r hexcode dash ciph sslvers kx auth enc mac export ; do
                hexc="$(normalize_ciphercode $hexcode)"
-               outln "$(neat_list "$hexc" "$ciph" "$kx" "$enc")"
-          done
+               outln "$(neat_list "$hexc" "$ciph" "$kx" "$enc" "$export")"
+          done < <(actually_supported_osslciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-V")  # -V doesn't work with openssl < 1.0
      else
           #for arg in $(echo $@ | sed 's/,/ /g'); do
           for arg in ${*//,/ /}; do
-               actually_supported_ciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-V" | while read -r hexcode dash ciph sslvers kx auth enc mac export ; do # -V doesn't work with openssl < 1.0
+               while read -r hexcode dash ciph sslvers kx auth enc mac export ; do
                     hexc="$(normalize_ciphercode $hexcode)"
                     # for numbers we don't do word matching:
                     [[ $arg =~ $re ]] && \
-                         line="$(neat_list "$hexc" "$ciph" "$kx" "$enc" | grep -ai "$arg")" || \
-                         line="$(neat_list "$hexc" "$ciph" "$kx" "$enc" | grep -wai "$arg")"
+                         line="$(neat_list "$hexc" "$ciph" "$kx" "$enc" "$export" | grep -ai "$arg")" || \
+                         line="$(neat_list "$hexc" "$ciph" "$kx" "$enc" "$export" | grep -wai "$arg")"
                     [[ -n "$line" ]] && outln "$line"
-               done
+               done < <(actually_supported_osslciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-V") # -V doesn't work with openssl < 1.0
           done
      fi
      outln
@@ -3176,6 +3485,8 @@ openssl2hexcode() {
      if [[ $TLS_NR_CIPHERS -eq 0 ]]; then
           if "$HAS_CIPHERSUITES"; then
                hexc="$($OPENSSL ciphers -V -ciphersuites "$TLS13_OSSL_CIPHERS" 'ALL:COMPLEMENTOFALL:@STRENGTH' | awk '/ '"$1"' / { print $1 }')"
+          elif "$HAS_SSL2"; then
+               hexc="$($OPENSSL ciphers -V -tls1 'ALL:COMPLEMENTOFALL:@STRENGTH' | awk '/ '"$1"' / { print $1 }')"
           else
                hexc="$($OPENSSL ciphers -V 'ALL:COMPLEMENTOFALL:@STRENGTH' | awk '/ '"$1"' / { print $1 }')"
           fi
@@ -3194,7 +3505,7 @@ rfc2hexcode() {
      local -i i
 
      for (( i=0; i < TLS_NR_CIPHERS; i++ )); do
-          [[ "$1" == "${TLS_CIPHER_RFC_NAME[i]}" ]] && hexc="${TLS_CIPHER_HEXCODE[i]}" && break
+          [[ "$1" == ${TLS_CIPHER_RFC_NAME[i]} ]] && hexc="${TLS_CIPHER_HEXCODE[i]}" && break
      done
      [[ -z "$hexc" ]] && return 1
      tm_out "$hexc"
@@ -3243,34 +3554,45 @@ neat_header(){
 # arg2: cipher in openssl notation
 # arg3: keyexchange
 # arg4: encryption (maybe included "export")
-# arg5: "true" if the cipher's "quality" should be highlighted
-#       "false" if the line should be printed in light grey
-#       empty if line should be returned as a string
+# arg5: "export" if the cipher is an export-quality cipher, empty otherwise.
+# arg6: not a boolean!
+#       "true" : if the cipher's "quality" should be highlighted
+#       "false": if the line should be printed in light grey
+#       ""     : if line should be returned as a string
+
 neat_list(){
      local hexcode="$1"
-     local ossl_cipher="$2" tls_cipher=""
+     local ossl_cipher="$2" export="$5" tls_cipher=""
      local kx enc strength line what_dh bits
      local -i i len
+     local how2show="$6"
 
      kx="${3//Kx=/}"
+     kx="$(strip_trailing_space "$kx")"
      enc="${4//Enc=/}"
      # In two cases LibreSSL uses very long names for encryption algorithms
      # and doesn't include the number of bits.
      [[ "$enc" == ChaCha20-Poly1305 ]] && enc="CHACHA20(256)"
      [[ "$enc" == GOST-28178-89-CNT ]] && enc="GOST(256)"
 
-     strength="${enc//\)/}"             # retrieve (). first remove traling ")"
+     strength="${enc//\)/}"             # retrieve (). first remove trailing ")"
      strength="${strength#*\(}"         # exfiltrate (VAL
      enc="${enc%%\(*}"
 
      enc="${enc//POLY1305/}"            # remove POLY1305
      enc="${enc//\//}"                  # remove "/"
 
+     # For rating set bit size but only when cipher is supported by server.
+     if [[ $how2show == true ]]; then
+          set_ciph_str_score $strength
+     fi
+
      [[ "$export" =~ export ]] && strength="$strength,exp"
 
      [[ "$DISPLAY_CIPHERNAMES" != openssl-only ]] && tls_cipher="$(show_rfc_style "$hexcode")"
 
-     if [[ "$5" != true ]]; then
+     # global var SHOW_EACH_C determines whether we display all tested ciphers
+     if [[ "$how2show" != true ]]; then
           if [[ "$DISPLAY_CIPHERNAMES" =~ rfc ]]; then
                line="$(printf -- " %-7s %-49s %-10s %-12s%-8s" "$hexcode" "$tls_cipher" "$kx" "$enc" "$strength")"
                [[ "$DISPLAY_CIPHERNAMES" != rfc-only ]] && line+="$(printf -- " %-33s${SHOW_EACH_C:+  %-0s}" "$ossl_cipher")"
@@ -3278,7 +3600,7 @@ neat_list(){
                line="$(printf -- " %-7s %-33s %-10s %-12s%-8s" "$hexcode" "$ossl_cipher" "$kx" "$enc" "$strength")"
                [[ "$DISPLAY_CIPHERNAMES" != openssl-only ]] && line+="$(printf -- " %-49s${SHOW_EACH_C:+  %-0s}" "$tls_cipher")"
           fi
-          if [[ -z "$5" ]]; then
+          if [[ -z "$how2show" ]]; then
                tm_out "$line"
           else
                pr_deemphasize "$line"
@@ -3315,9 +3637,7 @@ neat_list(){
           fi
      fi
      len=${#kx}
-     for (( i=len; i<10; i++ )); do
-          out " "
-     done
+     print_n_spaces "$((10-len))"
      out "$(printf -- " %-12s%-8s " "$enc" "$strength")"
      if [[ "$COLOR" -le 2 ]]; then
           if [[ "$DISPLAY_CIPHERNAMES" == rfc ]]; then
@@ -3336,12 +3656,12 @@ neat_list(){
 }
 
 run_cipher_match(){
-     local hexc n auth export ciphers_to_test tls13_ciphers_to_test supported_sslv2_ciphers s
+     local hexc n auth ciphers_to_test tls13_ciphers_to_test supported_sslv2_ciphers s
      local -a hexcode normalized_hexcode ciph sslvers kx enc export2 sigalg
      local -a ciphers_found ciphers_found2 ciph2 rfc_ciph rfc_ciph2 ossl_supported
      local -a -i index
      local -i nr_ciphers=0 nr_ossl_ciphers=0 nr_nonossl_ciphers=0
-     local -i num_bundles mod_check bundle_size bundle end_of_bundle
+     local -i num_bundles bundle_size bundle end_of_bundle
      local dhlen has_dh_bits="$HAS_DH_BITS"
      local cipher proto protos_to_try
      local available
@@ -3378,7 +3698,7 @@ run_cipher_match(){
                     hexc="${TLS_CIPHER_HEXCODE[i]}"
                     if [[ ${#hexc} -eq 9 ]]; then
                          hexcode[nr_ciphers]="${hexc:2:2},${hexc:7:2}"
-                         if [[ "${hexc:2:2}" == "00" ]]; then
+                         if [[ "${hexc:2:2}" == 00 ]]; then
                               normalized_hexcode[nr_ciphers]="x${hexc:7:2}"
                          else
                               normalized_hexcode[nr_ciphers]="x${hexc:2:2}${hexc:7:2}"
@@ -3389,9 +3709,9 @@ run_cipher_match(){
                          normalized_hexcode[nr_ciphers]="x${hexc:2:2}${hexc:7:2}${hexc:12:2}"
                     fi
                     if [[ $arg =~ $re ]]; then
-                         neat_list "${normalized_hexcode[nr_ciphers]}" "${TLS_CIPHER_OSSL_NAME[i]}" "${TLS_CIPHER_KX[i]}" "${TLS_CIPHER_ENC[i]}" | grep -qai "$arg"
+                         neat_list "${normalized_hexcode[nr_ciphers]}" "${TLS_CIPHER_OSSL_NAME[i]}" "${TLS_CIPHER_KX[i]}" "${TLS_CIPHER_ENC[i]}" "${TLS_CIPHER_EXPORT[i]}" | grep -qai "$arg"
                     else
-                         neat_list "${normalized_hexcode[nr_ciphers]}" "${TLS_CIPHER_OSSL_NAME[i]}" "${TLS_CIPHER_KX[i]}" "${TLS_CIPHER_ENC[i]}" | grep -qwai "$arg"
+                         neat_list "${normalized_hexcode[nr_ciphers]}" "${TLS_CIPHER_OSSL_NAME[i]}" "${TLS_CIPHER_KX[i]}" "${TLS_CIPHER_ENC[i]}" "${TLS_CIPHER_EXPORT[i]}" | grep -qwai "$arg"
                     fi
                     if [[ $? -eq 0 ]] && ( "$using_sockets" || "${TLS_CIPHER_OSSL_SUPPORTED[i]}" ); then    # string matches, so we can ssl to it:
                          normalized_hexcode[nr_ciphers]="$(tolower "${normalized_hexcode[nr_ciphers]}")"
@@ -3416,9 +3736,9 @@ run_cipher_match(){
                     hexc="$(normalize_ciphercode $hexc)"
                     # is argument a number?
                     if [[ $arg =~ $re ]]; then
-                         neat_list "$hexc" "${ciph[nr_ciphers]}" "${kx[nr_ciphers]}" "${enc[nr_ciphers]}" | grep -qai "$arg"
+                         neat_list "$hexc" "${ciph[nr_ciphers]}" "${kx[nr_ciphers]}" "${enc[nr_ciphers]}" "${export2[nr_ciphers]}" | grep -qai "$arg"
                     else
-                         neat_list "$hexc" "${ciph[nr_ciphers]}" "${kx[nr_ciphers]}" "${enc[nr_ciphers]}" | grep -qwai "$arg"
+                         neat_list "$hexc" "${ciph[nr_ciphers]}" "${kx[nr_ciphers]}" "${enc[nr_ciphers]}" "${export2[nr_ciphers]}" | grep -qwai "$arg"
                     fi
                     if [[ $? -eq 0 ]]; then    # string matches, so we can ssl to it:
                          ciphers_found[nr_ciphers]=false
@@ -3427,14 +3747,14 @@ run_cipher_match(){
                          ossl_supported[nr_ciphers]=true
                          nr_ciphers+=1
                     fi
-               done < <(actually_supported_ciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "$ossl_ciphers_proto -V")
+                    done < <(actually_supported_osslciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-V")
           fi
 
           # Test the SSLv2 ciphers, if any.
           if "$using_sockets"; then
                ciphers_to_test=""
                for (( i=0; i < nr_ciphers; i++ )); do
-                    if [[ "${sslvers[i]}" == "SSLv2" ]]; then
+                    if [[ "${sslvers[i]}" == SSLv2 ]]; then
                          ciphers_to_test+=", ${hexcode[i]}"
                     fi
                done
@@ -3444,7 +3764,7 @@ run_cipher_match(){
                          supported_sslv2_ciphers="$(grep "Supported cipher: " "$TEMPDIR/$NODEIP.parse_sslv2_serverhello.txt")"
                          "$SHOW_SIGALGO" && s="$(read_sigalg_from_file "$HOSTCERT")"
                          for (( i=0 ; i<nr_ciphers; i++ )); do
-                              if [[ "${sslvers[i]}" == "SSLv2" ]] && [[ "$supported_sslv2_ciphers" =~ ${normalized_hexcode[i]} ]]; then
+                              if [[ "${sslvers[i]}" == SSLv2 ]] && [[ "$supported_sslv2_ciphers" =~ ${normalized_hexcode[i]} ]]; then
                                    ciphers_found[i]=true
                                    "$SHOW_SIGALGO" && sigalg[i]="$s"
                               fi
@@ -3454,7 +3774,7 @@ run_cipher_match(){
           else
                ciphers_to_test=""
                for (( i=0; i < nr_ciphers; i++ )); do
-                    if [[ "${sslvers[i]}" == "SSLv2" ]]; then
+                    if [[ "${sslvers[i]}" == SSLv2 ]]; then
                          ciphers_to_test+=":${ciph[i]}"
                     fi
                done
@@ -3465,7 +3785,7 @@ run_cipher_match(){
                          supported_sslv2_ciphers="$(grep -A 4 "Ciphers common between both SSL endpoints:" $TMPFILE)"
                          "$SHOW_SIGALGO" && s="$(read_sigalg_from_file "$TMPFILE")"
                          for (( i=0 ; i<nr_ciphers; i++ )); do
-                              if [[ "${sslvers[i]}" == "SSLv2" ]] && [[ "$supported_sslv2_ciphers" =~ ${ciph[i]} ]]; then
+                              if [[ "${sslvers[i]}" == SSLv2 ]] && [[ "$supported_sslv2_ciphers" =~ ${ciph[i]} ]]; then
                                    ciphers_found[i]=true
                                    "$SHOW_SIGALGO" && sigalg[i]="$s"
                               fi
@@ -3488,12 +3808,10 @@ run_cipher_match(){
                # Some servers can't handle a handshake with >= 128 ciphers. So,
                # test cipher suites in bundles of 128 or less.
                num_bundles=$nr_ossl_ciphers/128
-               mod_check=$nr_ossl_ciphers%128
-               [[ $mod_check -ne 0 ]] && num_bundles=$num_bundles+1
+               [[ $((nr_ossl_ciphers%128)) -ne 0 ]] && num_bundles+=1
 
                bundle_size=$nr_ossl_ciphers/$num_bundles
-               mod_check=$nr_ossl_ciphers%$num_bundles
-               [[ $mod_check -ne 0 ]] && bundle_size+=1
+               [[ $((nr_ossl_ciphers%num_bundles)) -ne 0 ]] && bundle_size+=1
           fi
 
           if "$HAS_TLS13"; then
@@ -3504,19 +3822,19 @@ run_cipher_match(){
           "$HAS_SSL3" && protos_to_try+=" -ssl3"
 
           for proto in $protos_to_try; do
-               if [[ "$proto" == "-tls1_1" ]]; then
+               if [[ "$proto" == -tls1_1 ]]; then
                     num_bundles=1
                     bundle_size=$nr_ossl_ciphers
                fi
                for (( bundle=0; bundle < num_bundles; bundle++ )); do
-                    end_of_bundle=$bundle*$bundle_size+$bundle_size
+                    end_of_bundle=$(( (bundle+1)*bundle_size ))
                     [[ $end_of_bundle -gt $nr_ossl_ciphers ]] && end_of_bundle=$nr_ossl_ciphers
                     while true; do
                          ciphers_to_test=""
                          tls13_ciphers_to_test=""
                          for (( i=bundle*bundle_size; i < end_of_bundle; i++ )); do
                               if ! "${ciphers_found2[i]}"; then
-                                   if [[ "${ciph2[i]}" == TLS13* ]] || [[ "${ciph2[i]}" == TLS_* ]]; then
+                                   if [[ "${ciph2[i]}" == TLS13* ]] || [[ "${ciph2[i]}" == TLS_* ]] || [[ "${ciph2[i]}" == AEAD-* ]]; then
                                         tls13_ciphers_to_test+=":${ciph2[i]}"
                                    else
                                         ciphers_to_test+=":${ciph2[i]}"
@@ -3534,14 +3852,14 @@ run_cipher_match(){
                          [[ $i -eq $end_of_bundle ]] && break
                          i=${index[i]}
                          ciphers_found[i]=true
-                         if [[ "$cipher" == TLS13* ]] || [[ "$cipher" == TLS_* ]]; then
+                         if [[ "$cipher" == TLS13* ]] || [[ "$cipher" == TLS_* ]] || [[ "$cipher" == AEAD-* ]]; then
                               kx[i]="$(read_dhtype_from_file $TMPFILE)"
                          fi
                          if [[ ${kx[i]} == "Kx=ECDH" ]] || [[ ${kx[i]} == "Kx=DH" ]] || [[ ${kx[i]} == "Kx=EDH" ]]; then
                               dhlen=$(read_dhbits_from_file "$TMPFILE" quiet)
                               kx[i]="${kx[i]} $dhlen"
                          fi
-                         "$SHOW_SIGALGO" && grep -q "\-\-\-\-\-BEGIN CERTIFICATE\-\-\-\-\-" $TMPFILE && \
+                         "$SHOW_SIGALGO" && grep -qe '-----BEGIN CERTIFICATE-----' $TMPFILE && \
                               sigalg[i]="$(read_sigalg_from_file "$TMPFILE")"
                     done
                done
@@ -3565,17 +3883,15 @@ run_cipher_match(){
                # Some servers can't handle a handshake with >= 128 ciphers. So,
                # test cipher suites in bundles of 128 or less.
                num_bundles=$nr_nonossl_ciphers/128
-               mod_check=$nr_nonossl_ciphers%128
-               [[ $mod_check -ne 0 ]] && num_bundles=$num_bundles+1
+               [[ $((nr_nonossl_ciphers%128)) -ne 0 ]] && num_bundles+=1
 
                bundle_size=$nr_nonossl_ciphers/$num_bundles
-               mod_check=$nr_nonossl_ciphers%$num_bundles
-               [[ $mod_check -ne 0 ]] && bundle_size+=1
+               [[ $((nr_nonossl_ciphers%num_bundles)) -ne 0 ]] && bundle_size+=1
           fi
 
           for proto in 04 03 02 01 00; do
                for (( bundle=0; bundle < num_bundles; bundle++ )); do
-                    end_of_bundle=$bundle*$bundle_size+$bundle_size
+                    end_of_bundle=$(( (bundle+1)*bundle_size ))
                     [[ $end_of_bundle -gt $nr_nonossl_ciphers ]] && end_of_bundle=$nr_nonossl_ciphers
                     while true; do
                          ciphers_to_test=""
@@ -3583,7 +3899,7 @@ run_cipher_match(){
                               ! "${ciphers_found2[i]}" && ciphers_to_test+=", ${hexcode2[i]}"
                          done
                          [[ -z "$ciphers_to_test" ]] && break
-                         [[ "$proto" == "04" ]] && [[ ! "$ciphers_to_test" =~ ,\ 13,[0-9a-f][0-9a-f] ]] && break
+                         [[ "$proto" == 04 ]] && [[ ! "$ciphers_to_test" =~ ,\ 13,[0-9a-f][0-9a-f] ]] && break
                          ciphers_to_test="$(strip_inconsistent_ciphers "$proto" "$ciphers_to_test")"
                          [[ -z "$ciphers_to_test" ]] && break
                          if "$SHOW_SIGALGO"; then
@@ -3606,15 +3922,14 @@ run_cipher_match(){
                               kx[i]="${kx[i]} $dhlen"
                          fi
                          "$SHOW_SIGALGO" && [[ -r "$HOSTCERT" ]] && \
-                               sigalg[i]="$(read_sigalg_from_file "$HOSTCERT")"
+                              sigalg[i]="$(read_sigalg_from_file "$HOSTCERT")"
                     done
                done
           done
 
           for (( i=0; i < nr_ciphers; i++ )); do
                "${ciphers_found[i]}" || "$SHOW_EACH_C" || continue
-               export="${export2[i]}"
-               neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${ciphers_found[i]}"
+               neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${export2[i]}" "${ciphers_found[i]}"
                available=""
                if "$SHOW_EACH_C"; then
                     if "${ciphers_found[i]}"; then
@@ -3626,7 +3941,7 @@ run_cipher_match(){
                     fi
                fi
                outln "${sigalg[i]}"
-               fileout "cipher_${normalized_hexcode[i]}" "INFO" "$(neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}") $available"
+               fileout "cipher_${normalized_hexcode[i]}" "INFO" "$(neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${export2[i]}") $available"
           done
           "$using_sockets" && HAS_DH_BITS="$has_dh_bits"
           tmpfile_handle ${FUNCNAME[0]}.txt
@@ -3639,12 +3954,13 @@ run_cipher_match(){
 
 
 
-# test for all ciphers locally configured (w/o distinguishing whether they are good or bad)
+# Test for all ciphers locally configured (w/o distinguishing whether they are good or bad)
+#
 run_allciphers() {
      local -i nr_ciphers_tested=0 nr_ciphers=0 nr_ossl_ciphers=0 nr_nonossl_ciphers=0 sclient_success=0
-     local n auth mac export hexc sslv2_ciphers="" s
+     local n auth mac hexc sslv2_ciphers="" s
      local -a normalized_hexcode hexcode ciph sslvers kx enc export2 sigalg ossl_supported
-     local -i i end_of_bundle bundle bundle_size num_bundles mod_check
+     local -i i end_of_bundle bundle bundle_size num_bundles
      local -a ciphers_found ciphers_found2 hexcode2 ciph2 rfc_ciph2
      local -i -a index
      local proto protos_to_try
@@ -3673,7 +3989,7 @@ run_allciphers() {
                fi
                if [[ ${#hexc} -eq 9 ]]; then
                     hexcode[i]="${hexc:2:2},${hexc:7:2}"
-                    if [[ "${hexc:2:2}" == "00" ]]; then
+                    if [[ "${hexc:2:2}" == 00 ]]; then
                          normalized_hexcode[i]="x${hexc:7:2}"
                     else
                          normalized_hexcode[i]="x${hexc:2:2}${hexc:7:2}"
@@ -3692,7 +4008,7 @@ run_allciphers() {
           while read -r hexc n ciph[nr_ciphers] sslvers[nr_ciphers] kx[nr_ciphers] auth enc[nr_ciphers] mac export2[nr_ciphers]; do
                ciphers_found[nr_ciphers]=false
                if [[ ${#hexc} -eq 9 ]]; then
-                    if [[ "${hexc:2:2}" == "00" ]]; then
+                    if [[ "${hexc:2:2}" == 00 ]]; then
                          normalized_hexcode[nr_ciphers]="$(tolower "x${hexc:7:2}")"
                     else
                          normalized_hexcode[nr_ciphers]="$(tolower "x${hexc:2:2}${hexc:7:2}")"
@@ -3703,7 +4019,7 @@ run_allciphers() {
                sigalg[nr_ciphers]=""
                ossl_supported[nr_ciphers]=true
                nr_ciphers=$nr_ciphers+1
-          done < <(actually_supported_ciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-V")
+          done < <(actually_supported_osslciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-V")
           nr_ciphers_tested=$nr_ciphers
      fi
 
@@ -3726,7 +4042,7 @@ run_allciphers() {
                supported_sslv2_ciphers="$(grep -A 4 "Ciphers common between both SSL endpoints:" $TMPFILE)"
                "$SHOW_SIGALGO" && s="$(read_sigalg_from_file "$TMPFILE")"
                for (( i=0 ; i<nr_ciphers; i++ )); do
-                    if [[ "${sslvers[i]}" == "SSLv2" ]] && [[ "$supported_sslv2_ciphers" =~ ${ciph[i]} ]]; then
+                    if [[ "${sslvers[i]}" == SSLv2 ]] && [[ "$supported_sslv2_ciphers" =~ ${ciph[i]} ]]; then
                          ciphers_found[i]=true
                          "$SHOW_SIGALGO" && sigalg[i]="$s"
                     fi
@@ -3765,12 +4081,10 @@ run_allciphers() {
           # Some servers can't handle a handshake with >= 128 ciphers. So,
           # test cipher suites in bundles of 128 or less.
           num_bundles=$nr_ossl_ciphers/128
-          mod_check=$nr_ossl_ciphers%128
-          [[ $mod_check -ne 0 ]] && num_bundles=$num_bundles+1
+          [[ $((nr_ossl_ciphers%128)) -ne 0 ]] && num_bundles+=1
 
           bundle_size=$nr_ossl_ciphers/$num_bundles
-          mod_check=$nr_ossl_ciphers%$num_bundles
-          [[ $mod_check -ne 0 ]] && bundle_size+=1
+          [[ $((nr_ossl_ciphers%num_bundles)) -ne 0 ]] && bundle_size+=1
      fi
 
      if "$HAS_TLS13"; then
@@ -3781,21 +4095,21 @@ run_allciphers() {
      "$HAS_SSL3" && protos_to_try+=" -ssl3"
 
      for proto in $protos_to_try; do
-          if [[ "$proto" == "-tls1_1" ]]; then
+          if [[ "$proto" == -tls1_1 ]]; then
                num_bundles=1
                bundle_size=$nr_ossl_ciphers
           fi
 
           [[ "$proto" != "-no_ssl2" ]] && [[ $(has_server_protocol "${proto:1}") -eq 1 ]] && continue
           for (( bundle=0; bundle < num_bundles; bundle++ )); do
-               end_of_bundle=$bundle*$bundle_size+$bundle_size
+               end_of_bundle=$(( (bundle+1)*bundle_size ))
                [[ $end_of_bundle -gt $nr_ossl_ciphers ]] && end_of_bundle=$nr_ossl_ciphers
                while true; do
                     ciphers_to_test=""
                     tls13_ciphers_to_test=""
                     for (( i=bundle*bundle_size; i < end_of_bundle; i++ )); do
                          if ! "${ciphers_found2[i]}"; then
-                              if [[ "${ciph2[i]}" == TLS13* ]] || [[ "${ciph2[i]}" == TLS_* ]]; then
+                              if [[ "${ciph2[i]}" == TLS13* ]] || [[ "${ciph2[i]}" == TLS_* ]] || [[ "${ciph2[i]}" == AEAD-* ]]; then
                                    tls13_ciphers_to_test+=":${ciph2[i]}"
                               else
                                    ciphers_to_test+=":${ciph2[i]}"
@@ -3813,14 +4127,14 @@ run_allciphers() {
                     [[ $i -eq $end_of_bundle ]] && break
                     i=${index[i]}
                     ciphers_found[i]=true
-                    if [[ "$cipher" == TLS13* ]] || [[ "$cipher" == TLS_* ]]; then
+                    if [[ "$cipher" == TLS13* ]] || [[ "$cipher" == TLS_* ]] || [[ "$cipher" == AEAD-* ]]; then
                          kx[i]="$(read_dhtype_from_file $TMPFILE)"
                     fi
                     if [[ ${kx[i]} == Kx=ECDH ]] || [[ ${kx[i]} == Kx=DH ]] || [[ ${kx[i]} == Kx=EDH ]]; then
                          dhlen=$(read_dhbits_from_file "$TMPFILE" quiet)
                          kx[i]="${kx[i]} $dhlen"
                     fi
-                    "$SHOW_SIGALGO" && grep -q "\-\-\-\-\-BEGIN CERTIFICATE\-\-\-\-\-" $TMPFILE && \
+                    "$SHOW_SIGALGO" && grep -qe '-----BEGIN CERTIFICATE-----' $TMPFILE && \
                          sigalg[i]="$(read_sigalg_from_file "$TMPFILE")"
                done
           done
@@ -3829,7 +4143,7 @@ run_allciphers() {
      if "$using_sockets"; then
           for (( i=0; i < nr_ciphers; i++ )); do
                if ! "${ciphers_found[i]}"; then
-                    [[ "${sslvers[i]}" == "SSLv2" ]] && continue
+                    [[ "${sslvers[i]}" == SSLv2 ]] && continue
                     ciphers_found2[nr_nonossl_ciphers]=false
                     hexcode2[nr_nonossl_ciphers]="${hexcode[i]}"
                     rfc_ciph2[nr_nonossl_ciphers]="${TLS_CIPHER_RFC_NAME[i]}"
@@ -3845,17 +4159,15 @@ run_allciphers() {
           # Some servers can't handle a handshake with >= 128 ciphers. So,
           # test cipher suites in bundles of 128 or less.
           num_bundles=$nr_nonossl_ciphers/128
-          mod_check=$nr_nonossl_ciphers%128
-          [[ $mod_check -ne 0 ]] && num_bundles=$num_bundles+1
+          [[ $((nr_nonossl_ciphers%128)) -ne 0 ]] && num_bundles+=1
 
           bundle_size=$nr_nonossl_ciphers/$num_bundles
-          mod_check=$nr_nonossl_ciphers%$num_bundles
-          [[ $mod_check -ne 0 ]] && bundle_size+=1
+          [[ $((nr_nonossl_ciphers%num_bundles)) -ne 0 ]] && bundle_size+=1
      fi
 
      for proto in 04 03 02 01 00; do
           for (( bundle=0; bundle < num_bundles; bundle++ )); do
-               end_of_bundle=$bundle*$bundle_size+$bundle_size
+               end_of_bundle=$(( (bundle+1)*bundle_size ))
                [[ $end_of_bundle -gt $nr_nonossl_ciphers ]] && end_of_bundle=$nr_nonossl_ciphers
                while true; do
                     ciphers_to_test=""
@@ -3863,7 +4175,7 @@ run_allciphers() {
                          ! "${ciphers_found2[i]}" && ciphers_to_test+=", ${hexcode2[i]}"
                     done
                     [[ -z "$ciphers_to_test" ]] && break
-                    [[ "$proto" == "04" ]] && [[ ! "$ciphers_to_test" =~ ,\ 13,[0-9a-f][0-9a-f] ]] && break
+                    [[ "$proto" == 04 ]] && [[ ! "$ciphers_to_test" =~ ,\ 13,[0-9a-f][0-9a-f] ]] && break
                     ciphers_to_test="$(strip_inconsistent_ciphers "$proto" "$ciphers_to_test")"
                     [[ -z "$ciphers_to_test" ]] && break
                     if "$SHOW_SIGALGO"; then
@@ -3892,8 +4204,7 @@ run_allciphers() {
 
      for (( i=0 ; i<nr_ciphers; i++ )); do
           if "${ciphers_found[i]}" || ( "$SHOW_EACH_C" && ( "$using_sockets" || "${ossl_supported[i]}" ) ); then
-               export=${export2[i]}
-               neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${ciphers_found[i]}"
+               neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${export2[i]}" "${ciphers_found[i]}"
                available=""
                if "$SHOW_EACH_C"; then
                     if ${ciphers_found[i]}; then
@@ -3905,7 +4216,7 @@ run_allciphers() {
                     fi
                fi
                outln "${sigalg[i]}"
-               fileout "cipher_${normalized_hexcode[i]}" "INFO" "$(neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}") $available"
+               fileout "cipher_${normalized_hexcode[i]}" "INFO" "$(neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${export2[i]}") $available"
           fi
      done
      "$using_sockets" && HAS_DH_BITS="$has_dh_bits"
@@ -3920,28 +4231,32 @@ run_allciphers() {
 # are good or bad) and list them in order to encryption strength.
 ciphers_by_strength() {
      local proto="$1" proto_hex="$2" proto_text="$3"
-     local using_sockets="$4"
+     local using_sockets="$4" wide="$5" serverpref_known="$6"
      local ossl_ciphers_proto
      local -i nr_ciphers nr_ossl_ciphers nr_nonossl_ciphers success
-     local n sslvers auth mac export hexc sslv2_ciphers="" cipher
+     local n sslvers auth mac hexc sslv2_ciphers="" cipher
      local -a hexcode normalized_hexcode ciph rfc_ciph kx enc export2
      local -a hexcode2 ciph2 rfc_ciph2
-     local -i i bundle end_of_bundle bundle_size num_bundles mod_check
+     local -i i bundle end_of_bundle bundle_size num_bundles
      local -a ciphers_found ciphers_found2 sigalg ossl_supported index
      local dhlen supported_sslv2_ciphers ciphers_to_test tls13_ciphers_to_test addcmd temp
-     local available
+     local available proto_supported=false
      local id
      local has_dh_bits="$HAS_DH_BITS"
 
-     pr_underline "$(printf -- "%b" "$proto_text")"
      # for local problem if it happens
-     out "  "
-     if ! "$using_sockets" && ! locally_supported "$proto"; then
+     "$wide" || out "  "
+     if ! "$using_sockets" && ! sclient_supported "$proto"; then
+          "$wide" && outln
+          pr_local_problem "$OPENSSL does not support $proto"
+          "$wide" && outln
           return 0
      fi
-     outln
 
-     [[ $(has_server_protocol "${proto:1}") -eq 1 ]] && return 0
+     if [[ $(has_server_protocol "${proto:1}") -eq 1 ]]; then
+          "$wide" && outln "\n - "
+          return 0
+     fi
 
      # get a list of all the cipher suites to test
      nr_ciphers=0
@@ -3956,12 +4271,13 @@ ciphers_by_strength() {
                ciphers_found[nr_ciphers]=false
                sigalg[nr_ciphers]=""
                ossl_supported[nr_ciphers]=${TLS_CIPHER_OSSL_SUPPORTED[i]}
-               if "$using_sockets" && ! "$has_dh_bits" && ( [[ ${kx[nr_ciphers]} == "Kx=ECDH" ]] || [[ ${kx[nr_ciphers]} == "Kx=DH" ]] || [[ ${kx[nr_ciphers]} == "Kx=EDH" ]] ); then
+               if "$using_sockets" && "$wide" && ! "$has_dh_bits" && \
+                    ( [[ ${kx[nr_ciphers]} == "Kx=ECDH" ]] || [[ ${kx[nr_ciphers]} == "Kx=DH" ]] || [[ ${kx[nr_ciphers]} == "Kx=EDH" ]] ); then
                     ossl_supported[nr_ciphers]=false
                fi
                if [[ ${#hexc} -eq 9 ]]; then
                     hexcode[nr_ciphers]="${hexc:2:2},${hexc:7:2}"
-                    if [[ "${hexc:2:2}" == "00" ]]; then
+                    if [[ "${hexc:2:2}" == 00 ]]; then
                          normalized_hexcode[nr_ciphers]="x${hexc:7:2}"
                     else
                          normalized_hexcode[nr_ciphers]="x${hexc:2:2}${hexc:7:2}"
@@ -3972,16 +4288,16 @@ ciphers_by_strength() {
                     normalized_hexcode[nr_ciphers]="x${hexc:2:2}${hexc:7:2}${hexc:12:2}"
                fi
                if ( "$using_sockets" || "${TLS_CIPHER_OSSL_SUPPORTED[i]}" ); then
-                    if [[ ${#hexc} -eq 9 ]] && [[ "$proto_text" != SSLv2 ]]; then
-                         if [[ "$proto_text" == TLS\ 1.3 ]]; then
+                    if [[ ${#hexc} -eq 9 ]] && [[ "$proto" != -ssl2 ]]; then
+                         if [[ "$proto" == -tls1_3 ]]; then
                               [[ "${hexc:2:2}" == 13 ]] && nr_ciphers+=1
-                         elif [[ "$proto_text" == TLS\ 1.2 ]]; then
+                         elif [[ "$proto" == -tls1_2 ]]; then
                               [[ "${hexc:2:2}" != 13 ]] && nr_ciphers+=1
                          elif [[ ! "${TLS_CIPHER_RFC_NAME[i]}" =~ SHA256 ]] && [[ ! "${TLS_CIPHER_RFC_NAME[i]}" =~ SHA384 ]] && \
                               [[ "${TLS_CIPHER_RFC_NAME[i]}" != *_CCM ]] && [[ "${TLS_CIPHER_RFC_NAME[i]}" != *_CCM_8 ]]; then
                               nr_ciphers+=1
                          fi
-                    elif [[ ${#hexc} -eq 14 ]] && [[ "$proto_text" == SSLv2 ]]; then
+                    elif [[ ${#hexc} -eq 14 ]] && [[ "$proto" == -ssl2 ]]; then
                          sslv2_ciphers+=", ${hexcode[nr_ciphers]}"
                          nr_ciphers+=1
                     fi
@@ -3989,17 +4305,20 @@ ciphers_by_strength() {
           done
      else # no sockets, openssl!
           # The OpenSSL ciphers function, prior to version 1.1.0, could only understand -ssl2, -ssl3, and -tls1.
-          if [[ "$proto" == "-ssl2" ]] || [[ "$proto" == -ssl3 ]] || \
-               [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == 1.1.0* ]] || [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == 1.1.1* ]]; then
+          if [[ "$OSSL_NAME" =~ LibreSSL ]]; then
+               ossl_ciphers_proto=""
+          elif [[ $proto == -ssl2 ]] || [[ $proto == -ssl3 ]] || \
+               [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == 1.1.0* ]] || [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == 1.1.1* ]] || \
+               [[ $OSSL_VER_MAJOR == 3 ]]; then
                ossl_ciphers_proto="$proto"
           else
                ossl_ciphers_proto="-tls1"
           fi
           while read hexc n ciph[nr_ciphers] sslvers kx[nr_ciphers] auth enc[nr_ciphers] mac export2[nr_ciphers]; do
-               if [[ "$proto_text" == TLS\ 1.3 ]]; then
-                    [[ "${ciph[nr_ciphers]}" == TLS13* ]] || [[ "${ciph[nr_ciphers]}" == TLS_* ]] || continue
-               elif [[ "$proto_text" == "TLS 1.2" ]]; then
-                    if [[ "${ciph[nr_ciphers]}" == TLS13* ]] || [[ "${ciph[nr_ciphers]}" == TLS_* ]]; then
+               if [[ "$proto" == -tls1_3 ]]; then
+                    [[ "${ciph[nr_ciphers]}" == TLS13* ]] || [[ "${ciph[nr_ciphers]}" == TLS_* ]] || [[ "${ciph[nr_ciphers]}" == AEAD-* ]] || continue
+               elif [[ "$proto" == -tls1_2 ]]; then
+                    if [[ "${ciph[nr_ciphers]}" == TLS13* ]] || [[ "${ciph[nr_ciphers]}" == TLS_* ]] || [[ "${ciph[nr_ciphers]}" == AEAD-* ]]; then
                          continue
                     fi
                elif [[ "${ciph[nr_ciphers]}" == *-SHA256 ]] || [[ "${ciph[nr_ciphers]}" == *-SHA384 ]] || \
@@ -4012,62 +4331,77 @@ ciphers_by_strength() {
                sigalg[nr_ciphers]=""
                ossl_supported[nr_ciphers]=true
                nr_ciphers+=1
-          done < <(actually_supported_ciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "$ossl_ciphers_proto -V")
+          done < <(actually_supported_osslciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "$ossl_ciphers_proto -V")
      fi
 
-     if [[ "$proto" == "-ssl2" ]]; then
+     if [[ $proto == -ssl2 ]]; then
           if "$using_sockets"; then
                sslv2_sockets "${sslv2_ciphers:2}" "true"
-               if [[ $? -eq 3 ]] && [[ "$V2_HELLO_CIPHERSPEC_LENGTH" -ne 0 ]]; then
-                    supported_sslv2_ciphers="$(grep "Supported cipher: " "$TEMPDIR/$NODEIP.parse_sslv2_serverhello.txt")"
-                    "$SHOW_SIGALGO" && s="$(read_sigalg_from_file "$HOSTCERT")"
-                    for (( i=0 ; i<nr_ciphers; i++ )); do
-                         if [[ "$supported_sslv2_ciphers" =~ ${normalized_hexcode[i]} ]]; then
-                              ciphers_found[i]=true
-                              "$SHOW_SIGALGO" && sigalg[i]="$s"
-                         fi
-                    done
+               if [[ $? -eq 3 ]] ; then
+                    add_proto_offered ssl2 yes
+                    if [[ "$V2_HELLO_CIPHERSPEC_LENGTH" -ne 0 ]]; then
+                         supported_sslv2_ciphers="$(grep "Supported cipher: " "$TEMPDIR/$NODEIP.parse_sslv2_serverhello.txt")"
+                         "$wide" && "$SHOW_SIGALGO" && s="$(read_sigalg_from_file "$HOSTCERT")"
+                         for (( i=0 ; i<nr_ciphers; i++ )); do
+                              if [[ "$supported_sslv2_ciphers" =~ ${normalized_hexcode[i]} ]]; then
+                                   ciphers_found[i]=true
+                                   proto_supported=true
+                                   "$wide" && "$SHOW_SIGALGO" && sigalg[i]="$s"
+                              fi
+                         done
+                    else
+                         "$wide" && outln
+                         outln " protocol supported with no cipher "
+                    fi
+               else
+                    add_proto_offered ssl2 no
+                    "$wide" && outln "\n - "
                fi
           else
                $OPENSSL s_client $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY -ssl2 >$TMPFILE 2>$ERRFILE </dev/null
                sclient_connect_successful $? "$TMPFILE"
                if [[ $? -eq 0 ]]; then
+                    add_proto_offered ssl2 yes
                     supported_sslv2_ciphers="$(grep -A 4 "Ciphers common between both SSL endpoints:" $TMPFILE)"
-                    "$SHOW_SIGALGO" && s="$(read_sigalg_from_file "$TMPFILE")"
+                    "$wide" && "$SHOW_SIGALGO" && s="$(read_sigalg_from_file "$TMPFILE")"
                     for (( i=0 ; i<nr_ciphers; i++ )); do
                          if [[ "$supported_sslv2_ciphers" =~ ${ciph[i]} ]]; then
                               ciphers_found[i]=true
-                              "$SHOW_SIGALGO" && sigalg[i]="$s"
+                              proto_supported=true
+                              "$wide" && "$SHOW_SIGALGO" && sigalg[i]="$s"
                          fi
                     done
+               else
+                    add_proto_offered ssl2 no
+                    "$wide" && outln "\n - "
                fi
           fi
      else # no SSLv2
           nr_ossl_ciphers=0
-          for (( i=0; i < nr_ciphers; i++ )); do
-               if "${ossl_supported[i]}"; then
-                    ciphers_found2[nr_ossl_ciphers]=false
-                    ciph2[nr_ossl_ciphers]="${ciph[i]}"
-                    index[nr_ossl_ciphers]=$i
-                    nr_ossl_ciphers+=1
-               fi
-          done
+          if ( "$HAS_SSL3" || [[ $proto != -ssl3 ]] ) && ( "$HAS_TLS13" || [[ $proto != -tls1_3 ]] ); then
+               for (( i=0; i < nr_ciphers; i++ )); do
+                    if "${ossl_supported[i]}"; then
+                         ciphers_found2[nr_ossl_ciphers]=false
+                         ciph2[nr_ossl_ciphers]="${ciph[i]}"
+                         index[nr_ossl_ciphers]=$i
+                         nr_ossl_ciphers+=1
+                    fi
+               done
+          fi
           if [[ $nr_ossl_ciphers -eq 0 ]]; then
                num_bundles=0
           else
                # Some servers can't handle a handshake with >= 128 ciphers. So,
                # test cipher suites in bundles of 128 or less.
                num_bundles=$nr_ossl_ciphers/128
-               mod_check=$nr_ossl_ciphers%128
-               [[ $mod_check -ne 0 ]] && num_bundles=$num_bundles+1
+               [[ $((nr_ossl_ciphers%128)) -ne 0 ]] && num_bundles+=1
 
                bundle_size=$nr_ossl_ciphers/$num_bundles
-               mod_check=$nr_ossl_ciphers%$num_bundles
-               [[ $mod_check -ne 0 ]] && bundle_size+=1
+               [[ $((nr_ossl_ciphers%num_bundles)) -ne 0 ]] && bundle_size+=1
           fi
 
           for (( bundle=0; bundle < num_bundles; bundle++ )); do
-               end_of_bundle=$bundle*$bundle_size+$bundle_size
+               end_of_bundle=$(( (bundle+1)*bundle_size ))
                [[ $end_of_bundle -gt $nr_ossl_ciphers ]] && end_of_bundle=$nr_ossl_ciphers
                for (( success=0; success==0 ; 1 )); do
                     ciphers_to_test=""
@@ -4094,12 +4428,13 @@ ciphers_by_strength() {
                                    done
                                    i=${index[i]}
                                    ciphers_found[i]=true
-                                   [[ "$proto_text" == TLS\ 1.3 ]] && kx[i]="$(read_dhtype_from_file $TMPFILE)"
-                                   if [[ ${kx[i]} == Kx=ECDH ]] || [[ ${kx[i]} == Kx=DH ]] || [[ ${kx[i]} == Kx=EDH ]]; then
+                                   proto_supported=true
+                                   "$wide" && [[ "$proto" == -tls1_3 ]] && kx[i]="$(read_dhtype_from_file $TMPFILE)"
+                                   if "$wide" && ( [[ ${kx[i]} == Kx=ECDH ]] || [[ ${kx[i]} == Kx=DH ]] || [[ ${kx[i]} == Kx=EDH ]] ); then
                                         dhlen=$(read_dhbits_from_file "$TMPFILE" quiet)
                                         kx[i]="${kx[i]} $dhlen"
                                    fi
-                                   "$SHOW_SIGALGO" && grep -q "\-\-\-\-\-BEGIN CERTIFICATE\-\-\-\-\-" $TMPFILE && \
+                                   "$wide" && "$SHOW_SIGALGO" && grep -qe '-----BEGIN CERTIFICATE-----' $TMPFILE && \
                                         sigalg[i]="$(read_sigalg_from_file "$TMPFILE")"
                               fi
                          fi
@@ -4126,16 +4461,14 @@ ciphers_by_strength() {
                # Some servers can't handle a handshake with >= 128 ciphers. So,
                # test cipher suites in bundles of 128 or less.
                num_bundles=$nr_nonossl_ciphers/128
-               mod_check=$nr_nonossl_ciphers%128
-               [[ $mod_check -ne 0 ]] && num_bundles=$num_bundles+1
+               [[ $((nr_nonossl_ciphers%128)) -ne 0 ]] && num_bundles+=1
 
                bundle_size=$nr_nonossl_ciphers/$num_bundles
-               mod_check=$nr_nonossl_ciphers%$num_bundles
-               [[ $mod_check -ne 0 ]] && bundle_size+=1
+               [[ $((nr_nonossl_ciphers%num_bundles)) -ne 0 ]] && bundle_size+=1
           fi
 
           for (( bundle=0; bundle < num_bundles; bundle++ )); do
-               end_of_bundle=$bundle*$bundle_size+$bundle_size
+               end_of_bundle=$(( (bundle+1)*bundle_size ))
                [[ $end_of_bundle -gt $nr_nonossl_ciphers ]] && end_of_bundle=$nr_nonossl_ciphers
                for (( success=0; success==0 ; 1 )); do
                     ciphers_to_test=""
@@ -4144,7 +4477,7 @@ ciphers_by_strength() {
                     done
                     success=1
                     if [[ -n "$ciphers_to_test" ]]; then
-                         if "$SHOW_SIGALGO"; then
+                         if "$wide" && "$SHOW_SIGALGO"; then
                               tls_sockets "$proto_hex" "${ciphers_to_test:2}, 00,ff" "all"
                          else
                               tls_sockets "$proto_hex" "${ciphers_to_test:2}, 00,ff" "ephemeralkey"
@@ -4157,12 +4490,13 @@ ciphers_by_strength() {
                               done
                               i=${index[i]}
                               ciphers_found[i]=true
-                              [[ "$proto_text" == TLS\ 1.3 ]] && kx[i]="$(read_dhtype_from_file "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")"
-                              if [[ ${kx[i]} == Kx=ECDH ]] || [[ ${kx[i]} == Kx=DH ]] || [[ ${kx[i]} == Kx=EDH ]]; then
+                              proto_supported=true
+                              "$wide" && [[ "$proto" == -tls1_3 ]] && kx[i]="$(read_dhtype_from_file "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")"
+                              if "$wide" && ( [[ ${kx[i]} == Kx=ECDH ]] || [[ ${kx[i]} == Kx=DH ]] || [[ ${kx[i]} == Kx=EDH ]] ); then
                                    dhlen=$(read_dhbits_from_file "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" quiet)
                                    kx[i]="${kx[i]} $dhlen"
                               fi
-                              "$SHOW_SIGALGO" && [[ -r "$HOSTCERT" ]] && \
+                              "$wide" && "$SHOW_SIGALGO" && [[ -r "$HOSTCERT" ]] && \
                                    sigalg[i]="$(read_sigalg_from_file "$HOSTCERT")"
                          fi
                     fi
@@ -4170,11 +4504,30 @@ ciphers_by_strength() {
           done
      fi
 
+     if "$wide" && [[ "${FUNCNAME[1]}" == run_server_preference ]] && "$proto_supported"; then
+          if [[ $proto_ossl == tls1_3 ]]; then
+               outln " (no server order, thus listed by strength)"
+          elif ! "$serverpref_known"; then
+               outln " (listed by strength)"
+          else
+               prln_svrty_high " (no server order, thus listed by strength)"
+          fi
+     elif "$wide" && "$proto_supported" || [[ $proto != -ssl2 ]]; then
+          outln
+     fi
+
+     cipher=""
      for (( i=0 ; i<nr_ciphers; i++ )); do
-          if "${ciphers_found[i]}" || "$SHOW_EACH_C"; then
-               export=${export2[i]}
+          if "${ciphers_found[i]}"; then
+               if [[ "$DISPLAY_CIPHERNAMES" =~ rfc ]] && [[ "${rfc_ciph[i]}" != - ]]; then
+                    cipher+="${rfc_ciph[i]} "
+               else
+                    cipher+="${ciph[i]} "
+               fi
+          fi
+          if "$wide" && ( "${ciphers_found[i]}" || "$SHOW_EACH_C" ); then
                normalized_hexcode[i]="$(tolower "${normalized_hexcode[i]}")"
-               neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${ciphers_found[i]}"
+               neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${export2[i]}" "${ciphers_found[i]}"
                available=""
                if "$SHOW_EACH_C"; then
                     if "${ciphers_found[i]}"; then
@@ -4188,9 +4541,29 @@ ciphers_by_strength() {
                outln "${sigalg[i]}"
                id="cipher$proto"
                id+="_${normalized_hexcode[i]}"
-               fileout "$id" "INFO" "$proto_text  $(neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}") $available"
+               fileout "$id" "$(get_cipher_quality_severity "${ciph[i]}")" "$proto_text  $(neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${export2[i]}") $available"
           fi
      done
+
+     if [[ $proto != -ssl2 ]]; then
+          # We handled SSLv2 above already
+          if [[ -n "$cipher" ]]; then
+               add_proto_offered $proto yes
+          else
+               add_proto_offered $proto no
+               "$wide" && outln " -"
+          fi
+     fi
+     if ! "$wide" && [[ -n "$cipher" ]]; then
+          outln
+          out "$(printf "    %-10s " "$proto_text: ")"
+          if [[ "$COLOR" -le 2 ]]; then
+               out "$(out_row_aligned_max_width "$cipher" "               " $TERM_WIDTH)"
+          else
+               out_row_aligned_max_width_by_entry "$cipher" "               " $TERM_WIDTH pr_cipher_quality
+          fi
+     fi
+     [[ -n "$cipher" ]] && fileout "supportedciphers_${proto_text//./_}" "INFO" "$cipher"
 
      "$using_sockets" && HAS_DH_BITS="$has_dh_bits"
      tmpfile_handle ${FUNCNAME[0]}${proto}.txt
@@ -4198,7 +4571,8 @@ ciphers_by_strength() {
 #FIXME: no error condition
 }
 
-# test for all ciphers per protocol locally configured (w/o distinguishing whether they are good or bad)
+# Test for all ciphers per protocol locally configured (w/o distinguishing whether they are good or bad)
+#
 run_cipher_per_proto() {
      local proto proto_hex proto_text
      local using_sockets=true
@@ -4221,9 +4595,10 @@ run_cipher_per_proto() {
      fi
      outln
      neat_header
-     echo -e " -ssl2 22 SSLv2\n -ssl3 00 SSLv3\n -tls1 01 TLS 1\n -tls1_1 02 TLS 1.1\n -tls1_2 03 TLS 1.2\n -tls1_3 04 TLS 1.3" | while read proto proto_hex proto_text; do
-          ciphers_by_strength "$proto" "$proto_hex" "$proto_text" "$using_sockets"
-     done
+     while read proto proto_hex proto_text; do
+          pr_underline "$(printf -- "%b" "$proto_text")"
+          ciphers_by_strength "$proto" "$proto_hex" "$proto_text" "$using_sockets" "true" "false"
+     done <<< "$(tm_out " -ssl2 22 SSLv2\n -ssl3 00 SSLv3\n -tls1 01 TLS 1\n -tls1_1 02 TLS 1.1\n -tls1_2 03 TLS 1.2\n -tls1_3 04 TLS 1.3")"
      return 0
 #FIXME: no error condition
 }
@@ -4287,7 +4662,7 @@ modify_clienthello() {
      offset+=4
      for (( 1; offset < tls_handshake_ascii_len; 1 )); do
           extension_type="${tls_handshake_ascii:$offset:4}"
-          offset+=+4
+          offset+=4
           len_extension=2*$(hex2dec "${tls_handshake_ascii:$offset:4}")
 
           if [[ "$extension_type" == 0000 ]] && [[ -z "$new_key_share" ]]; then
@@ -4295,17 +4670,18 @@ modify_clienthello() {
                # the SNI extension or replace it with the correct server name.
                sni_extension_found=true
                if [[ -n "$SNI" ]]; then
+                    servername=${XMPP_HOST:-${NODE}}
                     # Create a server name extension that corresponds to $SNI
-                    len_servername=${#NODE}
+                    len_servername=${#servername}
                     hexdump_format_str="$len_servername/1 \"%02x\""
-                    servername_hexstr=$(printf $NODE | hexdump -v -e "${hexdump_format_str}")
+                    servername_hexstr=$(printf $servername | hexdump -v -e "${hexdump_format_str}")
                     # convert lengths we need to fill in from dec to hex:
                     len_servername_hex=$(printf "%02x\n" $len_servername)
                     len_sni_listlen=$(printf "%02x\n" $((len_servername+3)))
                     len_sni_ext=$(printf "%02x\n" $((len_servername+5)))
                     tls_extensions+="000000${len_sni_ext}00${len_sni_listlen}0000${len_servername_hex}${servername_hexstr}"
-                    offset+=$len_extension+4
                fi
+               offset+=$len_extension+4
           elif [[ "$extension_type" != 00$KEY_SHARE_EXTN_NR ]] || [[ -z "$new_key_share" ]]; then
                # If this is in response to a HelloRetryRequest, then do
                # not copy over the old key_share extension, but
@@ -4357,7 +4733,7 @@ client_simulation_sockets() {
      local tls_hello_ascii next_packet hello_done=0
      local -i sid_len offset1 offset2
 
-     if [[ "${1:0:4}" == "1603" ]]; then
+     if [[ "${1:0:4}" == 1603 ]]; then
           clienthello="$(modify_clienthello "$1")"
           TLS_CLIENT_HELLO="${clienthello:10}"
      else
@@ -4365,15 +4741,15 @@ client_simulation_sockets() {
           TLS_CLIENT_HELLO=""
      fi
      len=${#clienthello}
-     for (( i=0; i < len; i=i+2 )); do
+     for (( i=0; i < len; i+=2 )); do
           data+=", ${clienthello:i:2}"
      done
      # same as above. If a CIPHER_SUITES string was provided, then check that it is in the ServerHello
      # this appeared 1st in yassl + MySQL (https://github.com/drwetter/testssl.sh/pull/784) but adds
      # robustness to the implementation
      # see also https://github.com/drwetter/testssl.sh/pull/797
-     if [[ "${1:0:4}" == "1603" ]]; then
-          # Extact list of cipher suites from SSLv3 or later ClientHello
+     if [[ "${1:0:4}" == 1603 ]]; then
+          # Extract list of cipher suites from SSLv3 or later ClientHello
           sid_len=4*$(hex2dec "${data:174:2}")
           offset1=178+$sid_len
           offset2=182+$sid_len
@@ -4381,12 +4757,12 @@ client_simulation_sockets() {
           offset1=186+$sid_len
           code2network "$(tolower "${data:offset1:len}")"    # convert CIPHER_SUITES to a "standardized" format
      else
-          # Extact list of cipher suites from SSLv2 ClientHello
+          # Extract list of cipher suites from SSLv2 ClientHello
           len=2*$(hex2dec "${clienthello:12:2}")
-          for (( i=22; i < 22+len; i=i+6 )); do
+          for (( i=22; i < 22+len; i+=6 )); do
                offset1=$i+2
                offset2=$i+4
-               [[ "${clienthello:i:2}" == "00" ]] && cipher_list_2send+=", ${clienthello:offset1:2},${clienthello:offset2:2}"
+               [[ "${clienthello:i:2}" == 00 ]] && cipher_list_2send+=", ${clienthello:offset1:2},${clienthello:offset2:2}"
           done
           code2network "$(tolower "${cipher_list_2send:2}")" # convert CIPHER_SUITES to a "standardized" format
      fi
@@ -4397,7 +4773,7 @@ client_simulation_sockets() {
      socksend_clienthello "${data}"
      sleep $USLEEP_SND
 
-     sockread_serverhello 32768
+     sockread 32768
      tls_hello_ascii=$(hexdump -v -e '16/1 "%02X"' "$SOCK_REPLY_FILE")
      tls_hello_ascii="${tls_hello_ascii%%[!0-9A-F]*}"
 
@@ -4408,7 +4784,7 @@ client_simulation_sockets() {
           tls_hello_ascii=$(hexdump -v -e '16/1 "%02X"' "$SOCK_REPLY_FILE")
           tls_hello_ascii="${tls_hello_ascii%%[!0-9A-F]*}"
      elif [[ $ret -eq 1 ]] || [[ $ret -eq 6 ]]; then
-          close_socket
+          close_socket 5
           TMPFILE=$SOCK_REPLY_FILE
           tmpfile_handle ${FUNCNAME[0]}.dd
           return $ret
@@ -4427,7 +4803,7 @@ client_simulation_sockets() {
 
           debugme echo -n "requesting more server hello data... "
           socksend "" $USLEEP_SND
-          sockread_serverhello 32768
+          sockread 32768
 
           next_packet=$(hexdump -v -e '16/1 "%02X"' "$SOCK_REPLY_FILE")
           next_packet="${next_packet%%[!0-9A-F]*}"
@@ -4458,7 +4834,7 @@ client_simulation_sockets() {
           hexdump -C $SOCK_REPLY_FILE | head -6
           echo
      fi
-     if [[ "${tls_hello_ascii:0:1}" == "8" ]]; then
+     if [[ "${tls_hello_ascii:0:1}" == 8 ]]; then
           parse_sslv2_serverhello "$SOCK_REPLY_FILE" "false"
           if [[ $? -eq 3 ]] && [[ "$V2_HELLO_CIPHERSPEC_LENGTH" -ne 0 ]]; then
                echo "Protocol  : SSLv2" > "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt"
@@ -4472,12 +4848,7 @@ client_simulation_sockets() {
           save=$?
 
           if [[ $save -eq 0 ]]; then
-               debugme echo "sending close_notify..."
-               if [[ "$DETECTED_TLS_VERSION" == "0300" ]]; then
-                    socksend ",x15, x03, x00, x00, x02, x02, x00" 0
-               else
-                    socksend ",x15, x03, x01, x00, x02, x02, x00" 0
-               fi
+               send_close_notify "$DETECTED_TLS_VERSION"
           fi
 
           if [[ $DEBUG -ge 2 ]]; then
@@ -4495,7 +4866,7 @@ client_simulation_sockets() {
           debugme tmln_out
      fi
 
-     close_socket
+     close_socket 5
      TMPFILE=$SOCK_REPLY_FILE
      tmpfile_handle ${FUNCNAME[0]}.dd
      return $ret
@@ -4507,10 +4878,10 @@ run_client_simulation() {
      local names=()
      local short=()
      local protos=()
-     local ciphers=()
+     local ch_ciphers=()
      local ciphersuites=()
      local tlsvers=()
-     local sni=()
+     local ch_sni=()
      local warning=()
      local handshakebytes=()
      local lowest_protocol=()
@@ -4567,21 +4938,19 @@ run_client_simulation() {
      outln
      debugme echo
 
-     if "$WIDE"; then
-          if [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]]; then
-               out " Browser                      Protocol  Cipher Suite Name (OpenSSL)       "
-               ( "$using_sockets" || "$HAS_DH_BITS") && out "Forward Secrecy"
-               outln
-               out "--------------------------------------------------------------------------"
-          else
-               out " Browser                      Protocol  Cipher Suite Name (IANA/RFC)                      "
-               ( "$using_sockets" || "$HAS_DH_BITS") && out "Forward Secrecy"
-               outln
-               out "------------------------------------------------------------------------------------------"
-          fi
-          ( "$using_sockets" || "$HAS_DH_BITS") && out "----------------------"
+     if [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]]; then
+          out " Browser                      Protocol  Cipher Suite Name (OpenSSL)       "
+          ( "$using_sockets" || "$HAS_DH_BITS") && out "Forward Secrecy"
           outln
+          out "--------------------------------------------------------------------------"
+     else
+          out " Browser                      Protocol  Cipher Suite Name (IANA/RFC)                      "
+          ( "$using_sockets" || "$HAS_DH_BITS") && out "Forward Secrecy"
+          outln
+          out "------------------------------------------------------------------------------------------"
      fi
+     ( "$using_sockets" || "$HAS_DH_BITS") && out "----------------------"
+     outln
      if ! "$using_sockets"; then
           # We can't use the connectivity checker here as of now the openssl reply is always empty (reason??)
           save_max_ossl_fail=$MAX_OSSL_FAIL
@@ -4613,12 +4982,12 @@ run_client_simulation() {
                                    # https://github.com/openssl/openssl/blob/master/apps/ecparam.c#L221 + ./ssl/t1_lib.c
                                    [[ "$curve" =~ secp256r1 ]] && curve="${curve//secp256r1/prime256v1}"
                                    [[ "$curve" =~ secp192r1 ]] && curve="${curve//secp192r1/prime192v1}"
-                                   [[ "$OSSL_SUPPORTED_CURVES" =~ " $curve " ]] && supported_curves+=":$curve"
+                                   [[ "$OSSL_SUPPORTED_CURVES" =~ \ $curve\  ]] && supported_curves+=":$curve"
                               done
                               curves[i]=""
                               [[ -n "$supported_curves" ]] && curves[i]="-curves ${supported_curves:1}"
                          fi
-                         options="$(s_client_options "-cipher ${ciphers[i]} -ciphersuites "\'${ciphersuites[i]}\'" ${curves[i]} ${protos[i]} $STARTTLS $BUGS $PROXY -connect $NODEIP:$PORT ${sni[i]}")"
+                         options="$(s_client_options "-cipher ${ch_ciphers[i]} -ciphersuites "\'${ciphersuites[i]}\'" ${curves[i]} ${protos[i]} $STARTTLS $BUGS $PROXY -connect $NODEIP:$PORT ${ch_sni[i]}")"
                          debugme echo "$OPENSSL s_client $options  </dev/null"
                          $OPENSSL s_client $options </dev/null >$TMPFILE 2>$ERRFILE
                          sclient_connect_successful $? $TMPFILE
@@ -4667,7 +5036,7 @@ run_client_simulation() {
                                         debugme pr_local_problem "TLS 1.3 not supported, "
                                         continue
                                    fi
-                                   options="$(s_client_options "$tls -cipher ${ciphers[i]} -ciphersuites "\'${ciphersuites[i]}\'" ${curves[i]} $STARTTLS $BUGS $PROXY -connect $NODEIP:$PORT ${sni[i]}")"
+                                   options="$(s_client_options "$tls -cipher ${ch_ciphers[i]} -ciphersuites "\'${ciphersuites[i]}\'" ${curves[i]} $STARTTLS $BUGS $PROXY -connect $NODEIP:$PORT ${ch_sni[i]}")"
                                    debugme echo "$OPENSSL s_client $options  </dev/null"
                                    $OPENSSL s_client $options  </dev/null >$TMPFILE 2>$ERRFILE
                                    sclient_connect_successful $? $TMPFILE
@@ -4691,27 +5060,19 @@ run_client_simulation() {
                               cipher="$(openssl2rfc "$cipher")"
                               [[ -z "$cipher" ]] && cipher=$(get_cipher $TMPFILE)
                          fi
-                         out "$proto "
-                         "$WIDE" && out "  "
+                         out "$proto   "
                          if [[ "$COLOR" -le 2 ]]; then
                               out "$cipher"
                          else
                               pr_cipher_quality "$cipher"
                          fi
-                         if "$WIDE"; then
-                              if [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]]; then
-                                   for (( j=${#cipher}; j < 34; j++ )); do
-                                        out " "
-                                   done
-                              else
-                                   for (( j=${#cipher}; j < 50; j++ )); do
-                                        out " "
-                                   done
-                              fi
+                         if [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]]; then
+                              print_n_spaces "$((34-${#cipher}))"
+                         else
+                              print_n_spaces "$((50-${#cipher}))"
                          fi
                          if [[ -n "$what_dh" ]]; then
                               [[ -n "$curve" ]] && curve="($curve)"
-                              "$WIDE" || out ", "
                               if [[ "$what_dh" == ECDH ]]; then
                                    pr_ecdh_quality "$bits" "$(printf -- "%-12s" "$bits bit $what_dh") $curve"
                               else
@@ -4719,7 +5080,6 @@ run_client_simulation() {
                               fi
                          else
                               if "$HAS_DH_BITS" || ( "$using_sockets" && [[ -n "${handshakebytes[i]}" ]] ); then
-                                   "$WIDE" || out ", "
                                    out "No FS"
                               fi
                          fi
@@ -4745,20 +5105,43 @@ run_client_simulation() {
      return $ret
 }
 
-# generic function whether $1 is supported by s_client ($2: string to display, currently nowhere being used)
-#
-locally_supported() {
-     [[ -n "$2" ]] && out "$2 "
-     if $OPENSSL s_client "$1" -connect x 2>&1 | grep -aq "unknown option"; then
-          prln_local_problem "$OPENSSL doesn't support \"s_client $1\""
-          return 7
-     fi
+# generic function whether $1 is supported by s_client.
+# Currently only used for protocols that's why we saved -connect $NXCONNECT.
+sclient_supported() {
+     case "$1" in
+          -ssl2)
+               "$HAS_SSL2" || return 7
+               ;;
+          -ssl3)
+               "$HAS_SSL3" || return 7
+               ;;
+          -tls1_3)
+               "$HAS_TLS13" || return 7
+               ;;
+          *)   if $OPENSSL s_client "$1" </dev/null 2>&1 | grep -aiq "unknown option"; then
+                    return 7
+               fi
+               ;;
+     esac
      return 0
 }
 
+# generic function whether $1 is supported by s_client ($2: string to display)
+#TODO: we need to consider to remove the two instances from where this is called.
+#
+locally_supported() {
+     local -i ret
 
-# The protocol check in run_protocols needs to be redone. The using_socket part there kind of sucks.
-# 1) we need to have a variable where the results are being stored so that every other test doesn't have to do this agai
+     [[ -n "$2" ]] && out "$2 "
+     sclient_supported "$1"
+     ret=$?
+     [[ $ret -eq 7 ]] && prln_local_problem "$OPENSSL doesn't support \"s_client $1\""
+     return $ret
+}
+
+
+# The protocol check in run_protocols needs to be redone. The using_sockets part there kind of sucks.
+# 1) we need to have a variable where the results are being stored so that every other test doesn't have to do this again
 #   --> we have that but certain information like "downgraded" are not being passed. That's not ok for run_protocols()/
 #   for all other functions we can use it
 # 2) the code is old and one can do that way better
@@ -4768,23 +5151,55 @@ locally_supported() {
 #
 run_prototest_openssl() {
      local -i ret=0
+     local protos proto
 
-     ! locally_supported "$1" && return 7
-     $OPENSSL s_client $(s_client_options "-state $1 $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE </dev/null
+     sclient_supported "$1" || return 7
+     case "$1" in
+          -ssl2) protos="-ssl2" ;;
+          -ssl3) protos="-ssl3" ;;
+          -tls1) protos="-no_tls1_2 -no_tls1_1 -no_ssl2"; "$HAS_TLS13" && protos+=" -no_tls1_3" ;;
+          -tls1_1) protos="-no_tls1_2 -no_ssl2"; "$HAS_TLS13" && protos+=" -no_tls1_3" ;;
+          -tls1_2) protos="-no_ssl2"; "$HAS_TLS13" && protos+=" -no_tls1_3" ;;
+          -tls1_3) protos="" ;;
+     esac
+
+     #FIXME: we have here HAS_SSL(2|3) and more but we don't use that
+     $OPENSSL s_client $(s_client_options "-state $protos $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>&1 </dev/null
      sclient_connect_successful $? $TMPFILE
      ret=$?
      debugme grep -E "error|failure" $ERRFILE | grep -Eav "unable to get local|verify error"
-     # try again without $PROXY
-     $OPENSSL s_client $(s_client_options "-state $1 $STARTTLS $BUGS -connect $NODEIP:$PORT $SNI") >$TMPFILE 2>$ERRFILE </dev/null
-     sclient_connect_successful $? $TMPFILE
-     ret=$?
-     debugme grep -E "error|failure" $ERRFILE | grep -Eav "unable to get local|verify error"
-     grep -aq "no cipher list" $TMPFILE && ret=5       # <--- important indicator for SSL2 (maybe others, too)
+     if [[ $ret -ne 0 ]]; then
+          if grep -aq "no cipher list" $TMPFILE; then
+               ret=5       # <--- important indicator for SSL2 (maybe others, too)
+          else
+               # try again without $PROXY
+               $OPENSSL s_client $(s_client_options "-state $protos $STARTTLS $BUGS -connect $NODEIP:$PORT $SNI") >$TMPFILE 2>&1 </dev/null
+               sclient_connect_successful $? $TMPFILE
+               ret=$?
+               debugme grep -E "error|failure" $ERRFILE | grep -Eav "unable to get local|verify error"
+               grep -aq "no cipher list" $TMPFILE && ret=5       # <--- important indicator for SSL2 (maybe others, too)
+          fi
+     fi
+     if [[ $ret -eq 0 ]]; then
+          proto="$(get_protocol "$TMPFILE")"
+          proto=${proto/\./_}
+          proto=${proto/v/}
+          proto="-$(tolower $proto)"
+          [[ "$proto" != $1 ]] && ret=2
+          case "$proto" in
+               -ssl3) DETECTED_TLS_VERSION="0300" ;;
+               -tls1) DETECTED_TLS_VERSION="0301" ;;
+               -tls1_1) DETECTED_TLS_VERSION="0302" ;;
+               -tls1_2) DETECTED_TLS_VERSION="0303" ;;
+               -tls1_3) DETECTED_TLS_VERSION="0304" ;;
+          esac
+     fi
      tmpfile_handle ${FUNCNAME[0]}$1.txt
      return $ret
 
      # 0: offered
      # 1: not offered
+     # 2: downgraded
      # 5: protocol ok, but no cipher
      # 7: no local support
 }
@@ -4796,16 +5211,18 @@ run_prototest_openssl() {
 #
 # arg1: protocol
 # arg2: available (yes) or not (no)
-add_tls_offered() {
-     if [[ "$PROTOS_OFFERED" =~ $1: ]]; then
-          # the ":" is mandatory here (and @ other places), otherwise e.g. tls1 will match tls1_2
-          :
-     else
-           PROTOS_OFFERED+="${1}:$2 "
+add_proto_offered() {
+     # the ":" is mandatory here (and @ other places), otherwise e.g. tls1 will match tls1_2
+     if [[ "$2" == yes ]] && [[ "$PROTOS_OFFERED" =~ $1:no ]]; then
+          # In rare cases, a protocol may be marked as not available even though it is
+          # (e.g., the connection fails with tls_sockets() but succeeds with $OPENSSL.
+          PROTOS_OFFERED="${PROTOS_OFFERED/$1:no/$1:$2}"
+     elif [[ ! "$PROTOS_OFFERED" =~ $1: ]]; then
+          PROTOS_OFFERED+="${1}:$2 "
      fi
 }
 
-# function which checks whether SSLv2 - TLS 1.2 is being offered, see add_tls_offered()
+# function which checks whether SSLv2 - TLS 1.2 is being offered, see add_proto_offered()
 # arg1:    protocol string or hex code for TLS protocol
 # echos:   0 if proto known being offered, 1: known not being offered, 2: we don't know yet whether proto is being offered
 # return value is always zero
@@ -4853,7 +5270,9 @@ run_protocols() {
      local lines nr_ciphers_detected
      local tls13_ciphers_to_test=""
      local i drafts_offered=""  drafts_offered_str="" supported_versions debug_recomm=""
-     local -i ret=0 subret=0
+     local tls12_detected_version
+     local -i ret=0 ret_val_ssl3 ret_val_tls1 ret_val_tls11 ret_val_tls12=0 ret_val_tls13=0
+     local offers_tls13=false
      local jsonID="SSLv2"
 
      outln; pr_headline " Testing protocols "
@@ -4870,7 +5289,7 @@ run_protocols() {
           fi
      fi
      outln
-     [[ "$DEBUG" -le 1 ]] && debug_recomm=", rerun w DEBUG>=2 or --ssl-native"
+     [[ "$DEBUG" -le 1 ]] && debug_recomm=", rerun with DEBUG>=2 or --ssl-native"
 
      pr_bold " SSLv2      ";
      if ! "$SSL_NATIVE"; then
@@ -4890,16 +5309,16 @@ run_protocols() {
                1) # no sslv2 server hello returned, like in openlitespeed which returns HTTP!
                     prln_svrty_best "not offered (OK)"
                     fileout "$jsonID" "OK" "not offered"
-                    add_tls_offered ssl2 no
+                    add_proto_offered ssl2 no
                     ;;
                0) # reset
                     prln_svrty_best "not offered (OK)"
                     fileout "$jsonID" "OK" "not offered"
-                    add_tls_offered ssl2 no
+                    add_proto_offered ssl2 no
                     ;;
                4)   out "likely "; pr_svrty_best "not offered (OK), "
                     fileout "$jsonID" "OK" "likely not offered"
-                    add_tls_offered ssl2 no
+                    add_proto_offered ssl2 no
                     pr_warning "received 4xx/5xx after STARTTLS handshake"; outln "$debug_recomm"
                     fileout "$jsonID" "WARN" "received 4xx/5xx after STARTTLS handshake${debug_recomm}"
                     ;;
@@ -4907,7 +5326,8 @@ run_protocols() {
                     [[ "$DEBUG" -ge 2 ]] && tm_out "  ($lines lines)  "
                     if [[ "$lines" -gt 1 ]]; then
                          nr_ciphers_detected=$((V2_HELLO_CIPHERSPEC_LENGTH / 3))
-                         add_tls_offered ssl2 yes
+                         add_proto_offered ssl2 yes
+                         set_grade_cap "F" "SSLv2 is offered"
                          if [[ 0 -eq "$nr_ciphers_detected" ]]; then
                               prln_svrty_high "supported but couldn't detect a cipher and vulnerable to CVE-2015-3197 ";
                               fileout "$jsonID" "HIGH" "offered, no cipher" "CVE-2015-3197" "CWE-310"
@@ -4928,17 +5348,20 @@ run_protocols() {
           case $? in
                0)   prln_svrty_critical   "offered (NOT ok)"
                     fileout "$jsonID" "CRITICAL" "offered"
-                    add_tls_offered ssl2 yes
+                    add_proto_offered ssl2 yes
+                    set_grade_cap "F" "SSLv2 is offered"
                     ;;
                1)   prln_svrty_best "not offered (OK)"
                     fileout "$jsonID" "OK" "not offered"
-                    add_tls_offered ssl2 no
+                    add_proto_offered ssl2 no
                     ;;
-               5)   pr_svrty_high "CVE-2015-3197: $supported_no_ciph2";
+               5)   prln_svrty_high "CVE-2015-3197: $supported_no_ciph2";
                     fileout "$jsonID" "HIGH" "offered, no cipher" "CVE-2015-3197" "CWE-310"
-                    add_tls_offered ssl2 yes
+                    add_proto_offered ssl2 yes
+                    set_grade_cap "F" "SSLv2 is offered"
                     ;;
-               7)   fileout "$jsonID" "INFO" "not tested due to lack of local support"
+               7)   prln_local_problem "$OPENSSL doesn't support \"s_client -ssl2\""
+                    fileout "$jsonID" "WARN" "not tested due to lack of local support"
                     ((ret++))
                     ;;
           esac
@@ -4946,21 +5369,28 @@ run_protocols() {
 
      pr_bold " SSLv3      ";
      jsonID="SSLv3"
-     if "$using_sockets"; then
+     if [[ $(has_server_protocol ssl3) -eq 0 ]]; then
+          ret_val_ssl3=0
+     elif "$using_sockets"; then
           tls_sockets "00" "$TLS_CIPHER"
+          ret_val_ssl3=$?
      else
           run_prototest_openssl "-ssl3"
+          ret_val_ssl3=$?
      fi
-     case $? in
+     case $ret_val_ssl3 in
           0)   prln_svrty_high "offered (NOT ok)"
                fileout "$jsonID" "HIGH" "offered"
-               latest_supported="0300"
-               latest_supported_string="SSLv3"
-               add_tls_offered ssl3 yes
+               if "$using_sockets" || "$HAS_SSL3"; then
+                    latest_supported="0300"
+                    latest_supported_string="SSLv3"
+               fi
+               add_proto_offered ssl3 yes
+               set_grade_cap "B" "SSLv3 is offered"
                ;;
           1)   prln_svrty_best "not offered (OK)"
                fileout "$jsonID" "OK" "not offered"
-               add_tls_offered ssl3 no
+               add_proto_offered ssl3 no
                ;;
           2)   if [[ "$DETECTED_TLS_VERSION" == 03* ]]; then
                     detected_version_string="TLSv1.$((0x$DETECTED_TLS_VERSION-0x0301))"
@@ -4979,25 +5409,26 @@ run_protocols() {
                ;;
           3)   pr_svrty_best "not offered (OK), "
                fileout "$jsonID" "OK" "not offered"
-               add_tls_offered ssl3 no
+               add_proto_offered ssl3 no
                pr_warning "SSL downgraded to STARTTLS plaintext"; outln
                fileout "$jsonID" "WARN" "SSL downgraded to STARTTLS plaintext"
                ;;
           4)   out "likely "; pr_svrty_best "not offered (OK), "
                fileout "$jsonID" "OK" "not offered"
-               add_tls_offered ssl3 no
+               add_proto_offered ssl3 no
                pr_warning "received 4xx/5xx after STARTTLS handshake"; outln "$debug_recomm"
                fileout "$jsonID" "WARN" "received 4xx/5xx after STARTTLS handshake${debug_recomm}"
                ;;
           5)   pr_svrty_high "$supported_no_ciph1"               # protocol detected but no cipher --> comes from run_prototest_openssl
                fileout "$jsonID" "HIGH" "$supported_no_ciph1"
-               add_tls_offered ssl3 yes
+               add_proto_offered ssl3 yes
+               set_grade_cap "B" "SSLv3 is offered"
                ;;
           7)   if "$using_sockets" ; then
                     # can only happen in debug mode
                     pr_warning "strange reply, maybe a client side problem with SSLv3"; outln "$debug_recomm"
                else
-                    # warning on screen came already from locally_supported()
+                    prln_local_problem "$OPENSSL doesn't support \"s_client -ssl3\""
                     fileout "$jsonID" "WARN" "not tested due to lack of local support"
                fi
                ;;
@@ -5008,21 +5439,26 @@ run_protocols() {
 
      pr_bold " TLS 1      ";
      jsonID="TLS1"
-     if "$using_sockets"; then
+     if [[ $(has_server_protocol tls1) -eq 0 ]]; then
+          ret_val_tls1=0
+     elif "$using_sockets"; then
           tls_sockets "01" "$TLS_CIPHER"
+          ret_val_tls1=$?
      else
           run_prototest_openssl "-tls1"
+          ret_val_tls1=$?
      fi
-     case $? in
-          0)   outln "offered"
-               fileout "$jsonID" "INFO" "offered"
+     case $ret_val_tls1 in
+          0)   pr_svrty_low "offered" ; outln " (deprecated)"
+               fileout "$jsonID" "LOW" "offered (deprecated)"
                latest_supported="0301"
                latest_supported_string="TLSv1.0"
-               add_tls_offered tls1 yes
+               add_proto_offered tls1 yes
+               set_grade_cap "B" "TLS 1.0 offered"
                ;;                                                # nothing wrong with it -- per se
           1)   out "not offered"
-               add_tls_offered tls1 no
-               if ! "$using_sockets" || [[ -z $latest_supported ]]; then
+               add_proto_offered tls1 no
+               if [[ -z $latest_supported ]]; then
                     outln
                     fileout "$jsonID" "INFO" "not offered"       # neither good or bad
                else
@@ -5031,7 +5467,7 @@ run_protocols() {
                fi
                ;;
           2)   pr_svrty_medium "not offered"
-               add_tls_offered tls1 no
+               add_proto_offered tls1 no
                if [[ "$DETECTED_TLS_VERSION" == 0300 ]]; then
                     [[ $DEBUG -ge 1 ]] && tm_out " -- downgraded"
                     outln
@@ -5052,25 +5488,26 @@ run_protocols() {
                ;;
           3)   out "not offered, "
                fileout "$jsonID" "OK" "not offered"
-               add_tls_offered tls1 no
+               add_proto_offered tls1 no
                pr_warning "TLS downgraded to STARTTLS plaintext"; outln
                fileout "$jsonID" "WARN" "TLS downgraded to STARTTLS plaintext"
                ;;
           4)   out "likely not offered, "
                fileout "$jsonID" "INFO" "likely not offered"
-               add_tls_offered tls1 no
+               add_proto_offered tls1 no
                pr_warning "received 4xx/5xx after STARTTLS handshake"; outln "$debug_recomm"
                fileout "$jsonID" "WARN" "received 4xx/5xx after STARTTLS handshake${debug_recomm}"
                ;;
           5)   outln "$supported_no_ciph1"                                 # protocol detected but no cipher --> comes from run_prototest_openssl
                fileout "$jsonID" "INFO" "$supported_no_ciph1"
-               add_tls_offered tls1 yes
+               add_proto_offered tls1 yes
+               set_grade_cap "B" "TLS 1.0 offered"
                ;;
           7)   if "$using_sockets" ; then
                     # can only happen in debug mode
                     pr_warning "strange reply, maybe a client side problem with TLS 1.0"; outln "$debug_recomm"
                else
-                    # warning on screen came already from locally_supported()
+                    prln_local_problem "$OPENSSL doesn't support \"s_client -tls1\""
                     fileout "$jsonID" "WARN" "not tested due to lack of local support"
                fi
                ((ret++))
@@ -5082,30 +5519,35 @@ run_protocols() {
 
      pr_bold " TLS 1.1    ";
      jsonID="TLS1_1"
-     if "$using_sockets"; then
+     if [[ $(has_server_protocol tls1_1) -eq 0 ]]; then
+          ret_val_tls11=0
+     elif "$using_sockets"; then
           tls_sockets "02" "$TLS_CIPHER"
+          ret_val_tls11=$?
      else
           run_prototest_openssl "-tls1_1"
+          ret_val_tls11=$?
      fi
-     case $? in
-          0)   outln "offered"
-               fileout "$jsonID" "INFO" "offered"
+     case $ret_val_tls11 in
+          0)   pr_svrty_low "offered" ; outln " (deprecated)"
+               fileout "$jsonID" "LOW" "offered (deprecated)"
                latest_supported="0302"
                latest_supported_string="TLSv1.1"
-               add_tls_offered tls1_1 yes
+               add_proto_offered tls1_1 yes
+               set_grade_cap "B" "TLS 1.1 offered"
                ;;                                                # nothing wrong with it
           1)   out "not offered"
-               add_tls_offered tls1_1 no
-               if ! "$using_sockets" || [[ -z $latest_supported ]]; then
+               add_proto_offered tls1_1 no
+               if [[ -z $latest_supported ]]; then
                     outln
-                    fileout "$jsonID" "INFO" "is not offered"    # neither good or bad
+                    fileout "$jsonID" "INFO" "not offered"    # neither good or bad
                else
                     prln_svrty_critical " -- connection failed rather than downgrading to $latest_supported_string"
                     fileout "$jsonID" "CRITICAL" "connection failed rather than downgrading to $latest_supported_string"
                fi
                ;;
           2)   out "not offered"
-               add_tls_offered tls1_1 no
+               add_proto_offered tls1_1 no
                if [[ "$DETECTED_TLS_VERSION" == "$latest_supported" ]]; then
                     [[ $DEBUG -ge 1 ]] && tm_out " -- downgraded"
                     outln
@@ -5129,25 +5571,26 @@ run_protocols() {
                ;;
           3)   out "not offered, "
                fileout "$jsonID" "OK" "not offered"
-               add_tls_offered tls1_1 no
+               add_proto_offered tls1_1 no
                pr_warning "TLS downgraded to STARTTLS plaintext"; outln
                fileout "$jsonID" "WARN" "TLS downgraded to STARTTLS plaintext"
                ;;
           4)   out "likely not offered, "
-               fileout "$jsonID" "INFO" "is not offered"
-               add_tls_offered tls1_1 no
+               fileout "$jsonID" "INFO" "not offered"
+               add_proto_offered tls1_1 no
                pr_warning "received 4xx/5xx after STARTTLS handshake"; outln "$debug_recomm"
                fileout "$jsonID" "WARN" "received 4xx/5xx after STARTTLS handshake${debug_recomm}"
                ;;
           5)   outln "$supported_no_ciph1"                       # protocol detected but no cipher --> comes from run_prototest_openssl
                fileout "$jsonID" "INFO" "$supported_no_ciph1"
-               add_tls_offered tls1_1 yes
+               add_proto_offered tls1_1 yes
+               set_grade_cap "B" "TLS 1.1 offered"
                ;;
           7)   if "$using_sockets" ; then
                     # can only happen in debug mode
                     pr_warning "strange reply, maybe a client side problem with TLS 1.1"; outln "$debug_recomm"
                else
-                    # warning on screen came already from locally_supported()
+                    prln_local_problem "$OPENSSL doesn't support \"s_client -tls1_1\""
                     fileout "$jsonID" "WARN" "not tested due to lack of local support"
                fi
                ((ret++))
@@ -5157,85 +5600,123 @@ run_protocols() {
                ;;
      esac
 
-     pr_bold " TLS 1.2    ";
-     jsonID="TLS1_2"
-     if "$using_sockets"; then
+     # Now, we are doing a basic/pre test for TLS 1.2 and 1.3 in order not to penalize servers (medium)
+     # running TLS 1.3 only when TLS 1.2 is not offered.  0 and 5 are the return codes for
+     # TLS 1.3 support (kind of, including deprecated pre-versions of TLS 1.3)
+     if [[ $(has_server_protocol tls1_2) -eq 0 ]]; then
+          ret_val_tls12=0
+     elif "$using_sockets"; then
           tls_sockets "03" "$TLS12_CIPHER"
-          subret=$?
-          if [[ $subret -ne 0 ]]; then
-               tls_sockets "03" "$TLS12_CIPHER_2ND_TRY"
-               [[ $? -eq 0 ]] && subret=0
-               # see #807 and #806
-          fi
+          ret_val_tls12=$?
+          tls12_detected_version="$DETECTED_TLS_VERSION"
      else
           run_prototest_openssl "-tls1_2"
-          subret=$?
+          ret_val_tls12=$?
+          tls12_detected_version="$DETECTED_TLS_VERSION"
      fi
-     case $subret in
+
+     if [[ $(has_server_protocol tls1_3) -eq 0 ]]; then
+          ret_val_tls13=0
+     elif "$using_sockets"; then
+          # Need to ensure that at most 128 ciphers are included in ClientHello.
+          # If the TLSv1.2 test in determine_optimal_sockets_params()  was successful,
+          # then use the 5 TLSv1.3 ciphers plus the cipher selected in the TLSv1.2 test.
+          # If the TLSv1.2 test was not successful, then just use the 5 TLSv1.3 ciphers
+          # plus the list of ciphers used in all of the previous tests ($TLS_CIPHER).
+          if [[ -n "$TLS12_CIPHER_OFFERED" ]]; then
+               tls13_ciphers_to_test="$TLS13_CIPHER, $TLS12_CIPHER_OFFERED, 00,ff"
+          else
+               tls13_ciphers_to_test="$TLS13_CIPHER,$TLS_CIPHER"
+          fi
+          tls_sockets "04" "$tls13_ciphers_to_test"
+          ret_val_tls13=$?
+     else
+          run_prototest_openssl "-tls1_3"
+          ret_val_tls13=$?
+     fi
+     if [[ $ret_val_tls13 -eq 0 ]] || [[ $ret_val_tls13 -eq 5 ]]; then
+          offers_tls13=true             # This variable comes in handy for further if statements below
+     fi
+     # Done with pretesting TLS 1.2 and 1.3.
+
+     pr_bold " TLS 1.2    ";
+     jsonID="TLS1_2"
+     case $ret_val_tls12 in
           0)   prln_svrty_best "offered (OK)"
                fileout "$jsonID" "OK" "offered"
                latest_supported="0303"
                latest_supported_string="TLSv1.2"
-               add_tls_offered tls1_2 yes
-               ;;                                  # GCM cipher in TLS 1.2: very good!
-          1)   pr_svrty_medium "not offered"
-               add_tls_offered tls1_2 no
-               if ! "$using_sockets" || [[ -z $latest_supported ]]; then
+               add_proto_offered tls1_2 yes
+               ;;                                                     # GCM cipher in TLS 1.2: very good!
+          1)   add_proto_offered tls1_2 no
+               if "$offers_tls13"; then
+                    out "not offered"
+               else
+                    pr_svrty_medium "not offered"
+               fi
+               if [[ -z $latest_supported ]]; then
                     outln
-                    fileout "$jsonID" "MEDIUM" "not offered" # no GCM, penalty
+                    if "$offers_tls13"; then
+                         fileout "$jsonID" "INFO" "not offered"
+                    else
+                         fileout "$jsonID" "MEDIUM" "not offered"     # TLS 1.3, no TLS 1.2 --> no GCM, penalty
+                         set_grade_cap "C" "TLS 1.2 or TLS 1.3 are not offered"
+                    fi
                else
                     prln_svrty_critical " -- connection failed rather than downgrading to $latest_supported_string"
                     fileout "$jsonID" "CRITICAL" "connection failed rather than downgrading to $latest_supported_string"
                fi
                ;;
-          2)   pr_svrty_medium "not offered"
-               add_tls_offered tls1_2 no
-               if [[ "$DETECTED_TLS_VERSION" == 0300 ]]; then
+          2)   add_proto_offered tls1_2 no
+               set_grade_cap "C" "TLS 1.2 is not offered"
+               pr_svrty_medium "not offered and downgraded to a weaker protocol"
+               if [[ "$tls12_detected_version" == 0300 ]]; then
                     detected_version_string="SSLv3"
-               elif [[ "$DETECTED_TLS_VERSION" == 03* ]]; then
-                    detected_version_string="TLSv1.$((0x$DETECTED_TLS_VERSION-0x0301))"
+               elif [[ "$tls12_detected_version" == 03* ]]; then
+                    detected_version_string="TLSv1.$((0x$tls12_detected_version-0x0301))"
                fi
-               if [[ "$DETECTED_TLS_VERSION" == "$latest_supported" ]]; then
-                    [[ $DEBUG -ge 1 ]] && tm_out " -- downgraded"
+               if [[ "$tls12_detected_version" == "$latest_supported" ]]; then
                     outln
                     fileout "$jsonID" "MEDIUM" "not offered and downgraded to a weaker protocol"
-               elif [[ "$DETECTED_TLS_VERSION" == 03* ]] && [[ 0x$DETECTED_TLS_VERSION -lt 0x$latest_supported ]]; then
+               elif [[ "$tls12_detected_version" == 03* ]] && [[ 0x$tls12_detected_version -lt 0x$latest_supported ]]; then
                     prln_svrty_critical " -- server supports $latest_supported_string, but downgraded to $detected_version_string"
                     fileout "$jsonID" "CRITICAL" "not offered, and downgraded to $detected_version_string rather than $latest_supported_string"
-               elif [[ "$DETECTED_TLS_VERSION" == 03* ]] && [[ 0x$DETECTED_TLS_VERSION -gt 0x0303 ]]; then
+               elif [[ "$tls12_detected_version" == 03* ]] && [[ 0x$tls12_detected_version -gt 0x0303 ]]; then
                     prln_svrty_critical " -- server responded with higher version number ($detected_version_string) than requested by client"
                     fileout "$jsonID" "CRITICAL" "not offered, server responded with higher version number ($detected_version_string) than requested by client"
                else
-                    if [[ ${#DETECTED_TLS_VERSION} -eq 4 ]]; then
-                         prln_svrty_critical "server responded with version number ${DETECTED_TLS_VERSION:0:2}.${DETECTED_TLS_VERSION:2:2} (NOT ok)"
-                         fileout "$jsonID" "CRITICAL" "server responded with version number ${DETECTED_TLS_VERSION:0:2}.${DETECTED_TLS_VERSION:2:2}"
+                    if [[ ${#tls12_detected_version} -eq 4 ]]; then
+                         prln_svrty_critical "server responded with version number ${tls12_detected_version:0:2}.${tls12_detected_version:2:2} (NOT ok)"
+                         fileout "$jsonID" "CRITICAL" "server responded with version number ${tls12_detected_version:0:2}.${tls12_detected_version:2:2}"
                     else
-                         prln_svrty_medium " -- strange, server ${DETECTED_TLS_VERSION}"
-                         fileout "$jsonID" "MEDIUM" "strange, server ${DETECTED_TLS_VERSION}"
+                         prln_svrty_medium " -- strange, server ${tls12_detected_version}"
+                         fileout "$jsonID" "MEDIUM" "strange, server ${tls12_detected_version}"
                     fi
                fi
                ;;
-           3)  out "not offered, "
-               fileout "$jsonID" "OK" "not offered"
-               add_tls_offered tls1_2 no
+          3)   out "not offered, "
+               fileout "$jsonID" "INFO" "not offered"
+               add_proto_offered tls1_2 no
+               set_grade_cap "C" "TLS 1.2 is not offered"
                pr_warning "TLS downgraded to STARTTLS plaintext"; outln
                fileout "$jsonID" "WARN" "TLS downgraded to STARTTLS plaintext"
                ;;
-           4)  out "likely "; pr_svrty_medium "not offered, "
+          4)   out "likely "; pr_svrty_medium "not offered, "
                fileout "$jsonID" "MEDIUM" "not offered"
-               add_tls_offered tls1_2 no
+               add_proto_offered tls1_2 no
+               set_grade_cap "C" "TLS 1.2 is not offered"
                pr_warning "received 4xx/5xx after STARTTLS handshake"; outln "$debug_recomm"
                fileout "$jsonID" "WARN" "received 4xx/5xx after STARTTLS handshake${debug_recomm}"
                ;;
-           5)  outln "$supported_no_ciph1"                  # protocol detected, but no cipher --> comes from run_prototest_openssl
+          5)   outln "$supported_no_ciph1"                  # protocol detected, but no cipher --> comes from run_prototest_openssl
                fileout "$jsonID" "INFO" "$supported_no_ciph1"
-               add_tls_offered tls1_2 yes
+               add_proto_offered tls1_2 yes
                ;;
-           7)  if "$using_sockets" ; then
+          7)   if "$using_sockets" ; then
                     # can only happen in debug mode
                     pr_warning "strange reply, maybe a client side problem with TLS 1.2"; outln "$debug_recomm"
                else
-                    # warning on screen came already from locally_supported()
+                    prln_local_problem "$OPENSSL doesn't support \"s_client -tls1_2\""
                     fileout "$jsonID" "WARN" "not tested due to lack of local support"
                fi
                ((ret++))
@@ -5247,45 +5728,18 @@ run_protocols() {
 
      pr_bold " TLS 1.3    ";
      jsonID="TLS1_3"
-     if "$using_sockets"; then
-          # Need to ensure that at most 128 ciphers are included in ClientHello.
-          # If the TLSv1.2 test was successful, then use the 5 TLSv1.3 ciphers
-          # plus the cipher selected in the TLSv1.2 test. If the TLSv1.2 test was
-          # not successful, then just use the 5 TLSv1.3 ciphers plus the list of
-          # ciphers used in all of the previous tests ($TLS_CIPHER).
-          if [[ $subret -eq 0 ]] || [[ $subret -eq 2 ]]; then
-               tls13_ciphers_to_test="$(get_cipher "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")"
-               if [[ "$tls13_ciphers_to_test" == TLS_* ]] || [[ "$tls13_ciphers_to_test" == SSL_* ]]; then
-                    tls13_ciphers_to_test="$(rfc2hexcode "$tls13_ciphers_to_test")"
-               else
-                    tls13_ciphers_to_test="$(openssl2hexcode "$tls13_ciphers_to_test")"
-               fi
-          fi
-          if [[ ${#tls13_ciphers_to_test} -eq 9 ]]; then
-               tls13_ciphers_to_test="$TLS13_CIPHER, ${tls13_ciphers_to_test:2:2},${tls13_ciphers_to_test:7:2}, 00,ff"
-          else
-               tls13_ciphers_to_test="$TLS13_CIPHER,$TLS_CIPHER"
-          fi
-          tls_sockets "04" "$tls13_ciphers_to_test"
-     else
-          run_prototest_openssl "-tls1_3"
-     fi
-     case $? in
+     case $ret_val_tls13 in
           0)   if ! "$using_sockets"; then
                     prln_svrty_best "offered (OK)"
                     fileout "$jsonID" "OK" "offered"
                else
-                    # Determine which version of TLS 1.3 was offered. For drafts 18-21 the
-                    # version appears in the ProtocolVersion field of the ServerHello. For
-                    # drafts 22-28 and the final TLS 1.3 the ProtocolVersion field contains
-                    # 0303 and the actual version appears in the supported_versions extension.
-                    if [[ "${TLS_SERVER_HELLO:8:3}" == 7F1 ]]; then
-                         drafts_offered+=" ${TLS_SERVER_HELLO:8:4} "
-                    elif [[ "$TLS_SERVER_HELLO" =~ 002B00020304 ]]; then
+                    # If TLS 1.3 is offered, then its support was detected
+                    # by determine_optimal_sockets_params().
+                    if [[ $(has_server_protocol tls1_3_rfc8446) -eq 0 ]]; then
                          drafts_offered+=" 0304 "
                     else
                          for i in 1C 1B 1A 19 18 17 16 15 14 13 12; do
-                              if [[ "$TLS_SERVER_HELLO" =~ 002B00027F$i ]]; then
+                              if [[ $(has_server_protocol tls1_3_draft$(hex2dec "$i")) -eq 0 ]]; then
                                    drafts_offered+=" 7F$i "
                                    break
                               fi
@@ -5303,13 +5757,8 @@ run_protocols() {
                          [[ $? -eq 0 ]] || break
                          if [[ "${TLS_SERVER_HELLO:8:3}" == 7F1 ]]; then
                               drafts_offered+=" ${TLS_SERVER_HELLO:8:4} "
-                         else
-                              for i in 16 15 14 13 12; do
-                                   if [[ "$TLS_SERVER_HELLO" =~ 002B00027F$i ]]; then
-                                        drafts_offered+=" 7F$i "
-                                        break
-                                   fi
-                              done
+                         elif [[ "$TLS_SERVER_HELLO" =~ 002B00027F1[2-6] ]]; then
+                              drafts_offered+=" ${BASH_REMATCH:8:4} "
                          fi
                     done
                     KEY_SHARE_EXTN_NR="33"
@@ -5325,13 +5774,8 @@ run_protocols() {
                          [[ $? -eq 0 ]] || break
                          if [[ "$TLS_SERVER_HELLO" =~ 002B00020304 ]]; then
                               drafts_offered+=" 0304 "
-                         else
-                              for i in 1C 1B 1A 19 18 17; do
-                                   if [[ "$TLS_SERVER_HELLO" =~ 002B00027F$i ]]; then
-                                        drafts_offered+=" 7F$i "
-                                        break
-                                   fi
-                              done
+                         elif [[ "$TLS_SERVER_HELLO" =~ 002B00027F1[7-9A-C] ]]; then
+                              drafts_offered+=" ${BASH_REMATCH:8:4} "
                          fi
                     done
                     KEY_SHARE_EXTN_NR="$key_share_extn_nr"
@@ -5360,61 +5804,62 @@ run_protocols() {
                fi
                latest_supported="0304"
                latest_supported_string="TLSv1.3"
-               add_tls_offered tls1_3 yes
+               add_proto_offered tls1_3 yes
                ;;
-          1)   out "not offered"
-               if ! "$using_sockets" || [[ -z $latest_supported ]]; then
+          1)   pr_svrty_low "not offered"
+               if [[ -z $latest_supported ]]; then
                     outln
-                    fileout "$jsonID" "INFO" "not offered"
+                    fileout "$jsonID" "LOW" "not offered"
                else
                     prln_svrty_critical " -- connection failed rather than downgrading to $latest_supported_string"
                     fileout "$jsonID" "CRITICAL" "connection failed rather than downgrading to $latest_supported_string"
                fi
-               add_tls_offered tls1_3 no
+               add_proto_offered tls1_3 no
                ;;
-          2)   out "not offered"
-               if [[ "$DETECTED_TLS_VERSION" == 0300 ]]; then
+          2)   if [[ "$DETECTED_TLS_VERSION" == 0300 ]]; then
                     detected_version_string="SSLv3"
                elif [[ "$DETECTED_TLS_VERSION" == 03* ]]; then
                     detected_version_string="TLSv1.$((0x$DETECTED_TLS_VERSION-0x0301))"
                fi
                if [[ "$DETECTED_TLS_VERSION" == "$latest_supported" ]]; then
-                    [[ $DEBUG -ge 1 ]] && tm_out " -- downgraded"
-                    outln
-                    fileout "$jsonID" "INFO" "not offered and downgraded to a weaker protocol"
+                    outln "not offered and downgraded to a weaker protocol"
+                    fileout "$jsonID" "INFO" "not offered + downgraded to weaker protocol"
                elif [[ "$DETECTED_TLS_VERSION" == 03* ]] && [[ 0x$DETECTED_TLS_VERSION -lt 0x$latest_supported ]]; then
+                    out "not offered"
                     prln_svrty_critical " -- server supports $latest_supported_string, but downgraded to $detected_version_string"
                     fileout "$jsonID" "CRITICAL" "not offered, and downgraded to $detected_version_string rather than $latest_supported_string"
                elif [[ "$DETECTED_TLS_VERSION" == 03* ]] && [[ 0x$DETECTED_TLS_VERSION -gt 0x0304 ]]; then
+                    out "not offered"
                     prln_svrty_critical " -- server responded with higher version number ($detected_version_string) than requested by client"
                     fileout "$jsonID" "CRITICAL" "not offered, server responded with higher version number ($detected_version_string) than requested by client"
                else
+                    out "not offered"
                     prln_svrty_critical " -- server responded with version number ${DETECTED_TLS_VERSION:0:2}.${DETECTED_TLS_VERSION:2:2}"
                     fileout "$jsonID" "CRITICAL" "server responded with version number ${DETECTED_TLS_VERSION:0:2}.${DETECTED_TLS_VERSION:2:2}"
                fi
-               add_tls_offered tls1_3 no
+               add_proto_offered tls1_3 no
                ;;
           3)   out "not offered  "
                fileout "$jsonID" "INFO" "not offered"
-               add_tls_offered tls1_3 no
+               add_proto_offered tls1_3 no
                pr_warning "TLS downgraded to STARTTLS plaintext"; outln
                fileout "$jsonID" "WARN" "TLS downgraded to STARTTLS plaintext"
                ;;
           4)   out "likely not offered, "
                fileout "$jsonID" "INFO" "not offered"
-               add_tls_offered tls1_3 no
+               add_proto_offered tls1_3 no
                pr_warning "received 4xx/5xx after STARTTLS handshake"; outln "$debug_recomm"
                fileout "$jsonID" "WARN" "received 4xx/5xx after STARTTLS handshake${debug_recomm}"
                ;;
           5)   outln "$supported_no_ciph1"             # protocol detected but no cipher --> comes from run_prototest_openssl
                fileout "$jsonID" "INFO" "$supported_no_ciph1"
-               add_tls_offered tls1_3 yes
+               add_proto_offered tls1_3 yes
                ;;
           7)   if "$using_sockets" ; then
                     # can only happen in debug mode
                     prln_warning "strange reply, maybe a client side problem with TLS 1.3"; outln "$debug_recomm"
                else
-                    # warning on screen came already from locally_supported()
+                    prln_local_problem "$OPENSSL doesn't support \"s_client -tls1_3\""
                     fileout "$jsonID" "WARN" "not tested due to lack of local support"
                fi
                ((ret++))
@@ -5430,6 +5875,7 @@ run_protocols() {
           ignore_no_or_lame "You should not proceed as no protocol was detected. If you still really really want to, say \"YES\"" "YES"
           [[ $? -ne 0 ]] && exit $ERR_CLUELESS
      fi
+
      return $ret
 }
 
@@ -5442,15 +5888,17 @@ run_protocols() {
 listciphers() {
      local -i ret
      local debugname=""
+     local ciphers="$1"
      local tls13_ciphers="$TLS13_OSSL_CIPHERS"
 
-     [[ "$2" != "ALL" ]] && tls13_ciphers="$2"
+     [[ "$2" != ALL ]] && tls13_ciphers="$2"
+     "$HAS_SECLEVEL" && [[ -n "$ciphers" ]] && ciphers="@SECLEVEL=0:$1"
      if "$HAS_CIPHERSUITES"; then
-          $OPENSSL ciphers $OSSL_CIPHERS_S $3 -ciphersuites "$tls13_ciphers" "$1" &>$TMPFILE
+          $OPENSSL ciphers $OSSL_CIPHERS_S $3 -ciphersuites "$tls13_ciphers" "$ciphers" &>$TMPFILE
      elif [[ -n "$tls13_ciphers" ]]; then
-          $OPENSSL ciphers $OSSL_CIPHERS_S $3 "$tls13_ciphers:$1" &>$TMPFILE
+          $OPENSSL ciphers $OSSL_CIPHERS_S $3 "$tls13_ciphers:$ciphers" &>$TMPFILE
      else
-          $OPENSSL ciphers $OSSL_CIPHERS_S $3 "$1" &>$TMPFILE
+          $OPENSSL ciphers $OSSL_CIPHERS_S $3 "$ciphers" &>$TMPFILE
      fi
      ret=$?
      debugme cat $TMPFILE
@@ -5482,7 +5930,7 @@ sub_cipherlists() {
      local cve="${9}"
      local cwe="${10}"
 
-     pr_bold "$3    "
+     pr_bold "$3  "
      [[ "$OPTIMAL_PROTO" == -ssl2 ]] && proto="$OPTIMAL_PROTO"
      jsonID="${jsonID}_$5"
 
@@ -5532,11 +5980,11 @@ sub_cipherlists() {
                elif [[ -n "$7" ]]; then
                     sslv2_sockets "$7" "true"
                     if [[ $? -eq 3 ]] && [[ "$V2_HELLO_CIPHERSPEC_LENGTH" -ne 0 ]]; then
-                         sslv2_cipherlist="$(strip_spaces "${6//,/}")"
+                         sslv2_cipherlist="$(strip_spaces "${7//,/}")"
                          len=${#sslv2_cipherlist}
                          detected_ssl2_ciphers="$(grep "Supported cipher: " "$TEMPDIR/$NODEIP.parse_sslv2_serverhello.txt")"
-                         for (( i=0; i<len; i=i+6 )); do
-                              [[ "$detected_ssl2_ciphers" =~ "x${sslv2_cipherlist:i:6}" ]] && sclient_success=0 && break
+                         for (( i=0; i<len; i+=6 )); do
+                              [[ "$detected_ssl2_ciphers" =~ x${sslv2_cipherlist:i:6} ]] && sclient_success=0 && break
                          done
                     fi
                fi
@@ -5554,7 +6002,7 @@ sub_cipherlists() {
           else
                # Otherwise the error means the server doesn't support that cipher list.
                case $4 in
-                    2)  if [[ $sclient_success -eq 0 ]]; then
+                    7)   if [[ $sclient_success -eq 0 ]]; then
                               # Strong is excellent to offer
                               pr_svrty_best "offered (OK)"
                               fileout "$jsonID" "OK" "offered" "$cve" "$cwe"
@@ -5563,17 +6011,27 @@ sub_cipherlists() {
                               fileout "$jsonID" "MEDIUM" "not offered" "$cve" "$cwe"
                          fi
                          ;;
-                    1)  if [[ $sclient_success -eq 0 ]]; then
+                    6)   if [[ $sclient_success -eq 0 ]]; then
                               # High is good to offer
                               pr_svrty_good "offered (OK)"
                               fileout "$jsonID" "OK" "offered" "$cve" "$cwe"
                          else
-                              # FIXME: we penalize the absence of high but don't know the result of strong encryption yet (next)
-                              pr_svrty_medium "not offered"
-                              fileout "$jsonID" "MEDIUM" "not offered" "$cve" "$cwe"
+                              # FIXME: we don't penalize the absence of high, but perhaps
+                              # we should if there is also no strong encryption (next)
+                              out "not offered"
+                              fileout "$jsonID" "INFO" "not offered" "$cve" "$cwe"
                          fi
                          ;;
-                    0)   if [[ $sclient_success -eq 0 ]]; then
+                    5)   if [[ $sclient_success -eq 0 ]]; then
+                              # Neither good nor bad to offer
+                              out "offered (OK)"
+                              fileout "$jsonID" "INFO" "offered" "$cve" "$cwe"
+                         else
+                              out "not offered"
+                              fileout "$jsonID" "INFO" "not offered" "$cve" "$cwe"
+                         fi
+                         ;;
+                    4)   if [[ $sclient_success -eq 0 ]]; then
                               # medium is not that bad
                               pr_svrty_low "offered"
                               fileout "$jsonID" "LOW" "offered" "$cve" "$cwe"
@@ -5582,7 +6040,15 @@ sub_cipherlists() {
                               fileout "$jsonID" "INFO" "not offered" "$cve" "$cwe"
                          fi
                          ;;
-                    -1)  if [[ $sclient_success -eq 0 ]]; then
+                    3)   if [[ $sclient_success -eq 0 ]]; then
+                              pr_svrty_medium "offered"
+                              fileout "$jsonID" "MEDIUM" "offered" "$cve" "$cwe"
+                         else
+                              out "not offered"
+                              fileout "$jsonID" "INFO" "not offered" "$cve" "$cwe"
+                         fi
+                         ;;
+                    2)   if [[ $sclient_success -eq 0 ]]; then
                               # bad but there is worse
                               pr_svrty_high "offered (NOT ok)"
                               fileout "$jsonID" "HIGH" "offered" "$cve" "$cwe"
@@ -5592,7 +6058,7 @@ sub_cipherlists() {
                               fileout "$jsonID" "OK" "not offered" "$cve" "$cwe"
                          fi
                          ;;
-                    -2)  if [[ $sclient_success -eq 0 ]]; then
+                    1)   if [[ $sclient_success -eq 0 ]]; then
                               # the ugly ones
                               pr_svrty_critical "offered (NOT ok)"
                               fileout "$jsonID" "CRITICAL" "offered" "$cve" "$cwe"
@@ -5601,12 +6067,16 @@ sub_cipherlists() {
                               fileout "$jsonID" "OK" "not offered" "$cve" "$cwe"
                          fi
                          ;;
-                    *) # we shouldn't reach this
+                    *)   # we shouldn't reach this
                          pr_warning "?: $4 (please report this)"
                          fileout "$jsonID" "WARN" "return condition $4 unclear" "$cve" "$cwe"
                          ((ret++))
                          ;;
                esac
+
+               # Not a perfect place here. A new one should be picked in the future
+               [[ $sclient_success -eq 0 && "$1" =~ (^|:)EXPORT(:|$) ]] && set_grade_cap "F" "Export suite offered"
+               [[ $sclient_success -eq 0 && "$1" =~ AEAD ]] && set_grade_cap "B" "No AEAD ciphers offered"
           fi
           tmpfile_handle ${FUNCNAME[0]}.${5}.txt
           [[ $DEBUG -ge 1 ]] && tm_out " -- $1"
@@ -5632,8 +6102,8 @@ run_cipherlists() {
      local ossl_anon_ciphers anon_ciphers sslv2_anon_ciphers
      local ossl_exp_ciphers exp_ciphers sslv2_exp_ciphers
      local ossl_low_ciphers low_ciphers sslv2_low_ciphers
-     local ossl_tdes_ciphers tdes_ciphers sslv2_tdes_cipher
-     local ossl_average_ciphers average_ciphers
+     local ossl_tdes_ciphers tdes_ciphers sslv2_tdes_ciphers
+     local ossl_obsoleted_ciphers obsoleted_ciphers
      local strong_ciphers
      local cwe="CWE-327"
      local cwe2="CWE-310"
@@ -5660,28 +6130,32 @@ run_cipherlists() {
      exp_ciphers="00,63, 00,62, 00,61, 00,65, 00,64, 00,60, 00,14, 00,11, 00,19, 00,08, 00,06, 00,27, 00,26, 00,2a, 00,29, 00,0b, 00,0e, 00,17, 00,03, 00,28, 00,2b, 00,ff"
      sslv2_exp_ciphers="04,00,80, 02,00,80, 00,00,00"
 
-     ossl_low_ciphers='LOW:DES:RC2:RC4:!ADH:!EXP:!NULL:!eNULL'
-     # egrep -w '64|56|RC2|RC4' etc/cipher-mapping.txt | egrep -v 'Au=None|export'
-     low_ciphers="00,04, 00,05, 00,09, 00,0C, 00,0F, 00,12, 00,15, 00,1E, 00,20, 00,22, 00,24, 00,66, 00,8A, 00,8E, 00,92, C0,02, C0,07, C0,0C, C0,11, C0,33, FE,FE, FF,E1, 00,FF"
-     sslv2_low_ciphers="01,00,80, 03,00,80, 06,00,40, 06,01,40, 08,00,80, FF,80,00"
+     ossl_low_ciphers='LOW:DES:RC2:RC4:MD5:!ADH:!EXP:!NULL:!eNULL:!AECDH'
+     # grep -Ew '64|56|RC2|RC4|MD5' etc/cipher-mapping.txt | grep -Ev 'Au=None|export'
+     low_ciphers="00,04, 00,05, 00,09, 00,0C, 00,0F, 00,12, 00,15, 00,1E, 00,20, 00,22, 00, 23, 00,24, 00,25, 00,66, 00,8A, 00,8E, 00,92, C0,02, C0,07, C0,0C, C0,11, C0,33, FF,00, FE,FE, FF,E1, 00,FF"
+     sslv2_low_ciphers="01,00,80, 03,00,80, 05,00,80, 06,00,40, 06,01,40, 07,00,c0, 08,00,80, FF,80,00"
 
-     ossl_tdes_ciphers='3DES:IDEA:!aNULL:!ADH'
-     # egrep -w '3DES|IDEA' etc/cipher-mapping.txt | grep -v "Au=None"
-     tdes_ciphers="00,07, 00,0A, 00,0D, 00,10, 00,13, 00,16, 00,1F, 00,21, 00,23, 00,25, 00,8B, 00,8F, 00,93, C0,03, C0,08, C0,0D, C0,12, C0,1A, C0,1B, C0,1C, C0,34, FE,FF, FF,E0, 00,FF"
-     sslv2_tdes_ciphers="05,00,80, 07,00,c0, 07,01,c0"
+     ossl_tdes_ciphers='3DES:IDEA:!aNULL:!ADH:!MD5'
+     # grep -Ew '3DES|IDEA' etc/cipher-mapping.txt | grep -Ev "Au=None|MD5"
+     tdes_ciphers="00,07, 00,0A, 00,0D, 00,10, 00,13, 00,16, 00,1F, 00,21, 00,8B, 00,8F, 00,93, C0,03, C0,08, C0,0D, C0,12, C0,1A, C0,1B, C0,1C, C0,34, FE,FF, FF,E0, 00,FF"
+     sslv2_tdes_ciphers="07,01,c0"
 
-     ossl_average_ciphers='HIGH:MEDIUM:AES:CAMELLIA:ARIA:!IDEA:!CHACHA20:!3DES:!RC2:!RC4:!AESCCM8:!AESCCM:!AESGCM:!ARIAGCM:!aNULL'
-     # egrep -w "256|128" etc/cipher-mapping.txt | egrep -v "Au=None|AEAD|RC2|RC4|IDEA"
-     average_ciphers="00,2F, 00,30, 00,31, 00,32, 00,33, 00,35, 00,36, 00,37, 00,38, 00,39, 00,3C, 00,3D, 00,3E, 00,3F, 00,40, 00,41, 00,42, 00,43, 00,44, 00,45, 00,67, 00,68, 00,69, 00,6A, 00,6B, 00,84, 00,85, 00,86, 00,87, 00,88, 00,8C, 00,8D, 00,90, 00,91, 00,94, 00,95, 00,96, 00,97, 00,98, 00,99, 00,9A, 00,AE, 00,AF, 00,B2, 00,B3, 00,B6, 00,B7, 00,BA, 00,BB, 00,BC, 00,BD, 00,BE, 00,C0, 00,C1, 00,C2, 00,C3, 00,C4, C0,04, C0,05, C0,09, C0,0A, C0,0E, C0,0F, C0,13, C0,14, C0,1D, C0,1E, C0,1F, C0,20, C0,21, C0,22, C0,23, C0,24, C0,25, C0,26, C0,27, C0,28, C0,29, C0,2A, C0,35, C0,36, C0,37, C0,38, C0,3C, C0,3D, C0,3E, C0,3F, C0,40, C0,41, C0,42, C0,43, C0,44, C0,45, C0,48, C0,49, C0,4A, C0,4B, C0,4C, C0,4D, C0,4E, C0,4F, C0,64, C0,65, C0,66, C0,67, C0,68, C0,69, C0,70, C0,71, C0,72, C0,73, C0,74, C0,75, C0,76, C0,77, C0,78, C0,79, C0,94, C0,95, C0,96, C0,97, C0,98, C0,99, C0,9A, C0,9B"
-     # Workaround: If we use sockets and in order not to hit 132+1 ciphers we omit the GOST ciphers if SERVER_SIZE_LIMIT_BUG is true.
-     # This won't be supported by Cisco ACE anyway. Catch is, if SERVER_SIZE_LIMIT_BUG was not tested for before (only this function is being called)
-     "$SERVER_SIZE_LIMIT_BUG" || average_ciphers="${average_ciphers}, 00,80, 00,81, FF,00, FF,01, FF,02, FF,03, FF,85"
-     average_ciphers="${average_ciphers}, 00,FF"
+     # # Now all AES, CAMELLIA, ARIA and SEED CBC ciphers plus GOST
+     ossl_obsoleted_ciphers='HIGH:MEDIUM:AES:CAMELLIA:ARIA:!IDEA:!CHACHA20:!3DES:!RC2:!RC4:!AESCCM8:!AESCCM:!AESGCM:!ARIAGCM:!aNULL:!MD5'
+     # grep -Ew "256|128" etc/cipher-mapping.txt | grep -Ev "Au=None|AEAD|RC2|RC4|IDEA|MD5"
+     obsoleted_ciphers="00,2F, 00,30, 00,31, 00,32, 00,33, 00,35, 00,36, 00,37, 00,38, 00,39, 00,3C, 00,3D, 00,3E, 00,3F, 00,40, 00,41, 00,42, 00,43, 00,44, 00,45, 00,67, 00,68, 00,69, 00,6A, 00,6B, 00,84, 00,85, 00,86, 00,87, 00,88, 00,8C, 00,8D, 00,90, 00,91, 00,94, 00,95, 00,96, 00,97, 00,98, 00,99, 00,9A, 00,AE, 00,AF, 00,B2, 00,B3, 00,B6, 00,B7, 00,BA, 00,BB, 00,BC, 00,BD, 00,BE, 00,C0, 00,C1, 00,C2, 00,C3, 00,C4, C0,04, C0,05, C0,09, C0,0A, C0,0E, C0,0F, C0,13, C0,14, C0,1D, C0,1E, C0,1F, C0,20, C0,21, C0,22, C0,23, C0,24, C0,25, C0,26, C0,27, C0,28, C0,29, C0,2A, C0,35, C0,36, C0,37, C0,38, C0,3C, C0,3D, C0,3E, C0,3F, C0,40, C0,41, C0,42, C0,43, C0,44, C0,45, C0,48, C0,49, C0,4A, C0,4B, C0,4C, C0,4D, C0,4E, C0,4F, C0,64, C0,65, C0,66, C0,67, C0,68, C0,69, C0,70, C0,71, C0,72, C0,73, C0,74, C0,75, C0,76, C0,77, C0,78, C0,79, C0,94, C0,95, C0,96, C0,97, C0,98, C0,99, C0,9A, C0,9B"
+     # Workaround: If we use sockets and in order not to hit 131+1 ciphers we omit the GOST ciphers if SERVER_SIZE_LIMIT_BUG is true.
+     # This won't be supported by Cisco ACE anyway.
+     "$SERVER_SIZE_LIMIT_BUG" || obsoleted_ciphers="${obsoleted_ciphers}, 00,80, 00,81, FF,01, FF,02, FF,03, FF,85"
+     obsoleted_ciphers="${obsoleted_ciphers}, 00,FF"
 
-     # Here's the strongest discrepancy between sockets and OpenSSL
-     ossl_strong_ciphers='AESGCM:CHACHA20:AESGCM:CamelliaGCM:AESCCM:ARIAGCM'
-     # grep AEAD etc/cipher-mapping.txt | grep -v Au=None
-     strong_ciphers="00,9C, 00,9D, 00,9E, 00,9F, 00,A0, 00,A1, 00,A2, 00,A3, 00,A4, 00,A5, 00,A8, 00,A9, 00,AA, 00,AB, 00,AC, 00,AD, 13,01, 13,02, 13,03, 13,04, 13,05, 16,B7, 16,B8, 16,B9, 16,BA, C0,2B, C0,2C, C0,2D, C0,2E, C0,2F, C0,30, C0,31, C0,32, C0,50, C0,51, C0,52, C0,53, C0,54, C0,55, C0,56, C0,57, C0,58, C0,59, C0,5C, C0,5D, C0,5E, C0,5F, C0,60, C0,61, C0,62, C0,63, C0,6A, C0,6B, C0,6C, C0,6D, C0,6E, C0,6F, C0,7A, C0,7B, C0,7C, C0,7D, C0,7E, C0,7F, C0,80, C0,81, C0,82, C0,83, C0,86, C0,87, C0,88, C0,89, C0,8A, C0,8B, C0,8C, C0,8D, C0,8E, C0,8F, C0,90, C0,91, C0,92, C0,93, C0,9C, C0,9D, C0,9E, C0,9F, C0,A0, C0,A1, C0,A2, C0,A3, C0,A4, C0,A5, C0,A6, C0,A7, C0,A8, C0,A9, C0,AA, C0,AB, C0,AC, C0,AD, C0,AE, C0,AF, CC,13, CC,14, CC,15, CC,A8, CC,A9, CC,AA, CC,AB, CC,AC, CC,AD, CC,AE, 00,FF"
+     ossl_good_ciphers='AESGCM:CHACHA20:CamelliaGCM:AESCCM:ARIAGCM:!kEECDH:!kEDH:!kDHE:!kDHEPSK:!kECDHEPSK:!aNULL'
+     # grep AEAD etc/cipher-mapping.txt | grep -Ev 'Au=None|TLS_ECDHE|TLS_DHE|TLS_PSK_DHE|TLSv1.3'
+     good_ciphers="00,9C, 00,9D, 00,A0, 00,A1, 00,A4, 00,A5, 00,A8, 00,A9, 00,AC, 00,AD, C0,2D, C0,2E, C0,31, C0,32, C0,50, C0,51, C0,54, C0,55, C0,58, C0,59, C0,5E, C0,5F, C0,62, C0,63, C0,6A, C0,6B, C0,6E, C0,6F, C0,7A, C0,7B, C0,7E, C0,7F, C0,82, C0,83, C0,88, C0,89, C0,8C, C0,8D, C0,8E, C0,8F, C0,92, C0,93, C0,9C, C0,9D, C0,A0, C0,A1, C0,A4, C0,A5, C0,A8, C0,A9, CC,AB, CC,AE, 00,FF"
+
+     ossl_strong_ciphers='AESGCM:CHACHA20:CamelliaGCM:AESCCM:ARIAGCM:!kPSK:!kRSAPSK:!kRSA:!kDH:!kECDH:!aNULL'
+     # grep AEAD etc/cipher-mapping.txt | grep -E 'TLS_ECDHE|TLS_DHE|TLS_PSK_DHE|TLSv1.3'
+     strong_ciphers="00,9E, 00,9F, 00,A2, 00,A3, 00,AA, 00,AB, 13,01, 13,02, 13,03, 13,04, 13,05, 16,B7, 16,B8, 16,B9, 16,BA, C0,2B, C0,2C, C0,2F, C0,30, C0,52, C0,53, C0,56, C0,57, C0,5C, C0,5D, C0,60, C0,61, C0,6C, C0,6D, C0,7C, C0,7D, C0,80, C0,81, C0,86, C0,87, C0,8A, C0,8B, C0,90, C0,91, C0,9E, C0,9F, C0,A2, C0,A3, C0,A6, C0,A7, C0,AA, C0,AB, C0,AC, C0,AD, C0,AE, C0,AF, CC,13, CC,14, CC,15, CC,A8, CC,A9, CC,AA, CC,AC, CC,AD, 00,FF"
 
      # argv[1]: non-TLSv1.3 cipher list to test in OpenSSL syntax
      # argv[2]: TLSv1.3 cipher list to test in OpenSSL syntax
@@ -5694,19 +6168,21 @@ run_cipherlists() {
      # argv[9]: CVE
      # argv[10]: CWE
 
-     sub_cipherlists "$ossl_null_ciphers"      "" " NULL ciphers (no encryption)              "    -2 "NULL"      "$null_ciphers"    "$sslv2_null_ciphers"   "$using_sockets" "$cve" "$cwe"
+     sub_cipherlists "$ossl_null_ciphers"      "" " NULL ciphers (no encryption)                    "     1 "NULL"      "$null_ciphers"    "$sslv2_null_ciphers"   "$using_sockets" "$cve" "$cwe"
      ret=$?
-     sub_cipherlists "$ossl_anon_ciphers"      "" " Anonymous NULL Ciphers (no authentication)"    -2 "aNULL"     "$anon_ciphers"    "$sslv2_anon_ciphers"   "$using_sockets" "$cve" "$cwe"
+     sub_cipherlists "$ossl_anon_ciphers"      "" " Anonymous NULL Ciphers (no authentication)      "     1 "aNULL"     "$anon_ciphers"    "$sslv2_anon_ciphers"   "$using_sockets" "$cve" "$cwe"
      ret=$((ret + $?))
-     sub_cipherlists "$ossl_exp_ciphers"       "" " Export ciphers (w/o ADH+NULL)             "    -2 "EXPORT"    "$exp_ciphers"     "$sslv2_exp_ciphers"    "$using_sockets" "$cve" "$cwe"
+     sub_cipherlists "$ossl_exp_ciphers"       "" " Export ciphers (w/o ADH+NULL)                   "     1 "EXPORT"    "$exp_ciphers"     "$sslv2_exp_ciphers"    "$using_sockets" "$cve" "$cwe"
      ret=$((ret + $?))
-     sub_cipherlists "$ossl_low_ciphers"       "" " LOW: 64 Bit + DES, RC[2,4] (w/o export)   "    -2 "LOW"       "$low_ciphers"     "$sslv2_low_ciphers"    "$using_sockets" "$cve" "$cwe"
+     sub_cipherlists "$ossl_low_ciphers"       "" " LOW: 64 Bit + DES, RC[2,4], MD5 (w/o export)    "     2 "LOW"       "$low_ciphers"     "$sslv2_low_ciphers"    "$using_sockets" "$cve" "$cwe"
      ret=$((ret + $?))
-     sub_cipherlists "$ossl_tdes_ciphers"      "" " Triple DES Ciphers / IDEA                 "    -1 "3DES_IDEA" "$tdes_ciphers"    "$sslv2_tdes_ciphers"   "$using_sockets" "$cve" "$cwe2"
+     sub_cipherlists "$ossl_tdes_ciphers"      "" " Triple DES Ciphers / IDEA                       "     3 "3DES_IDEA" "$tdes_ciphers"    "$sslv2_tdes_ciphers"   "$using_sockets" "$cve" "$cwe2"
      ret=$((ret + $?))
-     sub_cipherlists "$ossl_average_ciphers"   "" " Average: SEED + 128+256 Bit CBC ciphers   "     0 "AVERAGE"   "$average_ciphers"  ""                     "$using_sockets" "$cve" "$cwe2"
+     sub_cipherlists "$ossl_obsoleted_ciphers" "" " Obsoleted CBC ciphers (AES, ARIA etc.)          "     4 "AVERAGE"   "$obsoleted_ciphers"  ""                   "$using_sockets" "$cve" "$cwe2"
      ret=$((ret + $?))
-     sub_cipherlists "$ossl_strong_ciphers" 'ALL' " Strong encryption (AEAD ciphers)          "     2 "STRONG"    "$strong_ciphers"   ""                     "$using_sockets" ""      ""
+     sub_cipherlists "$ossl_good_ciphers"      "" " Strong encryption (AEAD ciphers) with no FS     "     6 "GOOD"      "$good_ciphers"     ""                     "$using_sockets" ""      ""
+     ret=$((ret + $?))
+     sub_cipherlists "$ossl_strong_ciphers" 'ALL' " Forward Secrecy strong encryption (AEAD ciphers)"    7 "STRONG"     "$strong_ciphers"   ""                     "$using_sockets" ""      ""
      ret=$((ret + $?))
 
      outln
@@ -5811,95 +6287,148 @@ pr_ecdh_curve_quality() {
      pr_ecdh_quality "$bits" "$curve"
 }
 
-# Print $2 based on the quality of the cipher in $1. If $2 is empty, print $1.
-# The return value is an indicator of the quality of the cipher in $1:
+# Return a value that is an indicator of the quality of the cipher in $1:
 #   0 = $1 is empty
 #   1 = pr_svrty_critical, 2 = pr_svrty_high, 3 = pr_svrty_medium, 4 = pr_svrty_low
 #   5 = neither good nor bad, 6 = pr_svrty_good, 7 = pr_svrty_best
 #
 # Please note this section isn't particular spot on. It needs to be reconsidered/redone
-pr_cipher_quality() {
+# SHA1, SSLv3 ciphers are some points which need to be considered.
+# Hint: find out by "grep <pattern> etc/cipher-mapping.txt" but it' might be be easier
+# to look out Enc= and Au= or Mac=
+#
+get_cipher_quality() {
      local cipher="$1"
-     local text="$2"
+     local ossl_cipher
 
      [[ -z "$1" ]] && return 0
-     [[ -z "$text" ]] && text="$cipher"
 
      if [[ "$cipher" != TLS_* ]] && [[ "$cipher" != SSL_* ]]; then
-          # This must be the OpenSSL name for a cipher
+          # This must be the OpenSSL name for a cipher or for TLS 1.3 ($TLS13_OSSL_CIPHERS)
+          # We can ignore them however as the OpenSSL and RFC names currently match
           if [[ $TLS_NR_CIPHERS -eq 0 ]]; then
-               # We have an OpenSSL name and can't convert it to the RFC name
+               # We have an OpenSSL name and can't convert it to the RFC name which is rarely
+               # the case, see "prepare_arrays()" and "./etc/cipher-mapping.txt"
                case "$cipher" in
-                    *NULL*|*EXP*|ADH*)
-                         pr_svrty_critical "$text"
+                    *NULL*|EXP*|ADH*|AECDH*|*anon*)
                          return 1
                          ;;
-                    *RC4*|*RC2*)
-                         pr_svrty_high "$text"
+                    *RC4*|*RC2*|*MD5|*M1)
                          return 2
                          ;;
-                    AES256-GCM-SHA384|AES128-GCM-SHA256|AES256-CCM|AES128-CCM|ARIA256-GCM-SHA384|ARIA128-GCM-SHA256)
+                    AES256-GCM-SHA384|AES128-GCM-SHA256|AES256-CCM*|AES128-CCM*|ARIA256-GCM-SHA384|ARIA128-GCM-SHA256)
                          # RSA kx and e.g. GCM isn't certainly the best
-                         pr_svrty_good "$text"
+                         return 6
+                         ;;
+                    *CBC3*|*3DES*|*IDEA*)
+                         return 3
+                         ;;
+                    *DES*)
+                         return 2
+                         ;;
+                    PSK-*GCM*|PSK-*CCM*|RSA-PSK-*GCM*|RSA-PSK-CHACHA20-POLY1305|PSK-CHACHA20-POLY1305)
+                         # PSK kx and e.g. GCM isn't certainly the best
+                         return 6
+                         ;;
+                    DH-*GCM*|ECDH-*GCM*)
+                         # static DH or ECDH kx and GCM isn't certainly the best
                          return 6
                          ;;
                     *GCM*|*CCM*|*CHACHA20*)
-                         pr_svrty_best "$text"
                          return 7
                          ;; #best ones
-                    ECDHE*AES*|DHE*AES*SHA*|*CAMELLIA*SHA)
-                         pr_svrty_low "$text"
+                    *AES*SHA*|*CAMELLIA*SHA*|*SEED*SHA*|*CBC*|*GOST*)
                          return 4
-                         ;; # it's CBC. --> lucky13
-                    *CBC*)
-                         pr_svrty_medium "$text"
-                         return 3
-                         ;; # FIXME BEAST: We miss some CBC ciphers here, need to work w/ a list
+                         ;;
                     *)
-                         out "$text"
                          return 5
                          ;;
                esac
           fi
+          ossl_cipher="$cipher"
           cipher="$(openssl2rfc "$cipher")"
+          [[ -z "$cipher" ]] && cipher="$ossl_cipher"
      fi
 
+     # Now we look at the RFC cipher names. The sequence matters - as above.
      case "$cipher" in
-          *NULL*|*EXP*|*RC2*|*_DES_*|*_DES40_*|*anon*)
-               pr_svrty_critical "$text"
+          *NULL*|*EXP*|*_DES40_*|*anon*)
                return 1
                ;;
-          *RC4*|*RC2*)
-               pr_svrty_high "$text"
+          *RC4*|*RC2*|*MD5|*MD5_1)
                return 2
                ;;
-          TLS_RSA_*)
-               if [[ "$cipher" =~ CBC ]]; then
-                    pr_svrty_low "$text"
-                    return 4
-               else
-                    pr_svrty_good "$text"
-                    # RSA kx and e.g. GCM isn't certainly the best
-                    return 6
+          *_DES_*)
+               if [[ "$cipher" =~ EDE3 ]]; then
+                    return 3
                fi
+               return 2
                ;;
-          *GCM*|*CCM*|*CHACHA20*)
-               pr_svrty_best "$text"
-               return 7
-               ;;
-          *ECDHE*AES*CBC*|*DHE*AES*SHA*|*RSA*AES*SHA*|*CAMELLIA*SHA*)
-               pr_svrty_low "$text"
-               return 4
-               ;;
-          *CBC*)
-               pr_svrty_medium "$text"
+          *CBC3*|*3DES*|*IDEA*)
                return 3
                ;;
+          *CBC*|*GOST*)
+               return 4
+               ;;
+          TLS_RSA_*|TLS_DH_*|TLS_ECDH_*|TLS_PSK_WITH_*)
+               # RSA, or static DH, ECDH, or PSK kx and e.g. GCM isn't certainly the best
+               return 6
+               ;;
+          *GCM*|*CCM*|*CHACHA20*)
+               return 7
+               ;;
           *)
-               out "$text"
                return 5
                ;;
      esac
+}
+
+# Output the severity level associated with the cipher in $1.
+get_cipher_quality_severity() {
+     local cipher="$1"
+     local -i quality
+
+     [[ -z "$1" ]] && return 0
+
+     get_cipher_quality "$cipher"
+     quality=$?
+     case $quality in
+          1) tm_out "CRITICAL" ;;
+          2) tm_out "HIGH" ;;
+          3) tm_out "MEDIUM" ;;
+          4) tm_out "LOW" ;;
+          5) tm_out "INFO" ;;
+          6|7) tm_out "OK" ;;
+     esac
+     return $quality
+}
+
+# Print $2 based on the quality of the cipher in $1. If $2 is empty, just print $1.
+# The return value is an indicator of the quality of the cipher in $1:
+#   0 = $1 is empty
+#   1 = pr_svrty_critical, 2 = pr_svrty_high, 3 = pr_svrty_medium, 4 = pr_svrty_low
+#   5 = neither good nor bad, 6 = pr_svrty_good, 7 = pr_svrty_best
+#
+pr_cipher_quality() {
+     local cipher="$1"
+     local text="$2"
+     local -i quality
+
+     [[ -z "$1" ]] && return 0
+     [[ -z "$text" ]] && text="$cipher"
+
+     get_cipher_quality "$cipher"
+     quality=$?
+     case $quality in
+          1) pr_svrty_critical "$text" ;;
+          2) pr_svrty_high "$text" ;;
+          3) pr_svrty_medium "$text" ;;
+          4) pr_svrty_low "$text" ;;
+          5) out "$text" ;;
+          6) pr_svrty_good "$text" ;;
+          7) pr_svrty_best "$text" ;;
+     esac
+     return $quality
 }
 
 # arg1: file with input for grepping the type of ephemeral DH key (DH ECDH)
@@ -5916,7 +6445,15 @@ read_dhtype_from_file() {
 
 # arg1: certificate file
 read_sigalg_from_file() {
-     $OPENSSL x509 -noout -text -in "$1" 2>/dev/null | awk -F':' '/Signature Algorithm/ { print $2; exit; }'
+     local sig_alg
+
+     sig_alg="$(strip_leading_space "$($OPENSSL x509 -noout -text -in "$1" 2>/dev/null | awk -F':' '/Signature Algorithm/ { print $2; exit; }')")"
+     case "$sig_alg" in
+          1.3.101.112|ED25519) tm_out "Ed25519" ;;
+          1.3.101.113|ED448)   tm_out "Ed448" ;;
+          *)                   tm_out "$sig_alg" ;;
+     esac
+
 }
 
 
@@ -5939,7 +6476,7 @@ read_dhbits_from_file() {
      bits="${bits/bits/}"
      bits="${bits// /}"
 
-     if [[ "$what_dh" == "X25519" ]] || [[ "$what_dh" == "X448" ]]; then
+     if [[ "$what_dh" == X25519 ]] || [[ "$what_dh" == X448 ]]; then
           curve="$what_dh"
           what_dh="ECDH"
      fi
@@ -5959,24 +6496,24 @@ read_dhbits_from_file() {
           fi
           return 0
      fi
-     if [[ "$2" == "quiet" ]]; then
+     if [[ "$2" == quiet ]]; then
           tm_out "$bits"
           return 0
      fi
      [[ -z "$2" ]] && [[ -n "$bits" ]] && out ", "
-     if [[ $what_dh == "DH" ]] || [[ $what_dh == "EDH" ]]; then
+     if [[ $what_dh == DH ]] || [[ $what_dh == EDH ]]; then
           add="bit DH"
           [[ -n "$curve" ]] && add+=" ($curve)"
-          if [[ "$2" == "string" ]]; then
+          if [[ "$2" == string ]]; then
                tm_out ", $bits $add"
           else
                pr_dh_quality "$bits" "$bits $add"
           fi
-     # https://wiki.openssl.org/index.php/Elliptic_Curve_Cryptography, http://www.keylength.com/en/compare/
-     elif [[ $what_dh == "ECDH" ]]; then
+     # https://wiki.openssl.org/index.php/Elliptic_Curve_Cryptography, https://www.keylength.com/en/compare/
+     elif [[ $what_dh == ECDH ]]; then
           add="bit ECDH"
           [[ -n "$curve" ]] && add+=" ($curve)"
-          if [[ "$2" == "string" ]]; then
+          if [[ "$2" == string ]]; then
                tm_out ", $bits $add"
           else
                pr_ecdh_quality "$bits" "$bits $add"
@@ -6000,9 +6537,9 @@ sub_session_resumption() {
      local tmpfile=$(mktemp $TEMPDIR/session_resumption.$NODEIP.XXXXXX)
      local sess_data=$(mktemp $TEMPDIR/sub_session_data_resumption.$NODEIP.XXXXXX)
      local -a rw_line
-     local not_new_reused=false
+     local protocol="$1"
 
-     if [[ "$1" == ID ]]; then
+     if [[ "$2" == ID ]]; then
           local byID=true
           local addcmd="-no_ticket"
      else
@@ -6012,18 +6549,39 @@ sub_session_resumption() {
                return 1
           fi
      fi
-     "$CLIENT_AUTH" && return 3
-     "$HAS_NO_SSL2" && addcmd+=" -no_ssl2" || addcmd+=" $OPTIMAL_PROTO"
+     [[ "$CLIENT_AUTH" == required ]] && return 6
+     if ! "$HAS_TLS13" && "$HAS_NO_SSL2"; then
+          addcmd+=" -no_ssl2"
+     else
+          protocol=${protocol/\./_}
+          protocol=${protocol/v/}
+          protocol="-$(tolower $protocol)"
+          # In some cases a server will not support session tickets, but will support session resumption
+          # by ID. In such a case, it may be more likely to support session resumption with TLSv1.2 than
+          # with TLSv1.3. So, if testing a server that does not support session tickets and that supports
+          # both TLSv1.3 and TLSv1.2 for session resumption by ID, then use a TLSv1.2 ClientHello. (Note that
+          # the line below assumes that if $protocol is -tls1_3, then the server either supports TLSv1.2 or
+          # is TLSv1.3-only.
+          ! "$TLS_TICKETS" && "$byID" && [[ $(has_server_protocol "tls1_2") -eq 0 ]] && protocol="-tls1_2"
+          addcmd+=" $protocol"
+     fi
 
-     $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI $addcmd -sess_out $sess_data") </dev/null &>/dev/null
+     $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI $addcmd -sess_out $sess_data") </dev/null &>$tmpfile
      ret1=$?
      if [[ $ret1 -ne 0 ]]; then
-          debugme echo -n "Couldn't connect #1  "
-          return 7
+          # MacOS and LibreSSL return 1 here, that's why we need to check whether the handshake contains e.g. a certificate
+          if [[ ! $(<$tmpfile) =~ -----.*\ CERTIFICATE----- ]]; then
+               debugme echo -n "Couldn't connect #1  "
+               return 7
+          fi
      fi
-     if "$byID" && [[ $OSSL_VER_MINOR == 1.1 ]] && [[ $OSSL_VER_MAJOR == 1 ]] && [[ ! -s "$sess_data" ]]; then
+     if "$byID" && [[ ! "$OSSL_NAME" =~ LibreSSL ]] && \
+        ( [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == 1.1.1* ]] || [[ $OSSL_VER_MAJOR == 3 ]] ) && \
+        [[ ! -s "$sess_data" ]]; then
           # it seems OpenSSL indicates no Session ID resumption by just not generating output
           debugme echo -n "No session resumption byID (empty file)"
+          # If we want to check the presence of session data:
+          # [[ ! $(<$sess_data) =~ -----.*\ SSL\ SESSION\ PARAMETERS----- ]]
           ret=2
      else
           $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI $addcmd -sess_in $sess_data") </dev/null >$tmpfile 2>$ERRFILE
@@ -6033,8 +6591,10 @@ sub_session_resumption() {
                [[ -s "$sess_data" ]] && echo "not empty" || echo "empty"
           fi
           if [[ $ret2 -ne 0 ]]; then
-               debugme echo -n "Couldn't connect #2  "
-               return 7
+               if [[ ! $(<$tmpfile) =~ -----.*\ CERTIFICATE----- ]]; then
+                    debugme echo -n "Couldn't connect #2  "
+                    return 7
+               fi
           fi
           # "Reused" indicates session material was reused, "New": not
           if grep -aq "^Reused" "$tmpfile"; then
@@ -6043,10 +6603,9 @@ sub_session_resumption() {
                new_sid=true
           else
                debugme echo -n "Problem with 2nd ServerHello  "
-               not_new_reused=true
           fi
           # Now get the line and compare the numbers "read" and "written" as a second criteria.
-          # If the "read" number is bigger: a new session ID was probably used
+          # If the "read" number is bigger: a new session ID was probably used.
           rw_line="$(awk '/^SSL handshake has read/ { print $5" "$(NF-1) }' "$tmpfile" )"
           rw_line=($rw_line)
           if [[ "${rw_line[0]}" -gt "${rw_line[1]}" ]]; then
@@ -6055,7 +6614,7 @@ sub_session_resumption() {
                new_sid2=false
           fi
           debugme echo "${rw_line[0]}, ${rw_line[1]}"
- 
+
           if "$new_sid2" && "$new_sid"; then
                debugme echo -n "No session resumption "
                ret=1
@@ -6078,20 +6637,17 @@ sub_session_resumption() {
 
 run_server_preference() {
      local cipher1="" cipher2="" tls13_cipher1="" tls13_cipher2="" default_proto=""
-     local prev_cipher="" default_cipher=""
+     local default_cipher="" ciph
      local limitedsense="" supported_sslv2_ciphers
-     local -a cipher proto
      local proto_ossl proto_txt proto_hex cipherlist i
-     local -i ret=0 j sclient_success str_len
+     local -i ret=0 j sclient_success
      local list_fwd="DHE-RSA-SEED-SHA:SEED-SHA:DES-CBC3-SHA:RC4-MD5:DES-CBC-SHA:RC4-SHA:AES128-SHA:AES128-SHA256:AES256-SHA:ECDHE-RSA-AES128-SHA:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA:ECDH-RSA-DES-CBC3-SHA:ECDH-RSA-AES128-SHA:ECDH-RSA-AES256-SHA:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-SHA256:DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:DHE-DSS-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:AES256-SHA256:ECDHE-RSA-DES-CBC3-SHA:ECDHE-RSA-AES128-SHA256:AES256-GCM-SHA384:AES128-GCM-SHA256:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-SHA256:ADH-AES256-GCM-SHA384:AECDH-AES128-SHA:ECDHE-RSA-RC4-SHA:ECDHE-ECDSA-AES128-SHA"
      local list_reverse="ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-RC4-SHA:AECDH-AES128-SHA:ADH-AES256-GCM-SHA384:DHE-RSA-AES256-SHA256:DHE-RSA-AES128-GCM-SHA256:AES128-GCM-SHA256:AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-DES-CBC3-SHA:AES256-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:DHE-DSS-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDH-RSA-AES256-SHA:ECDH-RSA-AES128-SHA:ECDH-RSA-DES-CBC3-SHA:DHE-RSA-AES256-SHA:DHE-RSA-AES128-SHA:ECDHE-RSA-AES128-SHA:AES256-SHA:AES128-SHA256:AES128-SHA:RC4-SHA:DES-CBC-SHA:RC4-MD5:DES-CBC3-SHA:SEED-SHA:DHE-RSA-SEED-SHA"
-     tls13_list_fwd="TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256"
-     tls13_list_reverse="TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384"
      tls_list_fwd="c0,2c, c0,30, 00,9f, cc,a9, cc,a8, cc,aa, c0,2b, c0,2f, 00,9e, c0,24, c0,28, 00,6b, c0,23, c0,27, 00,67, c0,0a, 00,04, 00,05, 00,09, 00,0a, 00,9a, 00,96,
                    c0,14, 00,39, c0,09, c0,13, 00,33, 00,9d, 00,9c, 13,01, 13,02, 13,03, 13,04, 13,05, 00,3d, 00,3c, 00,35, 00,2f, 00,ff"
      tls_list_rev="00,2f, 00,35, 00,3c, 00,3d, 13,05, 13,04, 13,03, 13,02, 13,01, 00,9c, 00,9d, 00,33, c0,13, c0,09, 00,39, c0,14, 00,96, 00,9a, 00,0a, 00,09, 00,05, 00,04,
                    c0,0a, 00,67, c0,27, c0,23, 00,6b, c0,28, c0,24, 00,9e, c0,2f, c0,2b, cc,aa, cc,a8, cc,a9, 00,9f, c0,30, c0,2c, 00,ff"
-     local has_cipher_order=false
+     local has_cipher_order=false has_tls13_cipher_order=false
      local addcmd="" addcmd2=""
      local using_sockets=true
      local jsonID="cipher_order"
@@ -6101,10 +6657,8 @@ run_server_preference() {
      "$SSL_NATIVE" && using_sockets=false
 
      outln
-     pr_headlineln " Testing server preferences "
-
+     pr_headlineln " Testing server's cipher preferences "
      outln
-     pr_bold " Has server cipher order?     "
 
      if [[ "$OPTIMAL_PROTO" == -ssl2 ]]; then
           addcmd="$OPTIMAL_PROTO"
@@ -6125,104 +6679,183 @@ run_server_preference() {
                        13,03, 13,01, 13,04, 13,05, 00,3d, 00,3c, 00,35, 00,2f, 00,ff" \
                       "ephemeralkey"
           sclient_success=$?
-          [[ $sclient_success -eq 2 ]] && sclient_success=0           # 2: downgraded
+          if [[ $sclient_success -eq 0 ]]; then
+               add_proto_offered tls1_3 yes
+          elif [[ $sclient_success -eq 2 ]]; then
+               sclient_success=0           # 2: downgraded
+               case $DETECTED_TLS_VERSION in
+                    0303) add_proto_offered tls1_2 yes ;;
+                    0302) add_proto_offered tls1_1 yes ;;
+                    0301) add_proto_offered tls1 yes ;;
+                    0300) add_proto_offered ssl3 yes ;;
+               esac
+          fi
           if [[ $sclient_success -eq 0 ]] ; then
-               cp "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" $TMPFILE
                cp "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" "$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt"
-               cipher0=$(get_cipher $TMPFILE)
+               cipher0=$(get_cipher "$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt")
           fi
      fi
      if [[ $sclient_success -ne 0 ]]; then
-          $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $addcmd") </dev/null 2>>$ERRFILE >$TMPFILE
-          if sclient_connect_successful $? $TMPFILE; then
-               cipher0=$(get_cipher $TMPFILE)
+          $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $addcmd") </dev/null 2>>$ERRFILE >"$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt"
+          if sclient_connect_successful $? "$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt"; then
+               cipher0=$(get_cipher "$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt")
                debugme tm_out "0 --> $cipher0\n"
           else
                # 2 second try with $OPTIMAL_PROTO especially for intolerant IIS6 servers:
-               $OPENSSL s_client $(s_client_options "$STARTTLS $OPTIMAL_PROTO $BUGS -connect $NODEIP:$PORT $PROXY $SNI") </dev/null 2>>$ERRFILE >$TMPFILE
-               if ! sclient_connect_successful $? $TMPFILE; then
+               $OPENSSL s_client $(s_client_options "$STARTTLS $OPTIMAL_PROTO $BUGS -connect $NODEIP:$PORT $PROXY $SNI") </dev/null 2>>$ERRFILE >"$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt"
+               if sclient_connect_successful $? "$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt"; then
+                    cipher0=$(get_cipher "$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt")
+                    debugme tm_out "0 --> $cipher0\n"
+               else
                     pr_warning "Handshake error!"
                     ret=1
                fi
           fi
      fi
-     default_proto=$(get_protocol $TMPFILE)
+     [[ $ret -eq 0 ]] && default_proto=$(get_protocol "$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt")
      [[ "$default_proto" == TLSv1.0 ]] && default_proto="TLSv1"
      # debugme tm_out " --> $default_proto\n"
 
      # Some servers don't have a TLS 1.3 cipher order, see #1163
      if [[ "$default_proto" == TLSv1.3 ]]; then
           tls_sockets "04" "13,05, 13,04, 13,03, 13,02, 13,01, 00,ff"
-          [[ $sclient_success -ne 0 ]] && ret=1 && prln_fixme "something weird happened around line $((LINENO - 1))"
+          [[ $? -ne 0 ]] && ret=1 && prln_fixme "something weird happened around line $((LINENO - 1))"
           cp "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" $TMPFILE
           tls13_cipher1=$(get_cipher $TMPFILE)
           debugme tm_out "TLS 1.3: --> $tls13_cipher1\n"
           tls_sockets "04" "13,01, 13,02, 13,03, 13,04, 13,05, 00,ff"
-          [[ $sclient_success -ne 0 ]] && ret=1 && prln_fixme "something weird happened around line $((LINENO - 1))"
+          [[ $? -ne 0 ]] && ret=1 && prln_fixme "something weird happened around line $((LINENO - 1))"
           cp "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" $TMPFILE
           tls13_cipher2=$(get_cipher $TMPFILE)
           debugme tm_out "TLS 1.3: --> $tls13_cipher2\n"
+
+          [[ $tls13_cipher1 == $tls13_cipher2 ]] && has_tls13_cipher_order=true
+     fi
+     # Check whether the server has a cipher order for SSLv3 - TLSv1.2
+     if [[ $(has_server_protocol "tls1_2") -ne 0 ]] && [[ $(has_server_protocol "tls1_1") -ne 0 ]] && \
+        [[ $(has_server_protocol "tls1") -ne 0 ]] && [[ $(has_server_protocol "ssl3") -ne 0 ]]; then
+          # Based on testing performed by determine_optimal_sockets_params(), it is believed that
+          # this server does not offer SSLv3 - TLSv1.2.
+          has_cipher_order="$has_tls13_cipher_order"
      elif [[ "$OPTIMAL_PROTO" != -ssl2 ]]; then
-          [[ $DEBUG -ge 4 ]] && echo -e "\n Forward: ${list_fwd}\n ${tls13_list_fwd}"
-          $OPENSSL s_client $(s_client_options "$STARTTLS -cipher $list_fwd -ciphersuites $tls13_list_fwd $BUGS -connect $NODEIP:$PORT $PROXY $addcmd") </dev/null 2>$ERRFILE >$TMPFILE
-          if ! sclient_connect_successful $? $TMPFILE && [[ -z "$STARTTLS_PROTOCOL" ]]; then
-               list_fwd="$(actually_supported_ciphers $list_fwd $tls13_list_fwd '-tls1')"
+          if [[ -n "$STARTTLS_OPTIMAL_PROTO" ]]; then
+               [[ ! "$STARTTLS_OPTIMAL_PROTO" =~ ssl ]] && addcmd2="$SNI"
+               [[ "$STARTTLS_OPTIMAL_PROTO" != -tls1_3 ]] && addcmd2+=" $STARTTLS_OPTIMAL_PROTO"
+          else
+               addcmd2="-no_ssl2 $SNI"
+          fi
+          [[ $DEBUG -ge 4 ]] && echo -e "\n Forward: ${list_fwd}"
+          $OPENSSL s_client $(s_client_options "$STARTTLS -cipher $list_fwd $BUGS -connect $NODEIP:$PORT $PROXY $addcmd2") </dev/null 2>$ERRFILE >$TMPFILE
+          if ! sclient_connect_successful $? $TMPFILE; then
+               list_fwd="$(actually_supported_osslciphers $list_fwd '' '-no_ssl2')"
                pr_warning "no matching cipher in this list found (pls report this): "
                outln "$list_fwd  . "
                fileout "$jsonID" "WARN" "Could not determine server cipher order, no matching cipher in list found (pls report this): $list_fwd"
-               tmpfile_handle ${FUNCNAME[0]}.txt
-               return 1
+               ret=1
                # we assume the problem is with testing here but it could be also the server side
-          elif [[ -n "$STARTTLS_PROTOCOL" ]]; then
-               # now it still could be that we hit this bug: https://github.com/drwetter/testssl.sh/issues/188
-               # workaround is to connect with a protocol
-               [[ ! "$STARTTLS_OPTIMAL_PROTO" =~ ssl ]] && addcmd2="$SNI"
-               $OPENSSL s_client $(s_client_options "$STARTTLS $STARTTLS_OPTIMAL_PROTO -cipher $list_fwd -ciphersuites $tls13_list_fwd $BUGS -connect $NODEIP:$PORT $PROXY $addcmd2") </dev/null 2>$ERRFILE >$TMPFILE
-               if ! sclient_connect_successful $? $TMPFILE; then
-                    list_fwd="$(actually_supported_ciphers $list_fwd $tls13_list_fwd '-tls1')"
-                    pr_warning "no matching cipher in this list found (pls report this): "
-                    outln "$list_fwd  . "
-                    fileout "$jsonID" "WARN" "Could not determine cipher order, no matching cipher in list found (pls report this): $list_fwd"
-                    tmpfile_handle ${FUNCNAME[0]}.txt
-                    return 1
-               fi
-          fi
-          cipher1=$(get_cipher $TMPFILE)               # cipher1 from 1st serverhello
-          debugme tm_out "1 --> $cipher1\n"
-
-          if [[ -n "$STARTTLS_OPTIMAL_PROTO" ]]; then
-               addcmd2="$STARTTLS_OPTIMAL_PROTO $SNI"
           else
-               if [[ "$OPTIMAL_PROTO" == -ssl2 ]]; then
-                    addcmd2="$OPTIMAL_PROTO"
-               else
-                    addcmd2="-no_ssl2 $SNI"
-               fi
-          fi
+               cipher1=$(get_cipher $TMPFILE)               # cipher1 from 1st serverhello
+               debugme tm_out "1 --> $cipher1\n"
 
-          # second client hello with reverse list
-          [[ $DEBUG -ge 4 ]] && echo -e "\n Reverse: ${list_reverse}\n ${tls13_list_reverse}"
-          $OPENSSL s_client $(s_client_options "$STARTTLS -cipher $list_reverse -ciphersuites $tls13_list_reverse $BUGS -connect $NODEIP:$PORT $PROXY $addcmd2") </dev/null 2>>$ERRFILE >$TMPFILE
-          # first handshake worked above so no error handling here
-          cipher2=$(get_cipher $TMPFILE)               # cipher2 from 2nd serverhello
-          debugme tm_out "2 --> $cipher2\n"
+               # second client hello with reverse list
+               [[ $DEBUG -ge 4 ]] && echo -e "\n Reverse: ${list_reverse}"
+               $OPENSSL s_client $(s_client_options "$STARTTLS -cipher $list_reverse $BUGS -connect $NODEIP:$PORT $PROXY $addcmd2") </dev/null 2>>$ERRFILE >$TMPFILE
+               # first handshake worked above so no error handling here
+               cipher2=$(get_cipher $TMPFILE)               # cipher2 from 2nd serverhello
+               debugme tm_out "2 --> $cipher2\n"
+
+               [[ $cipher1 == $cipher2 ]] && has_cipher_order=true
+          fi
+     fi
+     debugme echo "has_cipher_order: $has_cipher_order"
+     debugme echo "has_tls13_cipher_order: $has_tls13_cipher_order"
+
+     # restore file from above
+     [[ "$default_proto" == TLSv1.3 ]] && cp "$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt" $TMPFILE
+     if [[ "$default_proto" == TLSv1.3 ]] || [[ -n "$cipher2" ]]; then
+          cipher1=$(get_cipher $TMPFILE)
+          tmpfile_handle ${FUNCNAME[0]}.txt
      fi
 
-     if [[ "$default_proto" == TLSv1.3 ]] && [[ $tls13_cipher1 != $tls13_cipher2 ]]; then
-          pr_svrty_good "yes (OK)"; out " -- only for < TLS 1.3"
-          has_cipher_order=true
-          fileout "$jsonID" "OK" "server -- TLS 1.3 client determined"
-          cipher1="$tls13_cipher1"
-          cipher2="$tls13_cipher2"
-     elif [[ "$OPTIMAL_PROTO" == -ssl2 ]] || [[ "$cipher1" != $cipher2 ]]; then
+     # Sanity check: Handshake with no ciphers and one with forward list didn't overlap
+     if [[ $ret -eq 0 ]] && [[ "$cipher0" != $cipher1 ]]; then
+          limitedsense=" (matching cipher in list missing)"
+     fi
+
+     if [[ -n "$cipher1" ]]; then
+          ciph="$cipher1"
+     else
+          ciph="$cipher0"
+          cp "$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt" $TMPFILE
+          tmpfile_handle ${FUNCNAME[0]}.txt
+     fi
+     if [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]] && ( [[ "$ciph" == TLS_* ]] || [[ "$ciph" == SSL_* ]] ); then
+          default_cipher="$(rfc2openssl "$ciph")"
+     elif [[ "$DISPLAY_CIPHERNAMES" =~ rfc ]] && [[ "$ciph" != TLS_* ]] && [[ "$ciph" != SSL_* ]]; then
+          default_cipher="$(openssl2rfc "$ciph")"
+     fi
+     [[ -z "$default_cipher" ]] && default_cipher="$ciph"
+
+     "$FAST" && using_sockets=false
+     [[ $TLS_NR_CIPHERS == 0 ]] && using_sockets=false
+
+     neat_header
+     while read proto_ossl proto_hex proto_txt; do
+          pr_underline "$(printf -- "%b" "$proto_txt")"
+          if [[ $(has_server_protocol "$proto_ossl") -eq 1 ]]; then
+               outln "\n - "
+               continue
+          fi
+          # TODO: Also the fact that a protocol is not supported seems not to be saved by cipher_pref_check()
+          # (./testssl.sh --wide -p -P -E  vs ./testssl.sh --wide -P -E )
+          if [[ $proto_ossl == ssl2 ]] || \
+                    ( [[ $proto_ossl != tls1_3 ]] && ! "$has_cipher_order" ) || \
+                    ( [[ $proto_ossl == tls1_3 ]] && ! "$has_tls13_cipher_order" ); then
+               if [[ -n "$cipher2" ]] && [[ $proto_ossl != ssl2 ]]; then
+                    ciphers_by_strength "-$proto_ossl" "$proto_hex" "$proto_txt" "$using_sockets" "true" "true"
+               else
+                    ciphers_by_strength "-$proto_ossl" "$proto_hex" "$proto_txt" "$using_sockets" "true" "false"
+               fi
+          else
+               cipher_pref_check "$proto_ossl" "$proto_hex" "$proto_txt" "$using_sockets" "true"
+          fi
+     done <<< "$(tm_out " ssl2 22 SSLv2\n ssl3 00 SSLv3\n tls1 01 TLSv1\n tls1_1 02 TLSv1.1\n tls1_2 03 TLSv1.2\n tls1_3 04 TLSv1.3\n")"
+     outln
+
+     pr_bold " Has server cipher order?     "
+     jsonID="cipher_order"
+     if "$TLS13_ONLY" && ! "$has_tls13_cipher_order"; then
+          out "no (TLS 1.3 only)"
+          limitedsense=" (limited sense as client will pick)"
+          fileout "$jsonID" "INFO" "not a cipher order for TLS 1.3 configured"
+     elif ! "$TLS13_ONLY" && [[ -z "$cipher2" ]]; then
+          pr_warning "unable to determine"
+     elif ! "$has_cipher_order" && ! "$has_tls13_cipher_order"; then
           # server used the different ends (ciphers) from the client hello
-          pr_svrty_high "nope (NOT ok)"
+          pr_svrty_high "no (NOT ok)"
           limitedsense=" (limited sense as client will pick)"
           fileout "$jsonID" "HIGH" "NOT a cipher order configured"
+     elif "$has_cipher_order" && ! "$has_tls13_cipher_order" && [[ "$default_proto" == TLSv1.3 ]]; then
+          pr_svrty_good "yes (OK)"; out " -- only for < TLS 1.3"
+          fileout "$jsonID" "OK" "server -- TLS 1.3 client determined"
+     elif ! "$has_cipher_order" && "$has_tls13_cipher_order"; then
+          pr_svrty_high "no (NOT ok)"; out " -- only for TLS 1.3"
+          fileout "$jsonID" "HIGH" "server -- < TLS 1.3 client determined"
      else
-          pr_svrty_best "yes (OK)"
-          has_cipher_order=true
-          fileout "$jsonID" "OK" "server"
+          if "$has_tls13_cipher_order"; then
+               if "$TLS13_ONLY"; then
+                    out "yes (TLS 1.3 only)"
+                    fileout "$jsonID" "INFO" "server (TLS 1.3)"
+               else
+                    pr_svrty_best "yes (OK)"
+                    out " -- TLS 1.3 and below"
+                    fileout "$jsonID" "OK" "server"
+               fi
+          else
+               # we don't have TLS 1.3 at all
+               pr_svrty_best "yes (OK)"
+               fileout "$jsonID" "OK" "server"
+          fi
      fi
      outln
 
@@ -6239,12 +6872,12 @@ run_server_preference() {
                fileout "$jsonID" "OK" "Default protocol TLS1.2"
                ;;
           *TLSv1.1)
-               prln_svrty_good $default_proto
-               fileout "$jsonID" "OK" "Default protocol TLS1.1"
+               prln_svrty_low $default_proto
+               fileout "$jsonID" "LOW" "Default protocol TLS1.1"
                ;;
           *TLSv1)
-               outln $default_proto
-               fileout "$jsonID" "INFO" "Default protocol TLS1.0"
+               prln_svrty_low $default_proto
+               fileout "$jsonID" "LOW" "Default protocol TLS1.0"
                ;;
           *SSLv2)
                prln_svrty_critical $default_proto
@@ -6274,33 +6907,17 @@ run_server_preference() {
 
      pr_bold " Negotiated cipher            "
      jsonID="cipher_negotiated"
-
-     # restore file from above
-     [[ "$default_proto" == TLSv1.3 ]] && cp "$TEMPDIR/$NODEIP.parse_tls13_serverhello.txt" $TMPFILE
-     cipher1=$(get_cipher $TMPFILE)
-
-     # Sanity check: Handshake with no ciphers and one with forward list didn't overlap
-     if [[ "$cipher0" != $cipher1 ]]; then
-          limitedsense=" (matching cipher in list missing)"
-     fi
-
-     if [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]] && ( [[ "$cipher1" == TLS_* ]] || [[ "$cipher1" == SSL_* ]] ); then
-          default_cipher="$(rfc2openssl "$cipher1")"
-     elif [[ "$DISPLAY_CIPHERNAMES" =~ rfc ]] && [[ "$cipher1" != TLS_* ]] && [[ "$cipher1" != SSL_* ]]; then
-          default_cipher="$(openssl2rfc "$cipher1")"
-     fi
-     [[ -z "$default_cipher" ]] && default_cipher="$cipher1"
      pr_cipher_quality "$default_cipher"
      case $? in
-          1)   fileout "$jsonID" "CRITICAL" "$default_cipher$(read_dhbits_from_file "$TMPFILE" "string") $limitedsense"
+          1)   fileout "$jsonID" "CRITICAL" "$default_cipher$(read_dhbits_from_file "$TEMPDIR/$NODEIP.run_server_preference.txt" "string") $limitedsense"
                ;;
-          2)   fileout "$jsonID" "HIGH" "$default_cipher$(read_dhbits_from_file "$TMPFILE" "string") $limitedsense"
+          2)   fileout "$jsonID" "HIGH" "$default_cipher$(read_dhbits_from_file "$TEMPDIR/$NODEIP.run_server_preference.txt" "string") $limitedsense"
                ;;
-          3)   fileout "$jsonID" "MEDIUM" "$default_cipher$(read_dhbits_from_file "$TMPFILE" "string") $limitedsense"
+          3)   fileout "$jsonID" "MEDIUM" "$default_cipher$(read_dhbits_from_file "$TEMPDIR/$NODEIP.run_server_preference.txt" "string") $limitedsense"
                ;;
-          6|7) fileout "$jsonID" "OK" "$default_cipher$(read_dhbits_from_file "$TMPFILE" "string") $limitedsense"
+          6|7) fileout "$jsonID" "OK" "$default_cipher$(read_dhbits_from_file "$TEMPDIR/$NODEIP.run_server_preference.txt" "string") $limitedsense"
                ;;   # best ones
-          4)   fileout "$jsonID" "LOW" "$default_cipher$(read_dhbits_from_file "$TMPFILE" "string") (cbc) $limitedsense"
+          4)   fileout "$jsonID" "LOW" "$default_cipher$(read_dhbits_from_file "$TEMPDIR/$NODEIP.run_server_preference.txt" "string") (cbc) $limitedsense"
                ;;  # it's CBC. --> lucky13
           0)   pr_warning "default cipher empty" ;
                if [[ $OSSL_VER == 1.0.2* ]]; then
@@ -6311,154 +6928,43 @@ run_server_preference() {
                fi
                ret=1
                ;;
-          *)   fileout "$jsonID" "INFO" "$default_cipher$(read_dhbits_from_file "$TMPFILE" "string") $limitedsense"
+          *)   fileout "$jsonID" "INFO" "$default_cipher$(read_dhbits_from_file "$TEMPDIR/$NODEIP.run_server_preference.txt" "string") $limitedsense"
                ;;
      esac
-     read_dhbits_from_file "$TMPFILE"
+     [[ -n "$default_cipher" ]] && read_dhbits_from_file "$TEMPDIR/$NODEIP.run_server_preference.txt"
 
      if [[ "$cipher0" != $cipher1 ]]; then
           pr_warning " -- inconclusive test, matching cipher in list missing"
-          outln ", better see below"
+          outln ", better see above"
           #FIXME: This is ugly but the best we can do before rewrite this section
      else
           outln "$limitedsense"
      fi
-
-     if "$has_cipher_order"; then
-          "$FAST" && using_sockets=false
-          [[ $TLS_NR_CIPHERS == 0 ]] && using_sockets=false
-
-          pr_bold " Cipher order"
-
-          while read proto_ossl proto_hex proto_txt; do
-               cipher_pref_check "$proto_ossl" "$proto_hex" "$proto_txt" "$using_sockets"
-          done <<< "$(tm_out " ssl3 00 SSLv3\n tls1 01 TLSv1\n tls1_1 02 TLSv1.1\n tls1_2 03 TLSv1.2\n tls1_3 04 TLSv1.3\n")"
-          outln
-
-          outln
-     else
-          pr_bold " Negotiated cipher per proto"; outln " $limitedsense"
-          i=1
-          for proto_ossl in ssl2 ssl3 tls1 tls1_1 tls1_2 tls1_3; do
-               if [[ $proto_ossl == ssl2 ]] && ! "$HAS_SSL2"; then
-                    if ! "$using_sockets" || [[ $TLS_NR_CIPHERS -eq 0 ]]; then
-                         out "     (SSLv2: "; pr_local_problem "$OPENSSL doesn't support \"s_client -ssl2\""; outln ")";
-                         continue
-                    else
-                         sslv2_sockets "" "true"
-                         if [[ $? -eq 3 ]] && [[ "$V2_HELLO_CIPHERSPEC_LENGTH" -ne 0 ]]; then
-                              # Just arbitrarily pick the first cipher in the cipher-mapping.txt list.
-                              proto[i]="SSLv2"
-                              supported_sslv2_ciphers="$(grep "Supported cipher: " "$TEMPDIR/$NODEIP.parse_sslv2_serverhello.txt")"
-                              for (( j=0; j < TLS_NR_CIPHERS; j++ )); do
-                                   if [[ "${TLS_CIPHER_SSLVERS[j]}" == "SSLv2" ]]; then
-                                        cipher1="${TLS_CIPHER_HEXCODE[j]}"
-                                        cipher1="$(tolower "x${cipher1:2:2}${cipher1:7:2}${cipher1:12:2}")"
-                                        if [[ "$supported_sslv2_ciphers" =~ $cipher1 ]]; then
-                                             if ( [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]] && [[ "${TLS_CIPHER_OSSL_NAME[j]}" != "-" ]] ) || [[ "${TLS_CIPHER_RFC_NAME[j]}" == "-" ]]; then
-                                                  cipher[i]="${TLS_CIPHER_OSSL_NAME[j]}"
-                                             else
-                                                  cipher[i]="${TLS_CIPHER_RFC_NAME[j]}"
-                                             fi
-                                             break
-                                        fi
-                                   fi
-                              done
-                              [[ $DEBUG -ge 2 ]] && tmln_out "Default cipher for ${proto[i]}: ${cipher[i]}"
-                         else
-                              proto[i]=""
-                              cipher[i]=""
-                         fi
-                    fi
-               elif ( [[ $proto_ossl == ssl3 ]] && ! "$HAS_SSL3" ) || ( [[ $proto_ossl == tls1_3 ]] && ! "$HAS_TLS13" ); then
-                    if [[ $proto_ossl == ssl3 ]]; then
-                         proto_txt="SSLv3" ; proto_hex="00" ; cipherlist="$TLS_CIPHER"
-                    else
-                         proto_txt="TLSv1.3" ; proto_hex="04" ; cipherlist="$TLS13_CIPHER"
-                    fi
-                    if ! "$using_sockets"; then
-                         out "     ($proto_txt: "; pr_local_problem "$OPENSSL doesn't support \"s_client -$proto_ossl\"" ; outln ")";
-                         continue
-                    else
-                         tls_sockets "$proto_hex" "$cipherlist"
-                         if [[ $? -eq 0 ]]; then
-                              proto[i]="$proto_txt"
-                              cipher1=$(get_cipher "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")
-                              cipher[i]="$cipher1"
-                              if [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]] && [[ $TLS_NR_CIPHERS -ne 0 ]]; then
-                                   cipher[i]="$(rfc2openssl "$cipher1")"
-                                   [[ -z "${cipher[i]}" ]] && cipher[i]="$cipher1"
-                              fi
-                              [[ $DEBUG -ge 2 ]] && tmln_out "Default cipher for ${proto[i]}: ${cipher[i]}"
-                         else
-                              proto[i]=""
-                              cipher[i]=""
-                         fi
-                    fi
-               else
-                    $OPENSSL s_client $(s_client_options "$STARTTLS -"$proto_ossl" $BUGS -connect $NODEIP:$PORT $PROXY $SNI") </dev/null 2>>$ERRFILE >$TMPFILE
-                    if sclient_connect_successful $? $TMPFILE; then
-                         proto[i]=$(get_protocol $TMPFILE)
-                         cipher[i]=$(get_cipher $TMPFILE)
-                         [[ ${cipher[i]} == "0000" ]] && cipher[i]=""                     # Hack!
-                         if [[ "$DISPLAY_CIPHERNAMES" =~ rfc ]] && [[ -n "${cipher[i]}" ]]; then
-                              cipher[i]="$(openssl2rfc "${cipher[i]}")"
-                              [[ -z "${cipher[i]}" ]] && cipher[i]=$(get_cipher $TMPFILE)
-                         fi
-                         [[ $DEBUG -ge 2 ]] && tmln_out "Default cipher for ${proto[i]}: ${cipher[i]}"
-                    else
-                         proto[i]=""
-                         cipher[i]=""
-                    fi
-               fi
-               [[ -n "${cipher[i]}" ]] && add_tls_offered "$proto_ossl" yes
-               i=$((i + 1))
-          done
-
-          for i in 1 2 3 4 5 6; do
-               if [[ -n "${cipher[i]}" ]]; then                                      # cipher not empty
-                     if [[ -z "$prev_cipher" ]] || [[ "$prev_cipher" != "${cipher[i]}" ]]; then
-                         [[ -n "$prev_cipher" ]] && outln
-                         str_len=${#cipher[i]}
-                         out "     "
-                         if [[ "$COLOR" -le 2 ]]; then
-                              out "${cipher[i]}"
-                         else
-                              pr_cipher_quality "${cipher[i]}"
-                         fi
-                         out ":"
-                         if [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]]; then
-                              for (( 1; str_len < 30; str_len++ )); do
-                                   out " "
-                              done
-                         else
-                              for (( 1; str_len < 51; str_len++ )); do
-                                   out " "
-                              done
-                         fi
-                    else
-                         out ", "           # same cipher --> only print out protocol behind it
-                    fi
-                    out "${proto[i]}"
-                    prev_cipher="${cipher[i]}"
-               fi
-               fileout "cipher_order_${proto[i]}" "INFO" "${cipher[i]} at ${proto[i]} $limitedsense"
-          done
-          outln "\n No further cipher order check has been done as order is determined by the client"
-          outln
-     fi
      return $ret
+     # end of run_server_preference()
 }
 
+# arg1: true if the list that is returned does not need to be ordered by preference.
 check_tls12_pref() {
+     local unordered_list_ok="$1"
+     local chacha20_ciphers="" non_chacha20_ciphers=""
      local batchremoved="-CAMELLIA:-IDEA:-KRB5:-PSK:-SRP:-aNULL:-eNULL"
      local batchremoved_success=false
      local tested_cipher="" cipher ciphers_to_test
      local order=""
      local -i nr_ciphers_found_r1=0 nr_ciphers_found_r2=0
 
+     # Place ChaCha20 ciphers at the end of the list to avoid accidentally
+     # triggering the server's PrioritizeChaCha setting.
+     ciphers_to_test="$(actually_supported_osslciphers "ALL:$batchremoved" "" "")"
+     for cipher in $(colon_to_spaces "$ciphers_to_test"); do
+          [[ "$cipher" =~ CHACHA20 ]] && chacha20_ciphers+="$cipher:" || non_chacha20_ciphers+="$cipher:"
+     done
+     ciphers_to_test="$non_chacha20_ciphers$chacha20_ciphers"
+     ciphers_to_test="${ciphers_to_test%:}"
+
      while true; do
-          $OPENSSL s_client $(s_client_options "$STARTTLS -tls1_2 $BUGS -cipher "ALL$tested_cipher:$batchremoved" -connect $NODEIP:$PORT $PROXY $SNI") </dev/null 2>>$ERRFILE >$TMPFILE
+          $OPENSSL s_client $(s_client_options "$STARTTLS -tls1_2 $BUGS -cipher "$ciphers_to_test$tested_cipher" -connect $NODEIP:$PORT $PROXY $SNI") </dev/null 2>>$ERRFILE >$TMPFILE
           if sclient_connect_successful $? $TMPFILE ; then
                cipher=$(get_cipher $TMPFILE)
                order+=" $cipher"
@@ -6490,9 +6996,16 @@ check_tls12_pref() {
           fi
      done
 
-     if "$batchremoved_success"; then
+     if "$batchremoved_success" && ! "$unordered_list_ok"; then
           # now we combine the two cipher sets from both while loops
-          combined_ciphers="$order"
+
+          # Place ChaCha20 ciphers at the end of the list to avoid accidentally
+          # triggering the server's PrioritizeChaCha setting.
+          chacha20_ciphers=""; non_chacha20_ciphers=""
+          for cipher in $order; do
+               [[ "$cipher" =~ CHACHA20 ]] && chacha20_ciphers+="$cipher " || non_chacha20_ciphers+="$cipher "
+          done
+          combined_ciphers="$non_chacha20_ciphers$chacha20_ciphers"
           order="" ; tested_cipher=""
           while true; do
                ciphers_to_test=""
@@ -6513,11 +7026,11 @@ check_tls12_pref() {
                fi
           done
           if "$FAST" && [[ $nr_ciphers_found_r2 -ne 1 ]]; then
-                prln_fixme "something weird happened around line $((LINENO - 14))"
-                return 1
+               prln_fixme "something weird happened around line $((LINENO - 14))"
+               return 1
           elif ! "$FAST" && [[ $nr_ciphers_found_r2 -ne $nr_ciphers_found_r1 ]]; then
-                prln_fixme "something weird happened around line $((LINENO - 16))"
-                return 1
+               prln_fixme "something weird happened around line $((LINENO - 16))"
+               return 1
           fi
      fi
      tm_out "$order"
@@ -6526,53 +7039,91 @@ check_tls12_pref() {
      return 0
 }
 
-
+# At the moment only called from run_server_preference()
 cipher_pref_check() {
-     local p="$1" proto_hex="$2" proto="$3"
+     local proto="$1" proto_hex="$2" proto_text="$3"
      local using_sockets="$4"
-     local tested_cipher cipher order rfc_cipher rfc_order
-     local overflow_probe_cipherlist="ALL:-ECDHE-RSA-AES256-GCM-SHA384:-AES128-SHA:-DES-CBC3-SHA"
-     local -i i nr_ciphers nr_nonossl_ciphers num_bundles mod_check bundle_size bundle end_of_bundle success
-     local hexc ciphers_to_test
+     local wide="$5"          # at the moment always = true
+     local tested_cipher cipher order="" rfc_cipher rfc_order
+     local -i i nr_ciphers nr_nonossl_ciphers num_bundles bundle_size bundle end_of_bundle success
+     local -i nr_ciphers_found
+     local hexc ciphers_to_test cipher_list="" chacha20_ciphers non_chacha20_ciphers
+     local first_cipher first_chacha_cipher
+     local -a normalized_hexcode ciph kx enc export2 sigalg
      local -a rfc_ciph hexcode ciphers_found ciphers_found2
      local -a -i index
-     local ciphers_found_with_sockets
+     local ciphers_found_with_sockets=false prioritize_chacha=false
 
-     order=""; ciphers_found_with_sockets=false
-     if [[ $p == ssl3 ]] && ! "$HAS_SSL3" && ! "$using_sockets"; then
-          out "\n    SSLv3:     "; pr_local_problem "$OPENSSL doesn't support \"s_client -ssl3\"";
+     if [[ $proto == ssl3 ]] && ! "$HAS_SSL3" && ! "$using_sockets"; then
+          outln
+          prln_local_problem "$OPENSSL doesn't support \"s_client -ssl3\"";
           return 0
      fi
-     if [[ $p == tls1_3 ]] && ! "$HAS_TLS13" && ! "$using_sockets"; then
-          out "\n    TLSv1.3    "; pr_local_problem "$OPENSSL doesn't support \"s_client -tls1_3\"";
+     if [[ $proto == tls1_3 ]] && ! "$HAS_TLS13" && ! "$using_sockets"; then
+          outln
+          prln_local_problem "$OPENSSL doesn't support \"s_client -tls1_3\"";
           return 0
      fi
 
-     [[ $(has_server_protocol "$p") -eq 1 ]] && return 0
+     if ( [[ $proto != tls1_3 ]] || "$HAS_TLS13" ) && ( [[ $proto != ssl3 ]] || "$HAS_SSL3" ); then
+          if [[ $proto == tls1_2 ]] && "$SERVER_SIZE_LIMIT_BUG" && \
+             [[ "$(count_ciphers "$(actually_supported_osslciphers "ALL:COMPLEMENTOFALL" "" "")")" -gt 127 ]]; then
+               order="$(check_tls12_pref "$wide")"
+               [[ "${order:0:1}" == \  ]] && order="${order:1}"
+               cipher_list="$order"
+          fi
+          if "$wide" || [[ -z "$order" ]]; then
+               # Place ChaCha20 ciphers at the end of the list to avoid accidentally
+               # triggering the server's PrioritizeChaCha setting.
+               chacha20_ciphers=""; non_chacha20_ciphers=""
+               if [[ $proto == tls1_3 ]]; then
+                    cipher_list="$(colon_to_spaces "$TLS13_OSSL_CIPHERS")"
+               elif [[ -z "$cipher_list" ]]; then
+                    cipher_list="$(colon_to_spaces "$(actually_supported_osslciphers "ALL:COMPLEMENTOFALL" "" "")")"
+               fi
+               for cipher in $cipher_list; do
+                    [[ "$cipher" =~ CHACHA20 ]] && chacha20_ciphers+="$cipher " || non_chacha20_ciphers+="$cipher "
+               done
+               cipher_list="$non_chacha20_ciphers $chacha20_ciphers"
 
-     if ( [[ $p != tls1_3 ]] || "$HAS_TLS13" ) && ( [[ $p != ssl3 ]] || "$HAS_SSL3" ); then
-          if [[ $p == tls1_2 ]] && "$SERVER_SIZE_LIMIT_BUG"; then
-               order="$(check_tls12_pref)"
-          else
-               tested_cipher=""
+               tested_cipher=""; order=""; nr_ciphers_found=0
                while true; do
-                    if [[ $p != tls1_3 ]]; then
-                         ciphers_to_test="-cipher ALL:COMPLEMENTOFALL${tested_cipher}"
+                    ciphers_to_test=""
+                    for cipher in $cipher_list; do
+                         [[ ! "$tested_cipher:" =~ :-$cipher: ]] && ciphers_to_test+=":$cipher"
+                    done
+                    [[ -z "$ciphers_to_test" ]] && break
+                    if [[ $proto != tls1_3 ]]; then
+                         ciphers_to_test="-cipher ${ciphers_to_test:1}"
                     else
-                         ciphers_to_test=""
-                         for cipher in $(colon_to_spaces "$TLS13_OSSL_CIPHERS"); do
-                              [[ ! "$tested_cipher" =~ ":-"$cipher ]] && ciphers_to_test+=":$cipher"
-                         done
-                         [[ -z "$ciphers_to_test" ]] && break
                          ciphers_to_test="-ciphersuites ${ciphers_to_test:1}"
                     fi
-                    $OPENSSL s_client $(s_client_options "$STARTTLS -"$p" $BUGS $ciphers_to_test -connect $NODEIP:$PORT $PROXY $SNI") </dev/null 2>>$ERRFILE >$TMPFILE
+                    $OPENSSL s_client $(s_client_options "$STARTTLS -"$proto" $BUGS $ciphers_to_test -connect $NODEIP:$PORT $PROXY $SNI") </dev/null 2>>$ERRFILE >$TMPFILE
                     sclient_connect_successful $? $TMPFILE || break
                     cipher=$(get_cipher $TMPFILE)
                     [[ -z "$cipher" ]] && break
                     order+="$cipher "
                     tested_cipher+=":-"$cipher
                     "$FAST" && break
+                    if "$wide"; then
+                         for (( i=0; i < TLS_NR_CIPHERS; i++ )); do
+                              [[ "$cipher" == ${TLS_CIPHER_OSSL_NAME[i]} ]] && break
+                         done
+                         [[ $i -eq $TLS_NR_CIPHERS ]] && continue
+                         normalized_hexcode[nr_ciphers_found]="$(normalize_ciphercode "${TLS_CIPHER_HEXCODE[i]}")"
+                         ciph[nr_ciphers_found]="${TLS_CIPHER_OSSL_NAME[i]}"
+                         kx[nr_ciphers_found]="${TLS_CIPHER_KX[i]}"
+                         [[ $proto == tls1_3 ]] && kx[nr_ciphers_found]="$(read_dhtype_from_file $TMPFILE)"
+                         if [[ ${kx[nr_ciphers_found]} == Kx=ECDH ]] || [[ ${kx[nr_ciphers_found]} == Kx=DH ]] || [[ ${kx[nr_ciphers_found]} == Kx=EDH ]]; then
+                              kx[nr_ciphers_found]+=" $(read_dhbits_from_file "$TMPFILE" quiet)"
+                         fi
+                         enc[nr_ciphers_found]="${TLS_CIPHER_ENC[i]}"
+                         export2[nr_ciphers_found]="${TLS_CIPHER_EXPORT[i]}"
+                         sigalg[nr_ciphers_found]=""
+                         "$SHOW_SIGALGO" && grep -qe '-----BEGIN CERTIFICATE-----' $TMPFILE && \
+                              sigalg[nr_ciphers_found]="$(read_sigalg_from_file "$TMPFILE")"
+                         nr_ciphers_found+=1
+                    fi
                done
           fi
      fi
@@ -6583,7 +7134,7 @@ cipher_pref_check() {
                ciphers_found[i]=false
                hexc="${TLS_CIPHER_HEXCODE[i]}"
                if [[ ${#hexc} -eq 9 ]]; then
-                    if [[ " $order " =~ " ${TLS_CIPHER_OSSL_NAME[i]} " ]]; then
+                    if [[ " $order " =~ \ ${TLS_CIPHER_OSSL_NAME[i]}\  ]]; then
                          ciphers_found[i]=true
                     else
                          ciphers_found2[nr_nonossl_ciphers]=false
@@ -6591,14 +7142,14 @@ cipher_pref_check() {
                          rfc_ciph[nr_nonossl_ciphers]="${TLS_CIPHER_RFC_NAME[i]}"
                          index[nr_nonossl_ciphers]=$i
                          # Only test ciphers that are relevant to the protocol.
-                         if [[ "$p" == tls1_3 ]]; then
-                              [[ "${hexc:2:2}" == "13" ]] && nr_nonossl_ciphers+=1
-                         elif [[ "$p" == tls1_2 ]]; then
+                         if [[ $proto == tls1_3 ]]; then
+                              [[ "${hexc:2:2}" == 13 ]] && nr_nonossl_ciphers+=1
+                         elif [[ $proto == tls1_2 ]]; then
                               [[ "${hexc:2:2}" != 13 ]] && nr_nonossl_ciphers+=1
                          elif [[ ! "${TLS_CIPHER_RFC_NAME[i]}" =~ SHA256 ]] && \
                               [[ ! "${TLS_CIPHER_RFC_NAME[i]}" =~ SHA384 ]] && \
-                              [[ "${TLS_CIPHER_RFC_NAME[i]}" != *"_CCM" ]] && \
-                              [[ "${TLS_CIPHER_RFC_NAME[i]}" != *"_CCM_8" ]]; then
+                              [[ "${TLS_CIPHER_RFC_NAME[i]}" != *_CCM ]] && \
+                              [[ "${TLS_CIPHER_RFC_NAME[i]}" != *_CCM_8 ]]; then
                               nr_nonossl_ciphers+=1
                          fi
                     fi
@@ -6608,21 +7159,19 @@ cipher_pref_check() {
 
      if [[ $nr_nonossl_ciphers -eq 0 ]]; then
           num_bundles=0
-     elif [[ $p != tls1_2 ]] || ! "$SERVER_SIZE_LIMIT_BUG"; then
+     elif [[ $proto != tls1_2 ]] || ! "$SERVER_SIZE_LIMIT_BUG"; then
           num_bundles=1
           bundle_size=$nr_nonossl_ciphers
      else
           num_bundles=$nr_nonossl_ciphers/128
-          mod_check=$nr_nonossl_ciphers%128
-          [[ $mod_check -ne 0 ]] && num_bundles=$num_bundles+1
+          [[ $((nr_nonossl_ciphers%128)) -ne 0 ]] && num_bundles+=1
 
           bundle_size=$nr_nonossl_ciphers/$num_bundles
-          mod_check=$nr_nonossl_ciphers%$num_bundles
-          [[ $mod_check -ne 0 ]] && bundle_size+=1
+          [[ $((nr_nonossl_ciphers%num_bundles)) -ne 0 ]] && bundle_size+=1
      fi
 
      for (( bundle=0; bundle < num_bundles; bundle++ )); do
-          end_of_bundle=$bundle*$bundle_size+$bundle_size
+          end_of_bundle=$(( (bundle+1)*bundle_size ))
           [[ $end_of_bundle -gt $nr_nonossl_ciphers ]] && end_of_bundle=$nr_nonossl_ciphers
           while true; do
                ciphers_to_test=""
@@ -6634,12 +7183,12 @@ cipher_pref_check() {
                [[ $? -ne 0 ]] && break
                cipher=$(get_cipher "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")
                for (( i=bundle*bundle_size; i < end_of_bundle; i++ )); do
-                    [[ "$cipher" == "${rfc_ciph[i]}" ]] && ciphers_found2[i]=true && break
+                    [[ "$cipher" == ${rfc_ciph[i]} ]] && ciphers_found2[i]=true && break
                done
                i=${index[i]}
                ciphers_found[i]=true
                ciphers_found_with_sockets=true
-               if [[ $p != tls1_2 ]] || ! "$SERVER_SIZE_LIMIT_BUG"; then
+               if [[ $proto != tls1_2 ]] || ! "$SERVER_SIZE_LIMIT_BUG"; then
                     # Throw out the results found so far and start over using just sockets
                     bundle=$num_bundles
                     for (( i=0; i < TLS_NR_CIPHERS; i++ )); do
@@ -6655,22 +7204,45 @@ cipher_pref_check() {
      # If there is a SERVER_SIZE_LIMIT_BUG, then use sockets to find the cipher
      # order, but starting with the list of ciphers supported by the server.
      if "$ciphers_found_with_sockets"; then
-          order=""
-          nr_ciphers=0
+          # Create an array of the ciphers to test with any ChaCha20
+          # listed last in order to avoid accidentally triggering the
+          # server's PriorizeChaCha setting.
+          order=""; nr_ciphers=0; nr_ciphers_found=0
           for (( i=0; i < TLS_NR_CIPHERS; i++ )); do
+               [[ "${TLS_CIPHER_RFC_NAME[i]}" =~ CHACHA20 ]] && continue
+               [[ "${TLS_CIPHER_OSSL_NAME[i]}" =~ CHACHA20 ]] && continue
                hexc="${TLS_CIPHER_HEXCODE[i]}"
                if "${ciphers_found[i]}" && [[ ${#hexc} -eq 9 ]]; then
                     ciphers_found2[nr_ciphers]=false
                     hexcode[nr_ciphers]="${hexc:2:2},${hexc:7:2}"
                     rfc_ciph[nr_ciphers]="${TLS_CIPHER_RFC_NAME[i]}"
-                    if [[ "$p" == "tls1_3" ]]; then
-                         [[ "${hexc:2:2}" == "13" ]] && nr_ciphers+=1
-                    elif [[ "$p" == "tls1_2" ]]; then
-                         [[ "${hexc:2:2}" != "13" ]] && nr_ciphers+=1
+                    if [[ $proto == tls1_3 ]]; then
+                         [[ "${hexc:2:2}" == 13 ]] && nr_ciphers+=1
+                    elif [[ $proto == tls1_2 ]]; then
+                         [[ "${hexc:2:2}" != 13 ]] && nr_ciphers+=1
                     elif [[ ! "${TLS_CIPHER_RFC_NAME[i]}" =~ SHA256 ]] && \
                          [[ ! "${TLS_CIPHER_RFC_NAME[i]}" =~ SHA384 ]] && \
-                         [[ "${TLS_CIPHER_RFC_NAME[i]}" != *"_CCM" ]] && \
-                         [[ "${TLS_CIPHER_RFC_NAME[i]}" != *"_CCM_8" ]]; then
+                         [[ "${TLS_CIPHER_RFC_NAME[i]}" != *_CCM ]] && \
+                         [[ "${TLS_CIPHER_RFC_NAME[i]}" != *_CCM_8 ]]; then
+                         nr_ciphers+=1
+                    fi
+               fi
+          done
+          for (( i=0; i < TLS_NR_CIPHERS; i++ )); do
+               [[ "${TLS_CIPHER_RFC_NAME[i]}" =~ CHACHA20 ]] || [[ "${TLS_CIPHER_OSSL_NAME[i]}" =~ CHACHA20 ]] || continue
+               hexc="${TLS_CIPHER_HEXCODE[i]}"
+               if "${ciphers_found[i]}" && [[ ${#hexc} -eq 9 ]]; then
+                    ciphers_found2[nr_ciphers]=false
+                    hexcode[nr_ciphers]="${hexc:2:2},${hexc:7:2}"
+                    rfc_ciph[nr_ciphers]="${TLS_CIPHER_RFC_NAME[i]}"
+                    if [[ $proto == tls1_3 ]]; then
+                         [[ "${hexc:2:2}" == 13 ]] && nr_ciphers+=1
+                    elif [[ $proto == tls1_2 ]]; then
+                         [[ "${hexc:2:2}" != 13 ]] && nr_ciphers+=1
+                    elif [[ ! "${TLS_CIPHER_RFC_NAME[i]}" =~ SHA256 ]] && \
+                         [[ ! "${TLS_CIPHER_RFC_NAME[i]}" =~ SHA384 ]] && \
+                         [[ "${TLS_CIPHER_RFC_NAME[i]}" != *_CCM ]] && \
+                         [[ "${TLS_CIPHER_RFC_NAME[i]}" != *_CCM_8 ]]; then
                          nr_ciphers+=1
                     fi
                fi
@@ -6681,12 +7253,35 @@ cipher_pref_check() {
                     ! "${ciphers_found2[i]}" && ciphers_to_test+=", ${hexcode[i]}"
                done
                [[ -z "$ciphers_to_test" ]] && break
-               tls_sockets "$proto_hex" "${ciphers_to_test:2}, 00,ff" "ephemeralkey"
+               if "$wide" && "$SHOW_SIGALGO"; then
+                    tls_sockets "$proto_hex" "${ciphers_to_test:2}, 00,ff" "all"
+               else
+                    tls_sockets "$proto_hex" "${ciphers_to_test:2}, 00,ff" "ephemeralkey"
+               fi
                [[ $? -ne 0 ]] && break
                cipher=$(get_cipher "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")
                for (( i=0; i < nr_ciphers; i++ )); do
                     [[ "$cipher" == ${rfc_ciph[i]} ]] && ciphers_found2[i]=true && break
                done
+               if "$wide"; then
+                    for (( i=0; i < TLS_NR_CIPHERS; i++ )); do
+                         [[ "$cipher" == ${TLS_CIPHER_RFC_NAME[i]} ]] && break
+                    done
+                    [[ $i -eq $TLS_NR_CIPHERS ]] && continue
+                    normalized_hexcode[nr_ciphers_found]="$(normalize_ciphercode "${TLS_CIPHER_HEXCODE[i]}")"
+                    ciph[nr_ciphers_found]="${TLS_CIPHER_OSSL_NAME[i]}"
+                    kx[nr_ciphers_found]="${TLS_CIPHER_KX[i]}"
+                    [[ $proto == tls1_3 ]] && kx[nr_ciphers_found]="$(read_dhtype_from_file "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")"
+                    if [[ ${kx[nr_ciphers_found]} == Kx=ECDH ]] || [[ ${kx[nr_ciphers_found]} == Kx=DH ]] || [[ ${kx[nr_ciphers_found]} == Kx=EDH ]]; then
+                         kx[nr_ciphers_found]+=" $(read_dhbits_from_file "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" quiet)"
+                    fi
+                    enc[nr_ciphers_found]="${TLS_CIPHER_ENC[i]}"
+                    export2[nr_ciphers_found]="${TLS_CIPHER_EXPORT[i]}"
+                    sigalg[nr_ciphers_found]=""
+                    "$SHOW_SIGALGO" && [[ -r "$HOSTCERT" ]] && \
+                         sigalg[nr_ciphers_found]="$(read_sigalg_from_file "$HOSTCERT")"
+                    nr_ciphers_found+=1
+               fi
                if [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]] && [[ $TLS_NR_CIPHERS -ne 0 ]]; then
                     cipher="$(rfc2openssl "$cipher")"
                     # If there is no OpenSSL name for the cipher, then use the RFC name
@@ -6707,19 +7302,97 @@ cipher_pref_check() {
           order="$rfc_order"
      fi
 
-     if [[ -n "$order" ]]; then
-          add_tls_offered "$p" yes
-          outln
-          out "$(printf "    %-10s " "$proto: ")"
-          if [[ "$COLOR" -le 2 ]]; then
-               out "$(out_row_aligned_max_width "$order" "               " $TERM_WIDTH)"
+     # If the server supports at least one ChaCha20 cipher that is less
+     # preferred than a non-ChaCha20 cipher, then check if the server is
+     # configured to prioritize ChaCha20 if that cipher is listed first
+     # in the ClientHello.
+     first_cipher=""; first_chacha_cipher=""
+     for cipher in $order; do
+          [[ ! "$cipher" =~ CHACHA20 ]] && first_cipher="$cipher" && break
+     done
+     if [[ -n "$first_cipher" ]]; then
+          # Search for first ChaCha20 cipher that comes after $first_cipher in $order.
+          for first_chacha_cipher in ${order#*$first_cipher}; do
+               [[ "$first_chacha_cipher" =~ CHACHA20 ]] && break
+          done
+     fi
+     [[ ! "${first_chacha_cipher}" =~ CHACHA20 ]] && first_chacha_cipher=""
+     if [[ -n "$first_cipher" ]] && [[ -n "$first_chacha_cipher" ]]; then
+          # $first_cipher is the first non-ChaCha20 cipher in $order and
+          # $first_chacha_cipher is the first ChaCha20 that comes after
+          # $first_cipher in $order. Check to see if the server will select
+          # $first_chacha_cipher if it appears before $first_cipher in the
+          # ClientHello.
+          if "$ciphers_found_with_sockets"; then
+               if [[ "$DISPLAY_CIPHERNAMES" =~ rfc ]]; then
+                    first_cipher="$(rfc2hexcode "$first_cipher")"
+                    first_chacha_cipher="$(rfc2hexcode "$first_chacha_cipher")"
+               else
+                    first_cipher="$(openssl2hexcode "$first_cipher")"
+                    first_chacha_cipher="$(openssl2hexcode "$first_chacha_cipher")"
+               fi
+               first_cipher="${first_cipher:2:2},${first_cipher:7:2}"
+               first_chacha_cipher="${first_chacha_cipher:2:2},${first_chacha_cipher:7:2}"
+               tls_sockets "$proto_hex" "$first_chacha_cipher, $first_cipher, 00,ff" "ephemeralkey"
+               if [[ $? -eq 0 ]]; then
+                    cipher="$(get_cipher "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")"
+                    [[ "$cipher" =~ CHACHA20 ]] && prioritize_chacha=true
+               else
+                    pr_fixme "something weird happened around line $((LINENO - 5)) "
+               fi
           else
-               out_row_aligned_max_width_by_entry "$order" "               " $TERM_WIDTH pr_cipher_quality
+               if [[ "$DISPLAY_CIPHERNAMES" =~ rfc ]]; then
+                    first_cipher="$(rfc2openssl "$first_cipher")"
+                    first_chacha_cipher="$(rfc2openssl "$first_chacha_cipher")"
+               fi
+               if [[ $proto != tls1_3 ]]; then
+                    ciphers_to_test="-cipher $first_chacha_cipher:$first_cipher"
+               else
+                    ciphers_to_test="-ciphersuites $first_chacha_cipher:$first_cipher"
+               fi
+               $OPENSSL s_client $(s_client_options "$STARTTLS -"$proto" $BUGS $ciphers_to_test -connect $NODEIP:$PORT $PROXY $SNI") </dev/null 2>>$ERRFILE >$TMPFILE
+               if sclient_connect_successful $? $TMPFILE; then
+                    cipher="$(get_cipher $TMPFILE)"
+                    [[ "$cipher" =~ CHACHA20 ]] && prioritize_chacha=true
+               else
+                    pr_fixme "something weird happened around line $((LINENO - 5)) "
+               fi
           fi
-          fileout "cipherorder_${proto//./_}" "INFO" "$order"
+     fi
+     if "$prioritize_chacha"; then
+          outln " (server order -- server prioritizes ChaCha ciphers when preferred by clients)"
+     elif [[ -n "$order" ]]; then
+          outln " (server order)"
+     else
+          outln
+     fi
+     if [[ -n "$order" ]]; then
+          add_proto_offered "$proto" yes
+          if "$wide"; then
+               for (( i=0 ; i<nr_ciphers_found; i++ )); do
+                    neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${export2[i]}" "true"
+                    outln "${sigalg[i]}"
+                    id="cipher-${proto}_${normalized_hexcode[i]}"
+                    fileout "$id" "$(get_cipher_quality_severity "${ciph[i]}")" "$proto_text  $(neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${export2[i]}")"
+               done
+          else
+               outln
+               out "$(printf "    %-10s " "$proto_text: ")"
+               if [[ "$COLOR" -le 2 ]]; then
+                    out "$(out_row_aligned_max_width "$order" "               " $TERM_WIDTH)"
+               else
+                    out_row_aligned_max_width_by_entry "$order" "               " $TERM_WIDTH pr_cipher_quality
+               fi
+          fi
+          fileout "cipherorder_${proto_text//./_}" "INFO" "$order"
+          [[ -n "$first_cipher" ]] && [[ -n "$first_chacha_cipher" ]] && fileout "prioritize_chacha_${proto_text//./_}" "INFO" "$prioritize_chacha"
+     else
+          # Order doesn't contain any ciphers, so we can safely unset the protocol and put a dash out
+          add_proto_offered "$proto" no
+          outln " -"
      fi
 
-     tmpfile_handle ${FUNCNAME[0]}-$p.txt
+     tmpfile_handle ${FUNCNAME[0]}-$proto.txt
      return 0
 }
 
@@ -6735,8 +7408,8 @@ get_host_cert() {
           return 0
      else
           if [[ -z "$1" ]]; then
-                prln_warning "could not retrieve host certificate!"
-                fileout "host_certificate_Problem" "WARN" "Could not retrieve host certificate!"
+               prln_warning "could not retrieve host certificate!"
+               fileout "host_certificate_Problem" "WARN" "Could not retrieve host certificate!"
           fi
           return 1
      fi
@@ -6750,17 +7423,17 @@ verify_retcode_helper() {
 
      case $retcode in
           # codes from ./doc/apps/verify.pod | verify(1ssl)
-          44) tm_out "(different CRL scope)" ;;                  # X509_V_ERR_DIFFERENT_CRL_SCOPE
-          26) tm_out "(unsupported certificate purpose)" ;;      # X509_V_ERR_INVALID_PURPOSE
-          24) tm_out "(certificate unreadable)" ;;               # X509_V_ERR_INVALID_CA
-          23) tm_out "(certificate revoked)" ;;                  # X509_V_ERR_CERT_REVOKED
-          21) tm_out "(chain incomplete, only 1 cert provided)" ;;    # X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE
-          20) tm_out "(chain incomplete)" ;;                     # X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY
-          19) tm_out "(self signed CA in chain)" ;;              # X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN
-          18) tm_out "(self signed)" ;;                          # X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT
-          10) tm_out "(expired)" ;;                              # X509_V_ERR_CERT_HAS_EXPIRED
-          9)  tm_out "(not yet valid)" ;;                        # X509_V_ERR_CERT_NOT_YET_VALID
-          2)  tm_out "(issuer cert missing)" ;;                  # X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT
+          44) tm_out "(different CRL scope)" ;;                    # X509_V_ERR_DIFFERENT_CRL_SCOPE
+          26) tm_out "(unsupported certificate purpose)" ;;        # X509_V_ERR_INVALID_PURPOSE
+          24) tm_out "(certificate unreadable)" ;;                 # X509_V_ERR_INVALID_CA
+          23) tm_out "(certificate revoked)" ;;                    # X509_V_ERR_CERT_REVOKED
+          21) tm_out "(chain incomplete, only 1 cert provided)" ;; # X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE
+          20) tm_out "(chain incomplete)" ;;                       # X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY
+          19) tm_out "(self signed CA in chain)" ;;                # X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN
+          18) tm_out "(self signed)" ;;                            # X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT
+          10) tm_out "(expired)" ;;                                # X509_V_ERR_CERT_HAS_EXPIRED
+          9)  tm_out "(not yet valid)" ;;                          # X509_V_ERR_CERT_NOT_YET_VALID
+          2)  tm_out "(issuer cert missing)" ;;                    # X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT
           *) ret=1 ; tm_out " (unknown, pls report) $1" ;;
      esac
      return $ret
@@ -6781,7 +7454,7 @@ determine_trust() {
      local code
      local ca_bundles=""
      local spaces="                              "
-     local -i certificates_provided=1+$(grep -c "\-\-\-\-\-BEGIN CERTIFICATE\-\-\-\-\-" $TEMPDIR/intermediatecerts.pem)
+     local -i certificates_provided=1+$(grep -ce '-----BEGIN CERTIFICATE-----' $TEMPDIR/intermediatecerts.pem)
      local addtl_warning
 
      # If $json_postfix is not empty, then there is more than one certificate
@@ -6789,8 +7462,8 @@ determine_trust() {
      [[ -n $json_postfix ]] && spaces="                                "
 
      case $OSSL_VER_MAJOR.$OSSL_VER_MINOR in
-          1.0.2|1.1.0|1.1.1|2.[1-9].*)                # 2.x is LibreSSL. 2.1.1 was tested to work, below is not sure
-              :
+          1.0.2|1.1.0|1.1.1|2.[1-9].*|3.*)           # 2.x is LibreSSL. 2.1.1 was tested to work, below is not sure
+               :
           ;;
           *)   addtl_warning="Your $OPENSSL <= 1.0.2 might be too unreliable to determine trust"
                fileout "${jsonID}${json_postfix}" "WARN" "$addtl_warning"
@@ -6816,9 +7489,9 @@ determine_trust() {
           # in a subshell because that should be valid here only
           (export SSL_CERT_DIR="/dev/null"; export SSL_CERT_FILE="/dev/null"
           if [[ $certificates_provided -ge 2 ]]; then
-               $OPENSSL verify -purpose sslserver -CAfile <(cat $ADDITIONAL_CA_FILES "$bundle_fname") -untrusted $TEMPDIR/intermediatecerts.pem $HOSTCERT >$TEMPDIR/${certificate_file[i]}.1 2>$TEMPDIR/${certificate_file[i]}.2
+               $OPENSSL verify $TRUSTED1ST -purpose sslserver -CAfile <(cat $ADDTL_CA_FILES "$bundle_fname") -untrusted $TEMPDIR/intermediatecerts.pem $HOSTCERT >$TEMPDIR/${certificate_file[i]}.1 2>$TEMPDIR/${certificate_file[i]}.2
           else
-               $OPENSSL verify -purpose sslserver -CAfile <(cat $ADDITIONAL_CA_FILES "$bundle_fname") $HOSTCERT >$TEMPDIR/${certificate_file[i]}.1 2>$TEMPDIR/${certificate_file[i]}.2
+               $OPENSSL verify $TRUSTED1ST -purpose sslserver -CAfile <(cat $ADDTL_CA_FILES "$bundle_fname") $HOSTCERT >$TEMPDIR/${certificate_file[i]}.1 2>$TEMPDIR/${certificate_file[i]}.2
           fi)
           verify_retcode[i]=$(awk '/error [1-9][0-9]? at [0-9]+ depth lookup:/ { if (!found) {print $2; found=1} }' $TEMPDIR/${certificate_file[i]}.1 $TEMPDIR/${certificate_file[i]}.2)
           [[ -z "${verify_retcode[i]}" ]] && verify_retcode[i]=0
@@ -6844,10 +7517,9 @@ determine_trust() {
           # we did to stdout the warning above already, so we could stay here with OK:
           fileout "${jsonID}${json_postfix}" "OK" "passed. $addtl_warning"
      else
-          # at least one failed
           pr_svrty_critical "NOT ok"
           if ! "$some_ok"; then
-               # all failed (we assume with the same issue), we're displaying the reason
+               # ALL failed (we assume with the same issue), we're displaying the reason
                out " "
                code="$(verify_retcode_helper "${verify_retcode[1]}")"
                if [[ "$code" =~ "pls report" ]]; then
@@ -6856,16 +7528,15 @@ determine_trust() {
                     out "$code"
                fi
                fileout "${jsonID}${json_postfix}" "CRITICAL" "failed $code. $addtl_warning"
+               set_grade_cap "T" "Issues with the chain of trust $code"
           else
-               # is one ok and the others not ==> display the culprit store
+               # alt least one ok and other(s) not ==> display the culprit store(s)
                if "$some_ok"; then
                     pr_svrty_critical ":"
-                    for ((i=1;i<=num_ca_bundles;i++)); do
+                    for (( i=1; i<=num_ca_bundles; i++ )); do
                          if ${trust[i]}; then
                               ok_was="${certificate_file[i]} $ok_was"
                          else
-                              #code="$(verify_retcode_helper ${verify_retcode[i]})"
-                              #notok_was="${certificate_file[i]} $notok_was"
                               pr_svrty_high " ${certificate_file[i]} "
                               code="$(verify_retcode_helper "${verify_retcode[i]}")"
                               if [[ "$code" =~ "pls report" ]]; then
@@ -6874,10 +7545,13 @@ determine_trust() {
                                    out "$code"
                               fi
                               notok_was="${certificate_file[i]} $code $notok_was"
+                              if ! [[ ${certificate_file[i]} =~ Java ]]; then
+                                   # Exemption for Java AND rating, as this store doesn't seem to be as complete.
+                                   # We won't penalize this but we still need to raise a red flag. See #1648
+                                   set_grade_cap "T" "Issues with chain of trust $code"
+                              fi
                          fi
                     done
-                    #pr_svrty_high "$notok_was "
-                    #outln "$code"
                     outln
                     # lf + green ones
                     [[ "$DEBUG" -eq 0 ]] && tm_out "$spaces"
@@ -6890,7 +7564,6 @@ determine_trust() {
      outln
      return 0
 }
-
 # not handled: Root CA supplied ("contains anchor" in SSLlabs terminology)
 
 tls_time() {
@@ -6900,7 +7573,7 @@ tls_time() {
 
      pr_bold " TLS clock skew" ; out "$spaces"
 
-     if ( [[ "$STARTTLS_PROTOCOL" =~ ldap ]] || [[ "$STARTTLS_PROTOCOL" =~ irc ]] ); then
+     if [[ "$STARTTLS_PROTOCOL" =~ irc ]]; then
           prln_local_problem "STARTTLS/$STARTTLS_PROTOCOL and --ssl-native collide here"
           return 1
      fi
@@ -6938,15 +7611,20 @@ tls_time() {
 # returns 0 if connect was successful, 1 if not
 #
 sclient_connect_successful() {
-     local server_hello="$(<"$2")"
+     local server_hello="$(cat -v "$2")"
+     local connect_success=false
      local re='Master-Key: ([^\
 ]*)'
 
-     [[ $1 -eq 0 ]] && return 0
-     if [[ "$server_hello" =~ $re ]]; then
-          [[ -n "${BASH_REMATCH[1]}" ]] && return 0
+     [[ $1 -eq 0 ]] && connect_success=true
+     if ! "$connect_success" && [[ "$server_hello" =~ $re ]]; then
+          [[ -n "${BASH_REMATCH[1]}" ]] && connect_success=true
      fi
-     [[ "$server_hello" =~ (New|Reused)", "(SSLv[23]|TLSv1(\.[0-3])?(\/SSLv3)?)", Cipher is "([A-Z0-9]+-[A-Za-z0-9\-]+|TLS_[A-Za-z0-9_]+) ]] && return 0
+     ! "$connect_success" && [[ "$server_hello" =~ (New|Reused)", "(SSLv[23]|TLSv1(\.[0-3])?(\/SSLv3)?)", Cipher is "([A-Z0-9]+-[A-Za-z0-9\-]+|TLS_[A-Za-z0-9_]+) ]] && connect_success=true
+     if "$connect_success"; then
+          "$NO_SSL_SESSIONID" && [[ "$server_hello" =~ Session-ID:\ [a-fA-F0-9]{2,64} ]] && NO_SSL_SESSIONID=false
+          return 0
+     fi
      # what's left now is: master key empty and Session-ID not empty
      # ==> probably client-based auth with x509 certificate. We handle that at other places
      #
@@ -7055,7 +7733,53 @@ determine_tls_extensions() {
           [[ $success -eq 0 ]] && extract_new_tls_extensions $TMPFILE
           tmpfile_handle ${FUNCNAME[0]}.txt
      fi
+
+     # Keep it "on file" for debugging purposes
+     [[ "$DEBUG" -ge 1 ]] && safe_echo "$TLS_EXTENSIONS" >"$TEMPDIR/$NODE.$NODEIP.tls_extensions.txt"
+
      return $success
+}
+
+# Return a list of the certificate compression methods supported (RFC 8879)
+determine_cert_compression() {
+     #                                          1=zlib, 2=brotli, 3=zstd
+     local -a supported_compression_methods=("" "false" "false" "false")
+     local -i i len nr_compression_methods=3
+     local len1 len2 methods_to_test method_found method_nr methods_found=""
+
+     # Certificate compression is only supported by TLS 1.3.
+     [[ $(has_server_protocol "tls1_3") -eq 1 ]] && return 1
+     while true; do
+          methods_to_test=""
+          for (( i=1; i <= nr_compression_methods; i++ )); do
+               ! "${supported_compression_methods[i]}" && methods_to_test+=" ,00,$(printf "%02x" $i)"
+          done
+          len=$((2*${#methods_to_test}/7))
+          # If there are no more compression methods remaining to be tested, then quit.
+          [[ $len -eq 0 ]] && break
+          len1=$(printf "%02x" "$len")
+          len2=$(printf "%02x" "$((len+1))")
+          tls_sockets "04" "$TLS13_CIPHER" "all+" "00,1b, 00,$len2, $len1$methods_to_test"
+          if [[ $? -ne 0 ]]; then
+               add_proto_offered tls1_3 no
+               return 1
+          fi
+          add_proto_offered tls1_3 yes
+          method_found="$(awk '/Certificate Compression Algorithm: / { print $4 $5 }' "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")"
+          [[ -z "$method_found" ]] && break
+          [[ -z "$methods_found" ]] && tmpfile_handle ${FUNCNAME[0]}.txt "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt"
+          method_found="${method_found//(//}"
+          method_found="${method_found//)/}"
+          method_nr="${method_found%%/*}"
+          supported_compression_methods[method_nr]=true
+          methods_found+=" $method_found"
+     done
+     if [[ -n "$methods_found" ]]; then
+          TLS13_CERT_COMPRESS_METHODS="${methods_found:1}"
+     else
+          TLS13_CERT_COMPRESS_METHODS="none"
+     fi
+     return 0
 }
 
 extract_certificates() {
@@ -7066,8 +7790,8 @@ extract_certificates() {
 
      # Place the server's certificate in $HOSTCERT and any intermediate
      # certificates that were provided in $TEMPDIR/intermediatecerts.pem
-     savedir=$(pwd); cd $TEMPDIR
-     # http://backreference.org/2010/05/09/ocsp-verification-with-openssl/
+     savedir="$PWD"; cd $TEMPDIR
+     # https://backreference.org/2010/05/09/ocsp-verification-with-openssl/
      if [[ "$version" == ssl2 ]]; then
           awk -v n=-1 '/Server certificate/ {start=1}
                /-----BEGIN CERTIFICATE-----/{ if (start) {inc=1; n++} }
@@ -7081,42 +7805,42 @@ extract_certificates() {
      fi
      [[ -s level0.crt ]] && nrsaved=$(count_words "$(echo level?.crt 2>/dev/null)")
      if [[ $nrsaved -eq 0 ]]; then
-         success=1
+          success=1
      else
-         success=0
-         CERTIFICATE_LIST_ORDERING_PROBLEM=false
-         mv level0.crt $HOSTCERT
-         if [[ $nrsaved -eq 1 ]]; then
-             echo "" > $TEMPDIR/intermediatecerts.pem
-         else
-             cat level?.crt > $TEMPDIR/intermediatecerts.pem
-             issuerDN="$($OPENSSL x509 -in $HOSTCERT -noout -issuer 2>/dev/null)"
-             issuerDN="${issuerDN:8}"
-             previssuerDN="$issuerDN"
-             # The second certificate (level1.crt) SHOULD be issued to the CA
-             # that issued the server's certificate. But, according to RFC 8446
-             # clients SHOULD be prepared to handle cases in which the server
-             # does not order the certificates correctly.
-             for (( i=1; i < nrsaved; i++ )); do
-                  CAsubjectDN="$($OPENSSL x509 -in "level$i.crt" -noout -subject  2>/dev/null)"
-                  if [[ "${CAsubjectDN:9}" == "$issuerDN" ]]; then
-                       cp "level$i.crt" $TEMPDIR/hostcert_issuer.pem
-                       issuerDN="" # set to empty to prevent further matches
-                  fi
-                  [[ "${CAsubjectDN:9}" != "$previssuerDN" ]] && CERTIFICATE_LIST_ORDERING_PROBLEM=true
-                  "$CERTIFICATE_LIST_ORDERING_PROBLEM" && [[ -z "$issuerDN" ]] && break
-                  previssuerDN="$($OPENSSL x509 -in "level$i.crt" -noout -issuer  2>/dev/null)"
-                  previssuerDN="${previssuerDN:8}"
-             done
-             # This should never happen, but if more than one certificate was
-             # provided and none of them belong to the CA that issued the
-             # server's certificate, then the extra certificates should just
-             # be deleted. There is code elsewhere that assumes that if
-             # $TEMPDIR/intermediatecerts.pem is non-empty, then
-             # $TEMPDIR/hostcert_issuer.pem is also present.
-             [[ -n "$issuerDN" ]] && echo "" > $TEMPDIR/intermediatecerts.pem
-             rm level?.crt
-         fi
+          success=0
+          CERTIFICATE_LIST_ORDERING_PROBLEM=false
+          mv level0.crt $HOSTCERT
+          if [[ $nrsaved -eq 1 ]]; then
+               echo "" > $TEMPDIR/intermediatecerts.pem
+          else
+               cat level?.crt > $TEMPDIR/intermediatecerts.pem
+               issuerDN="$($OPENSSL x509 -in $HOSTCERT -noout -issuer 2>/dev/null)"
+               issuerDN="${issuerDN:8}"
+               previssuerDN="$issuerDN"
+               # The second certificate (level1.crt) SHOULD be issued to the CA
+               # that issued the server's certificate. But, according to RFC 8446
+               # clients SHOULD be prepared to handle cases in which the server
+               # does not order the certificates correctly.
+               for (( i=1; i < nrsaved; i++ )); do
+                    CAsubjectDN="$($OPENSSL x509 -in "level$i.crt" -noout -subject  2>/dev/null)"
+                    if [[ "${CAsubjectDN:9}" == "$issuerDN" ]]; then
+                         cp "level$i.crt" $TEMPDIR/hostcert_issuer.pem
+                         issuerDN="" # set to empty to prevent further matches
+                    fi
+                    [[ "${CAsubjectDN:9}" != "$previssuerDN" ]] && CERTIFICATE_LIST_ORDERING_PROBLEM=true
+                    "$CERTIFICATE_LIST_ORDERING_PROBLEM" && [[ -z "$issuerDN" ]] && break
+                    previssuerDN="$($OPENSSL x509 -in "level$i.crt" -noout -issuer  2>/dev/null)"
+                    previssuerDN="${previssuerDN:8}"
+               done
+               # This should never happen, but if more than one certificate was
+               # provided and none of them belong to the CA that issued the
+               # server's certificate, then the extra certificates should just
+               # be deleted. There is code elsewhere that assumes that if
+               # $TEMPDIR/intermediatecerts.pem is non-empty, then
+               # $TEMPDIR/hostcert_issuer.pem is also present.
+               [[ -n "$issuerDN" ]] && echo "" > $TEMPDIR/intermediatecerts.pem
+               rm level?.crt
+          fi
      fi
      cd "$savedir"
      return $success
@@ -7136,7 +7860,7 @@ extract_stapled_ocsp() {
           ocsp="${ocsp%%<<<*}"
           ocsp="$(strip_spaces "$(newline_to_spaces "$ocsp")")"
           ocsp="${ocsp:8}"
-     elif [[ "$response" =~ "TLS server extension \"status request\" (id=5), len=0" ]]; then
+     elif [[ "$response" =~ TLS\ server\ extension\ \"status\ request\"\ \(id=5\)\,\ len=0 ]]; then
           # This is not OpenSSL 1.1.0 or 1.1.1, and the response
           # is TLS 1.2 or earlier.
           ocsp="${response%%OCSP response:*}"
@@ -7144,16 +7868,16 @@ extract_stapled_ocsp() {
           ocsp="16${ocsp#*16}"
           ocsp="$(strip_spaces "$(newline_to_spaces "$ocsp")")"
           ocsp="${ocsp:8}"
-     elif [[ "$response" =~ "TLS server extension \"status request\" (id=5), len=" ]]; then
-            # This is OpenSSL 1.1.1 and the response is TLS 1.3.
-            ocsp="${response##*TLS server extension \"status request\" (id=5), len=}"
-            ocsp="${ocsp%%<<<*}"
-            tmp="${ocsp%%[!0-9]*}"
-            ocsp="${ocsp#$tmp}"
-            ocsp_len=2*$tmp
-            ocsp="$(awk ' { print $3 $4 $5 $6 $7 $8 $9 $10 $11 $12 $13 $14 $15 $16 $17 } ' <<< "$ocsp" | sed 's/-//')"
-            ocsp="$(strip_spaces "$(newline_to_spaces "$ocsp")")"
-            ocsp="${ocsp:0:ocsp_len}"
+     elif [[ "$response" =~ TLS\ server\ extension\ \"status\ request\"\ \(id=5\)\,\ len= ]]; then
+          # This is OpenSSL 1.1.1 and the response is TLS 1.3.
+          ocsp="${response##*TLS server extension \"status request\" (id=5), len=}"
+          ocsp="${ocsp%%<<<*}"
+          tmp="${ocsp%%[!0-9]*}"
+          ocsp="${ocsp#$tmp}"
+          ocsp_len=2*$tmp
+          ocsp="$(awk ' { print $3 $4 $5 $6 $7 $8 $9 $10 $11 $12 $13 $14 $15 $16 $17 } ' <<< "$ocsp" | sed 's/-//')"
+          ocsp="$(strip_spaces "$(newline_to_spaces "$ocsp")")"
+          ocsp="${ocsp:0:ocsp_len}"
      else
           return 0
      fi
@@ -7176,31 +7900,31 @@ get_server_certificate() {
      local success ret
      local npn_params="" line
      local ciphers_to_test=""
-     # Cipher suites that use a certifiate with an RSA (signature) public key
+     # Cipher suites that use a certificate with an RSA (signature) public key
      local -r a_rsa="cc,13, cc,15, c0,30, c0,28, c0,14, 00,9f, cc,a8, cc,aa, c0,a3, c0,9f, 00,6b, 00,39, c0,77, 00,c4, 00,88, c0,45, c0,4d, c0,53, c0,61, c0,7d, c0,8b, 16,b7, 16,b9, c0,2f, c0,27, c0,13, 00,9e, c0,a2, c0,9e, 00,67, 00,33, c0,76, 00,be, 00,9a, 00,45, c0,44, c0,4c, c0,52, c0,60, c0,7c, c0,8a, c0,11, c0,12, 00,16, 00,15, 00,14, c0,10"
-     # Cipher suites that use a certifiate with an RSA (encryption) public key
+     # Cipher suites that use a certificate with an RSA (encryption) public key
      local -r e_rsa="00,b7, c0,99, 00,ad, cc,ae, 00,9d, c0,a1, c0,9d, 00,3d, 00,35, 00,c0, 00,84, 00,95, c0,3d, c0,51, c0,69, c0,6f, c0,7b, c0,93, ff,01, 00,ac, c0,a0, c0,9c, 00,9c, 00,3c, 00,2f, 00,ba, 00,b6, 00,96, 00,41, c0,98, 00,07, 00,94, c0,3c, c0,50, c0,68, c0,6e, c0,7a, c0,92, 00,05, 00,04, 00,92, 00,0a, 00,93, fe,ff, ff,e0, 00,62, 00,09, 00,61, fe,fe, ff,e1, 00,64, 00,60, 00,08, 00,06, 00,03, 00,b9, 00,b8, 00,2e, 00,3b, 00,02, 00,01, ff,00"
-     # Cipher suites that use a certifiate with a DSA public key
+     # Cipher suites that use a certificate with a DSA public key
      local -r a_dss="00,a3, 00,6a, 00,38, 00,c3, 00,87, c0,43, c0,57, c0,81, 00,a2, 00,40, 00,32, 00,bd, 00,99, 00,44, c0,42, c0,56, c0,80, 00,66, 00,13, 00,63, 00,12, 00,65, 00,11"
-     # Cipher suites that use a certifiate with a DH public key
+     # Cipher suites that use a certificate with a DH public key
      local -r a_dh="00,a5, 00,a1, 00,69, 00,68, 00,37, 00,36, 00,c2, 00,c1, 00,86, 00,85, c0,3f, c0,41, c0,55, c0,59, c0,7f, c0,83, 00,a4, 00,a0, 00,3f, 00,3e, 00,31, 00,30, 00,bc, 00,bb, 00,98, 00,97, 00,43, 00,42, c0,3e, c0,40, c0,54, c0,58, c0,7e, c0,82, 00,10, 00,0d, 00,0f, 00,0c, 00,0b, 00,0e"
-     # Cipher suites that use a certifiate with an ECDH public key
+     # Cipher suites that use a certificate with an ECDH public key
      local -r a_ecdh="c0,32, c0,2e, c0,2a, c0,26, c0,0f, c0,05, c0,79, c0,75, c0,4b, c0,4f, c0,5f, c0,63, c0,89, c0,8d, c0,31, c0,2d, c0,29, c0,25, c0,0e, c0,04, c0,78, c0,74, c0,4a, c0,4e, c0,5e, c0,62, c0,88, c0,8c, c0,0c, c0,02, c0,0d, c0,03, c0,0b, c0,01"
-     # Cipher suites that use a certifiate with an ECDSA public key
+     # Cipher suites that use a certificate with an ECDSA public key
      local -r a_ecdsa="cc,14, c0,2c, c0,24, c0,0a, cc,a9, c0,af, c0,ad, c0,73, c0,49, c0,5d, c0,87, 16,b8, 16,ba, c0,2b, c0,23, c0,09, c0,ae, c0,ac, c0,72, c0,48, c0,5c, c0,86, c0,07, c0,08, c0,06"
-     # Cipher suites that use a certifiate with a GOST public key
+     # Cipher suites that use a certificate with a GOST public key
      local -r a_gost="00,80, 00,81, 00,82, 00,83"
      local using_sockets=true
 
      "$SSL_NATIVE" && using_sockets=false
 
      CERTIFICATE_LIST_ORDERING_PROBLEM=false
-     if [[ "$1" =~ "tls1_3" ]]; then
+     if [[ "$1" =~ tls1_3 ]]; then
           [[ $(has_server_protocol "tls1_3") -eq 1 ]] && return 1
-          if "$HAS_TLS13"; then
-               if [[ "$1" =~ "tls1_3_RSA" ]]; then
+          if "$HAS_TLS13" && "$HAS_SIGALGS" && [[ ! "$1" =~ tls1_3_EdDSA ]]; then
+               if [[ "$1" =~ tls1_3_RSA ]]; then
                     $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -showcerts -connect $NODEIP:$PORT $PROXY $SNI -tls1_3 -tlsextdebug -status -msg -sigalgs PSS+SHA256:PSS+SHA384") </dev/null 2>$ERRFILE >$TMPFILE
-               elif [[ "$1" =~ "tls1_3_ECDSA" ]]; then
+               elif [[ "$1" =~ tls1_3_ECDSA ]]; then
                     $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -showcerts -connect $NODEIP:$PORT $PROXY $SNI -tls1_3 -tlsextdebug -status -msg -sigalgs ECDSA+SHA256:ECDSA+SHA384") </dev/null 2>$ERRFILE >$TMPFILE
                else
                     return 1
@@ -7211,13 +7935,15 @@ get_server_certificate() {
                extract_stapled_ocsp
                success=$?
           else
-               # For STARTTLS protcols not being implemented yet via sockets this is a bypass otherwise it won't be usable at all (e.g. LDAP)
-               if ( [[ "$STARTTLS" =~ ldap ]] || [[ "$STARTTLS" =~ irc ]] ); then
+               # For STARTTLS protocols not being implemented yet via sockets this is a bypass otherwise it won't be usable at all (e.g. LDAP)
+               if [[ "$STARTTLS" =~ irc ]]; then
                     return 1
-               elif [[ "$1" =~ "tls1_3_RSA" ]]; then
-                    tls_sockets "04" "$TLS13_CIPHER" "all" "00,12,00,00, 00,05,00,05,01,00,00,00,00, 00,0d,00,10,00,0e,08,04,08,05,08,06,04,01,05,01,06,01,02,01"
-               elif [[ "$1" =~ "tls1_3_ECDSA" ]]; then
-                    tls_sockets "04" "$TLS13_CIPHER" "all" "00,12,00,00, 00,05,00,05,01,00,00,00,00, 00,0d,00,0a,00,08,04,03,05,03,06,03,02,03"
+               elif [[ "$1" =~ tls1_3_RSA ]]; then
+                    tls_sockets "04" "$TLS13_CIPHER" "all+" "00,12,00,00, 00,05,00,05,01,00,00,00,00, 00,0d,00,10,00,0e,08,04,08,05,08,06,04,01,05,01,06,01,02,01"
+               elif [[ "$1" =~ tls1_3_ECDSA ]]; then
+                    tls_sockets "04" "$TLS13_CIPHER" "all+" "00,12,00,00, 00,05,00,05,01,00,00,00,00, 00,0d,00,0a,00,08,04,03,05,03,06,03,02,03"
+               elif [[ "$1" =~ tls1_3_EdDSA ]]; then
+                    tls_sockets "04" "$TLS13_CIPHER" "all+" "00,12,00,00, 00,05,00,05,01,00,00,00,00, 00,0d,00,06,00,04,08,07,08,08"
                else
                     return 1
                fi
@@ -7225,7 +7951,7 @@ get_server_certificate() {
                [[ $success -eq 0 ]] || return 1
                cp "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" $TMPFILE
           fi
-          [[ $success -eq 0 ]] && add_tls_offered tls1_3 yes
+          [[ $success -eq 0 ]] && add_proto_offered tls1_3 yes
           extract_new_tls_extensions $TMPFILE
           tmpfile_handle ${FUNCNAME[0]}.txt
           return $success
@@ -7234,9 +7960,9 @@ get_server_certificate() {
      "$HAS_NPN" && [[ -z "$STARTTLS" ]] && npn_params="-nextprotoneg \"$NPN_PROTOs\""
 
      if [[ -n "$2" ]]; then
-         protocols_to_try="$2"
+          protocols_to_try="$2"
      else
-         protocols_to_try="tls1_2 tls1_1 tls1 ssl3"
+          protocols_to_try="tls1_2 tls1_1 tls1 ssl3"
      fi
 
      # throwing 1st every cipher/protocol at the server to know what works
@@ -7285,7 +8011,7 @@ get_server_certificate() {
                [[ $ret -eq 2 ]] && success=0
                if [[ $success -eq 7 ]]; then
                     if [ -z "$1" ]; then
-                        prln_warning "Strange, no SSL/TLS protocol seems to be supported (error around line $((LINENO - 6)))"
+                         prln_warning "Strange, no SSL/TLS protocol seems to be supported (error around line $((LINENO - 6)))"
                     fi
                     tmpfile_handle ${FUNCNAME[0]}.txt
                     return 7  # this is ugly, I know
@@ -7296,28 +8022,29 @@ get_server_certificate() {
           cp $TEMPDIR/$NODEIP.parse_tls_serverhello.txt $TMPFILE
 
           # When "$2" is empty, get_server_certificate() is being called with SNI="".
-          # In case the extensions returned by the server differ depending on wheter
+          # In case the extensions returned by the server differ depending on whether
           # SNI is provided or not, don't collect extensions when SNI="" (unless
           # no DNS name was provided at the command line).
           [[ -z "$2" ]] && extract_new_tls_extensions $TMPFILE
      else
+          # no sockets, openssl
           ciphers_to_test="$1"
           if [[ "$1" =~ aRSA ]] && [[ "$1" =~ eRSA ]]; then
                ciphers_to_test="${ciphers_to_test/eRSA/}"
           elif [[ "$1" =~ aRSA ]]; then
                ciphers_to_test="${ciphers_to_test/aRSA/}"
-               for ciph in $(colon_to_spaces $(actually_supported_ciphers "aRSA")); do
+               for ciph in $(colon_to_spaces $(actually_supported_osslciphers "aRSA")); do
                     [[ "$ciph" =~ -RSA- ]] && ciphers_to_test+=":$ciph"
                done
           elif [[ "$1" =~ eRSA ]]; then
                ciphers_to_test="${ciphers_to_test/eRSA/}"
-               for ciph in $(colon_to_spaces $(actually_supported_ciphers "aRSA")); do
+               for ciph in $(colon_to_spaces $(actually_supported_osslciphers "aRSA")); do
                     [[ ! "$ciph" =~ -RSA- ]] && ciphers_to_test+=":$ciph"
                done
           fi
           ciphers_to_test="${ciphers_to_test/::/:}"
           [[ "${ciphers_to_test:0:1}" == : ]] &&  ciphers_to_test="${ciphers_to_test:1}"
-          [[ $(count_ciphers $(actually_supported_ciphers "$ciphers_to_test")) -ge 1 ]] || return 1
+          [[ $(count_ciphers $(actually_supported_osslciphers "$ciphers_to_test")) -ge 1 ]] || return 1
 
           for proto in $protocols_to_try; do
                [[ 1 -eq $(has_server_protocol $proto) ]] && continue
@@ -7335,7 +8062,7 @@ get_server_certificate() {
                $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -cipher $ciphers_to_test -showcerts -connect $NODEIP:$PORT $PROXY $SNI -$proto -tlsextdebug") </dev/null 2>>$ERRFILE >$TMPFILE
                if ! sclient_connect_successful $? $TMPFILE; then
                     if [ -z "$1" ]; then
-                        prln_warning "Strange, no SSL/TLS protocol seems to be supported (error around line $((LINENO - 6)))"
+                         prln_warning "Strange, no SSL/TLS protocol seems to be supported (error around line $((LINENO - 6)))"
                     fi
                     tmpfile_handle ${FUNCNAME[0]}.txt
                     return 7  # this is ugly, I know
@@ -7350,7 +8077,7 @@ get_server_certificate() {
                "ssl3") DETECTED_TLS_VERSION="0300" ;;
           esac
           # When "$2" is empty, get_server_certificate() is being called with SNI="".
-          # In case the extensions returned by the server differ depending on wheter
+          # In case the extensions returned by the server differ depending on whether
           # SNI is provided or not, don't collect extensions when SNI="" (unless
           # no DNS name was provided at the command line).
           [[ -z "$2" ]] && extract_new_tls_extensions $TMPFILE
@@ -7374,7 +8101,7 @@ get_cn_from_cert() {
      # for e.g. russian sites -esc_msb,utf8 works in an UTF8 terminal -- any way to check platform independent?
      # see x509(1ssl):
      subject="$($OPENSSL x509 -in $1 -noout -subject -nameopt multiline,-align,sname,-esc_msb,utf8,-space_eq 2>>$ERRFILE)"
-     echo "$(awk -F'=' '/CN=/ { print $2 }' <<< "$subject")"
+     echo "$(awk -F'=' '/CN=/ { print $2 }' <<< "$subject" | tr '\n' ' ')"
      return $?
 }
 
@@ -7455,9 +8182,9 @@ wildcard_match()
 
 compare_server_name_to_cert() {
      local cert="$1"
-     local servername cn dns_sans ip_sans san dercert tag
+     local servername cns cn dns_sans ip_sans san dercert tag
      local srv_id="" xmppaddr=""
-     local -i i len len1
+     local -i i len len1 cn_match=0
      local -i subret=0             # no error condition, passing results
 
      HAS_DNS_SANS=false
@@ -7528,7 +8255,7 @@ compare_server_name_to_cert() {
                fi
                if [[ $len -ne 0 ]] && [[ $len -lt ${#dercert} ]]; then
                     # loop through all the names and extract the SRV-ID and XmppAddr identifiers
-                    for (( i=0; i < len; i=i+len_name )); do
+                    for (( i=0; i < len; i+=len_name )); do
                          tag="${dercert:i:2}"
                          i+=2
                          if [[ "${dercert:i:1}" == "8" ]]; then
@@ -7575,7 +8302,7 @@ compare_server_name_to_cert() {
                                                   j+=2
                                              fi
                                              if [[ $len1 -ne 0 ]]; then
-                                                  san="$(asciihex_to_binary_file "${dercert:j:len1}" "/dev/stdout")"
+                                                  san="$(hex2binary "${dercert:j:len1}")"
                                                   if [[ "${dercert:i:20}" == "06082B06010505070805" ]]; then
                                                        xmppaddr+="$san "
                                                   else
@@ -7611,26 +8338,30 @@ compare_server_name_to_cert() {
           done <<< "$dns_sans"
      fi
 
-     cn="$(get_cn_from_cert "$cert")"
+     # Get every CN from the subject field and compare against the server name.
+     cns="$($OPENSSL x509 -in $1 -noout -subject -nameopt multiline,-align,sname,-esc_msb,utf8,-space_eq 2>>$ERRFILE | awk -F'=' '/CN=/ { print $2 }')"
+     while read cn; do
+          # If the CN contains any characters that are not valid for a DNS name,
+          # then assume it does not contain a DNS name.
+          [[ -n "${cn//[_\.a-zA-Z0-9*\-]/}" ]] && continue
 
-     # If the CN contains any characters that are not valid for a DNS name,
-     # then assume it does not contain a DNS name.
-     [[ -n $(sed 's/^[_\.a-zA-Z0-9*\-]*//' <<< "$cn") ]] && return $subret
+          # Check whether the CN matches the servername
+          [[ $(toupper "$cn") == "$servername" ]] && cn_match=4 && break
 
-     # Check whether the CN in the certificate matches the servername
-     [[ $(toupper "$cn") == "$servername" ]] && subret+=4 && return $subret
-
-     # Check whether the CN in the certificate is a wildcard name that matches
-     # the servername
-     wildcard_match "$servername" "$cn"
-     [[ $? -eq 0 ]] && subret+=8
+          # Check whether the CN is a wildcard name that matches the servername
+          # NOTE: Don't stop loop on a wildcard match in case there is another CN
+          # that is an exact match.
+          wildcard_match "$servername" "$cn"
+          [[ $? -eq 0 ]] && cn_match=8
+     done <<< "$cns"
+     subret+=$cn_match
      return $subret
 }
 
 # This function determines whether the certificate (arg3) contains "visibility
 # information" (see Section 4.3.3 of
-# https://www.etsi.org/deliver/etsi_ts/103500_103599/10352303/01.01.01_60/ts_10352303v010101p.pdf .
-etsi_etls_visibility_info() {
+# https://www.etsi.org/deliver/etsi_ts/103500_103599/10352303/01.02.01_60/ts_10352303v010201p.pdf.
+etsi_ets_visibility_info() {
      local jsonID="$1"
      local spaces="$2"
      local cert="$3"
@@ -7641,12 +8372,13 @@ etsi_etls_visibility_info() {
 
      # If "visibility information" is present, it will appear in the subjectAltName
      # extension (0603551D11) as an otherName with OID 0.4.0.3523.3.1 (060604009B430301).
-     # OpenSSL displays all names of type otherName as "othername:<unsupported>".
+     # OpenSSL 1.1.1 and earlier displays all names of type otherName as "othername:<unsupported>".
      # As certificates will rarely include a name encoded as an otherName, check the
      # text version of the certificate for "othername:<unsupported>" before calling
-     # external functions to obtain the DER encoded certficate.
-     if [[ "$cert_txt" =~ X509v3\ Subject\ Alternative\ Name:.*othername:\<unsupported\> ]]; then
-          dercert="$($OPENSSL x509 -in "$cert" -outform DER 2>>$ERRFILE | hexdump -v -e '16/1 "%02X"')"
+     # external functions to obtain the DER encoded certificate.
+     if [[ "$cert_txt" =~ X509v3\ Subject\ Alternative\ Name:.*othername:\<unsupported\> ]] || \
+        [[ "$cert_txt" =~ X509v3\ Subject\ Alternative\ Name:.*othername:\ 0.4.0.3523.3.1 ]]; then
+          dercert="$($OPENSSL x509 -outform DER 2>>$ERRFILE <<< "$cert" | hexdump -v -e '16/1 "%02X"')"
           if [[ "$dercert" =~ 0603551D110101FF04[0-9A-F]*060604009B430301 ]] || \
              [[ "$dercert" =~ 0603551D1104[0-9A-F]*060604009B430301 ]]; then
                # Look for the beginning of the subjectAltName extension. It
@@ -7684,7 +8416,7 @@ etsi_etls_visibility_info() {
                     fi
                     if [[ $len -ne 0 ]] && [[ $len -lt ${#dercert} ]]; then
                          # loop through all the names and extract the visibility information
-                         for (( i=0; i < len; i=i+len_name )); do
+                         for (( i=0; i < len; i+=len_name )); do
                               tag="${dercert:i:2}"
                               i+=2
                               if [[ "${dercert:i:1}" == 8 ]]; then
@@ -7712,7 +8444,7 @@ etsi_etls_visibility_info() {
                                    j+=1
                                    j+=2*0x${dercert:j:1}+1
                               else
-                                  j+=2
+                                   j+=2
                               fi
                               # The value for this otherName is encoded as a SEQUENCE (30):
                               #    VisibilityInformation ::= SEQUENCE {
@@ -7736,7 +8468,7 @@ etsi_etls_visibility_info() {
                               # Next is the 10-byte fingerprint, encoded as an OCTET STRING (04)
                               [[ "${dercert:j:4}" == 040A ]] || continue
                               j+=4
-                              fingerprint[nr_visnames]="$(asciihex_to_binary_file "${dercert:j:20}" "/dev/stdout")"
+                              fingerprint[nr_visnames]="$(hex2binary "${dercert:j:20}")"
                               j+=20
                               # Finally comes the access description, encoded as a UTF8String (0C).
                               [[ "${dercert:j:2}" == 0C ]] || continue
@@ -7753,7 +8485,7 @@ etsi_etls_visibility_info() {
                                    len1=2*0x${dercert:j:2}
                                    j+=2
                               fi
-                              access_description[nr_visnames]=""$(asciihex_to_binary_file "${dercert:j:len1}" "/dev/stdout")""
+                              access_description[nr_visnames]=""$(hex2binary "${dercert:j:len1}")""
                               nr_visnames+=1
                          done
                     fi
@@ -7837,34 +8569,35 @@ certificate_transparency() {
      local tls_version="$6"
      local sni=""
      local ciphers=""
-     local hexc n ciph sslver kx auth enc mac export
      local extra_extns=""
      local -i success
-     # Cipher suites that use a certifiate with an RSA (signature) public key
+     # Cipher suites that use a certificate with an RSA (signature) public key
      local -r a_rsa="cc,13, cc,15, c0,30, c0,28, c0,14, 00,9f, cc,a8, cc,aa, c0,a3, c0,9f, 00,6b, 00,39, c0,77, 00,c4, 00,88, c0,45, c0,4d, c0,53, c0,61, c0,7d, c0,8b, 16,b7, 16,b9, c0,2f, c0,27, c0,13, 00,9e, c0,a2, c0,9e, 00,67, 00,33, c0,76, 00,be, 00,9a, 00,45, c0,44, c0,4c, c0,52, c0,60, c0,7c, c0,8a, c0,11, c0,12, 00,16, 00,15, 00,14, c0,10"
-     # Cipher suites that use a certifiate with an RSA (encryption) public key
+     # Cipher suites that use a certificate with an RSA (encryption) public key
      local -r e_rsa="00,b7, c0,99, 00,ad, cc,ae, 00,9d, c0,a1, c0,9d, 00,3d, 00,35, 00,c0, 00,84, 00,95, c0,3d, c0,51, c0,69, c0,6f, c0,7b, c0,93, ff,01, 00,ac, c0,a0, c0,9c, 00,9c, 00,3c, 00,2f, 00,ba, 00,b6, 00,96, 00,41, c0,98, 00,07, 00,94, c0,3c, c0,50, c0,68, c0,6e, c0,7a, c0,92, 00,05, 00,04, 00,92, 00,0a, 00,93, fe,ff, ff,e0, 00,62, 00,09, 00,61, fe,fe, ff,e1, 00,64, 00,60, 00,08, 00,06, 00,03, 00,b9, 00,b8, 00,2e, 00,3b, 00,02, 00,01, ff,00"
-     # Cipher suites that use a certifiate with a DSA public key
+     # Cipher suites that use a certificate with a DSA public key
      local -r a_dss="00,a3, 00,6a, 00,38, 00,c3, 00,87, c0,43, c0,57, c0,81, 00,a2, 00,40, 00,32, 00,bd, 00,99, 00,44, c0,42, c0,56, c0,80, 00,66, 00,13, 00,63, 00,12, 00,65, 00,11"
-     # Cipher suites that use a certifiate with a DH public key
+     # Cipher suites that use a certificate with a DH public key
      local -r a_dh="00,a5, 00,a1, 00,69, 00,68, 00,37, 00,36, 00,c2, 00,c1, 00,86, 00,85, c0,3f, c0,41, c0,55, c0,59, c0,7f, c0,83, 00,a4, 00,a0, 00,3f, 00,3e, 00,31, 00,30, 00,bc, 00,bb, 00,98, 00,97, 00,43, 00,42, c0,3e, c0,40, c0,54, c0,58, c0,7e, c0,82, 00,10, 00,0d, 00,0f, 00,0c, 00,0b, 00,0e"
-     # Cipher suites that use a certifiate with an ECDH public key
+     # Cipher suites that use a certificate with an ECDH public key
      local -r a_ecdh="c0,32, c0,2e, c0,2a, c0,26, c0,0f, c0,05, c0,79, c0,75, c0,4b, c0,4f, c0,5f, c0,63, c0,89, c0,8d, c0,31, c0,2d, c0,29, c0,25, c0,0e, c0,04, c0,78, c0,74, c0,4a, c0,4e, c0,5e, c0,62, c0,88, c0,8c, c0,0c, c0,02, c0,0d, c0,03, c0,0b, c0,01"
-     # Cipher suites that use a certifiate with an ECDSA public key
+     # Cipher suites that use a certificate with an ECDSA public key
      local -r a_ecdsa="cc,14, c0,2c, c0,24, c0,0a, cc,a9, c0,af, c0,ad, c0,73, c0,49, c0,5d, c0,87, 16,b8, 16,ba, c0,2b, c0,23, c0,09, c0,ae, c0,ac, c0,72, c0,48, c0,5c, c0,86, c0,07, c0,08, c0,06"
-     # Cipher suites that use a certifiate with a GOST public key
+     # Cipher suites that use a certificate with a GOST public key
      local -r a_gost="00,80, 00,81, 00,82, 00,83"
+
+     CERTIFICATE_TRANSPARENCY_SOURCE=""
 
      # First check whether signed certificate timestamps (SCT) are included in the
      # server's certificate. If they aren't, check whether the server provided
      # a stapled OCSP response with SCTs. If no SCTs were found in the certificate
      # or OCSP response, check for an SCT TLS extension.
      if [[ "$cert_txt" =~ CT\ Precertificate\ SCTs ]] || [[ "$cert_txt" =~ '1.3.6.1.4.1.11129.2.4.2' ]]; then
-          tm_out "certificate extension"
+          CERTIFICATE_TRANSPARENCY_SOURCE="certificate extension"
           return 0
      fi
      if [[ "$ocsp_response" =~ CT\ Certificate\ SCTs ]] || [[ "$ocsp_response" =~ '1.3.6.1.4.1.11129.2.4.5' ]]; then
-          tm_out "OCSP extension"
+          CERTIFICATE_TRANSPARENCY_SOURCE="OCSP extension"
           return 0
      fi
 
@@ -7873,7 +8606,7 @@ certificate_transparency() {
      # one certificate, then it is possible that an SCT TLS extension is returned for some
      # certificates, but not for all of them.
      if [[ $number_of_certificates -eq 1 ]] && [[ "$TLS_EXTENSIONS" =~ signed\ certificate\ timestamps ]]; then
-          tm_out "TLS extension"
+          CERTIFICATE_TRANSPARENCY_SOURCE="TLS extension"
           return 0
      fi
 
@@ -7906,59 +8639,149 @@ certificate_transparency() {
           if ( [[ $success -eq 0 ]] || [[ $success -eq 2 ]] ) && \
              grep -a 'TLS server extension ' "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" | \
              grep -aq "signed certificate timestamps"; then
-               tm_out "TLS extension"
+               CERTIFICATE_TRANSPARENCY_SOURCE="TLS extension"
                return 0
           fi
      fi
 
-     if [[ $SERVICE != HTTP ]] && ! "$CLIENT_AUTH"; then
+     if [[ $SERVICE != HTTP ]] && [[ "$CLIENT_AUTH" != required ]]; then
           # At the moment Certificate Transparency only applies to HTTPS.
-          tm_out "N/A"
+          CERTIFICATE_TRANSPARENCY_SOURCE="N/A"
      else
-          tm_out "--"
+          CERTIFICATE_TRANSPARENCY_SOURCE="--"
      fi
      return 0
 }
+
+# Shortcut for $OPENSSL x509 -noout -in $cert $ossl_command
+# arg1 is the certificate
+# arg2 is -serial | -fingerprint -sha1 | -fingerprint -sha256
+# returns the serial or fingerprint as ASCII
+#
+determine_cert_fingerprint_serial() {
+     local cert="$1"
+     local ossl_command="$2"
+     local result=""
+
+     result="$($OPENSSL x509 -noout $ossl_command 2>>$ERRFILE <<< "$cert")"
+     # remove strings in text output, colon only appear in fingerprints
+     result="${result//Fingerprint=}"
+     result="${result//serial=}"
+     result="${result//:/}"
+     result="${result//SHA1 /}"
+     result="${result//sha1 /}"
+     result="${result//SHA256 /}"
+     result="${result//sha256 /}"
+     # When the serial number is too large we'll get a 0x0a LF after 70 ASCII chars (see #2010).
+     # Thus we clean them here so that it is displayed correctly.
+     result="${result/[$'\n\r']/}"
+     result="${result//[\\]/}"
+     safe_echo "$result"
+}
+
+# Returns startdate, enddate, diffseconds, days2expire as CSVs as strings
+# arg1: human readable text string for certificate (openssl x509 -text -noout)
+#
+determine_dates_certificate() {
+     local cert_txt="$1"
+     local startdate enddate yearnow y m d yearstart clockstart yearend clockend
+     local diffseconds=0 days2expire=0
+     local -i secsaday=86400
+
+     startdate="${cert_txt#*Validity*Not Before: }"
+     # FreeBSD + OSX can't swallow the leading blank:
+     startdate="${startdate%%GMT*}GMT"
+     enddate="${cert_txt#*Validity*Not Before: *Not After : }"
+     enddate="${enddate%%GMT*}GMT"
+     # Now we have a normalized enddate and startdate like "Feb 27 10:03:20 2017 GMT" -- also for OpenBSD
+     if "$HAS_OPENBSDDATE"; then
+          # Best we want to do under old versions of OpenBSD, first just remove the GMT and keep start/endate for later output
+          startdate="$(parse_date "$startdate" "+%s")"
+          enddate="$(parse_date "$enddate" "+%s")"
+          # Now we extract a date block and a time block which we need for later output
+          startdate="$(parse_date "$startdate" +"%F %H:%M" "%b %d %T %Y %Z")"
+          enddate="$(parse_date "$enddate" +"%F %H:%M" "%b %d %T %Y %Z")"
+          read -r yearstart clockstart <<< "$startdate"
+          read -r yearend clockend <<< "$enddate"
+          debugme echo "$yearstart, $clockstart"
+          debugme echo "$yearend, $clockend"
+          y=$(( ${yearend:0:4} - ${yearstart:0:4} ))
+          m=$(( ${yearend:5:1} - ${yearstart:5:1} + ${yearend:6:1} - ${yearstart:6:1} ))
+          d=$(( ${yearend:8:2} - ${yearstart:8:2} ))
+          # We take the year, month, days here as old OpenBSD's date is too difficult for real conversion
+          # see comment in parse_date(). In diffseconds then we have the estimated absolute validity period
+          diffseconds=$(( d + ((m*30)) + ((y*365)) ))
+          diffseconds=$((diffseconds * secsaday))
+          # Now we estimate the days left plus length of month/year:
+          yearnow="$(date -juz GMT "+%Y-%m-%d %H:%M")"
+          y=$(( ${yearend:0:4} - ${yearnow:0:4} ))
+          m=$(( ${yearend:5:1} - ${yearnow:5:1} + ${yearend:6:1} - ${yearnow:6:1} ))
+          d=$(( ${yearend:8:2} - ${yearnow:8:2} ))
+          days2expire=$(( d + ((m*30)) + ((y*365)) ))
+     else
+          startdate="$(parse_date "$startdate" +"%F %H:%M" "%b %d %T %Y %Z")"
+          enddate="$(parse_date "$enddate" +"%F %H:%M" "%b %d %T %Y %Z")"
+          days2expire=$(( $(parse_date "$enddate" "+%s" $'%F %H:%M') - $(LC_ALL=C date "+%s") ))  # first in seconds
+          days2expire=$((days2expire / secsaday))
+          diffseconds=$(( $(parse_date "$enddate" "+%s" $'%F %H:%M') - $(parse_date "$startdate" "+%s" $'%F %H:%M') ))
+     fi
+     safe_echo "$startdate,$enddate,$diffseconds,$days2expire,$yearstart"
+}
+
+
 
 certificate_info() {
      local proto
      local -i certificate_number=$1
      local -i number_of_certificates=$2
      local cert_txt="$3"
-     local cipher=$4
-     local cert_keysize=$5
-     local cert_type="$6"
-     local ocsp_response_binary="$7"
-     local ocsp_response=$8
-     local ocsp_response_status=$9
-     local sni_used="${10}"
-     local ct="${11}"
-     local certificate_list_ordering_problem="${12}"
-     local cert_sig_algo cert_sig_hash_algo cert_key_algo cert_keyusage cert_ext_keyusage short_keyAlgo
+     local intermediates="$4"
+     local cipher=$5
+     local cert_keysize=$6
+     local cert_type="$7"
+     local ocsp_response_binary="$8"
+     local ocsp_response=$9
+     local ocsp_response_status=${10}
+     local sni_used="${11}"
+     local ct="${12}"
+     local certificate_list_ordering_problem="${13}"
+     local cert_sig_algo cert_sig_hash_algo cert_key_algo cert_spki_info
+     local hostcert=""
+     local common_primes_file="$TESTSSL_INSTALL_DIR/etc/common-primes.txt"
+     local -i lineno_matched=0
+     local cert_keyusage cert_ext_keyusage short_keyAlgo
      local outok=true
-     local expire days2expire secs2warn ocsp_uri crl
+     local days2expire ocsp_uri crl
      local startdate enddate issuer_CN issuer_C issuer_O issuer sans san all_san="" cn
      local issuer_DC issuerfinding cn_nosni=""
-     local cert_fingerprint_sha1 cert_fingerprint_sha2 cert_serial
+     local cert_fingerprint_sha1 cert_fingerprint_sha2 cert_serial cert
+     local -a intermediate_certs_txt=()
      local policy_oid
      local spaces=""
      local -i trust_sni=0 trust_nosni=0 diffseconds=0
      local has_dns_sans has_dns_sans_nosni
      local trust_sni_finding
-     local -i certificates_provided
-     local cnfinding trustfinding trustfinding_nosni
+     local -i i certificates_provided=0
+     local cn_finding trustfinding trustfinding_nosni
      local cnok="OK"
      local expfinding expok="OK"
      local -i ret=0
      local json_postfix=""                   # string to place at the end of JSON IDs when there is more than one certificate
      local jsonID=""                         # string to place at beginning of JSON IDs
+     local json_rating json_msg
      local indent=""
      local days2warn2=$DAYS2WARN2
      local days2warn1=$DAYS2WARN1
      local provides_stapling=false
      local caa_node="" all_caa="" caa_property_name="" caa_property_value=""
      local response=""
-     local a b c yearstart yearend
+     local yearstart
+     local gt_398=false gt_398warn=false
+     local gt_825=false gt_825warn=false
+     local -i secsaday=86400
+     local first=true
+     local badocsp=1
+     local len_cert_serial=0
 
      if [[ $number_of_certificates -gt 1 ]]; then
           [[ $certificate_number -eq 1 ]] && outln
@@ -7967,7 +8790,7 @@ certificate_info() {
           pr_headline "Server Certificate #$certificate_number"
           [[ -z "$sni_used" ]] && pr_underline " (in response to request w/o SNI)"
           outln
-          json_postfix=" <cert#${certificate_number}>"
+          json_postfix=" <hostCert#${certificate_number}>"
           spaces="                                "
      else
           spaces="                              "
@@ -7976,8 +8799,16 @@ certificate_info() {
      GOOD_CA_BUNDLE=""
      cert_sig_algo="$(awk -F':' '/Signature Algorithm/ { print $2; if (++Match >= 1) exit; }' <<< "$cert_txt")"
      cert_sig_algo="${cert_sig_algo// /}"
+     case "$cert_sig_algo" in
+          1.3.101.112|ED25519) cert_sig_algo="Ed25519" ;;
+          1.3.101.113|ED448)   cert_sig_algo="Ed448" ;;
+     esac
      cert_key_algo="$(awk -F':' '/Public Key Algorithm:/ { print $2; if (++Match >= 1) exit; }' <<< "$cert_txt")"
      cert_key_algo="${cert_key_algo// /}"
+     case "$cert_key_algo" in
+          1.3.101.112|E[Dd]25519) cert_key_algo="Ed25519"; cert_keysize=253 ;;
+          1.3.101.113|E[Dd]448)   cert_key_algo="Ed448"; cert_keysize=456 ;;
+     esac
 
      out "$indent" ; pr_bold " Signature Algorithm          "
      jsonID="cert_signatureAlgorithm"
@@ -7989,6 +8820,7 @@ certificate_info() {
                fi
                outln
                fileout "${jsonID}${json_postfix}" "MEDIUM" "SHA1 with RSA"
+               set_grade_cap "T" "Uses SHA1 algorithm"
                ;;
           sha224WithRSAEncryption)
                outln "SHA224 with RSA"
@@ -8009,6 +8841,7 @@ certificate_info() {
           ecdsa-with-SHA1)
                prln_svrty_medium "ECDSA with SHA1"
                fileout "${jsonID}${json_postfix}" "MEDIUM" "ECDSA with SHA1"
+               set_grade_cap "T" "Uses SHA1 algorithm"
                ;;
           ecdsa-with-SHA224)
                outln "ECDSA with SHA224"
@@ -8029,6 +8862,7 @@ certificate_info() {
           dsaWithSHA1)
                prln_svrty_medium "DSA with SHA1"
                fileout "${jsonID}${json_postfix}" "MEDIUM" "DSA with SHA1"
+               set_grade_cap "T" "Uses SHA1 algorithm"
                ;;
           dsa_with_SHA224)
                outln "DSA with SHA224"
@@ -8039,11 +8873,12 @@ certificate_info() {
                fileout "${jsonID}${json_postfix}" "OK" "DSA with SHA256"
                ;;
           rsassaPss)
-               cert_sig_hash_algo="$(grep -A 1 "Signature Algorithm" <<< "$cert_txt" | head -2 | tail -1 | sed 's/^.*Hash Algorithm: //')"
+               cert_sig_hash_algo="$(awk '/Signature Algorithm/ { getline; print $0; exit }' <<< "$cert_txt" | sed 's/^.*Hash Algorithm: //')"
                case $cert_sig_hash_algo in
                     sha1)
                          prln_svrty_medium "RSASSA-PSS with SHA1"
                          fileout "${jsonID}${json_postfix}" "MEDIUM" "RSASSA-PSS with SHA1"
+                         set_grade_cap "T" "Uses SHA1 algorithm"
                          ;;
                     sha224)
                          outln "RSASSA-PSS with SHA224"
@@ -8070,6 +8905,7 @@ certificate_info() {
           md2*)
                prln_svrty_critical "MD2"
                fileout "${jsonID}${json_postfix}" "CRITICAL" "MD2"
+               set_grade_cap "F" "Supports a insecure signature (MD2)"
                ;;
           md4*)
                prln_svrty_critical "MD4"
@@ -8078,6 +8914,11 @@ certificate_info() {
           md5*)
                prln_svrty_critical "MD5"
                fileout "${jsonID}${json_postfix}" "CRITICAL" "MD5"
+               set_grade_cap "F" "Supports a insecure signature (MD5)"
+               ;;
+          Ed25519|Ed448)
+               prln_svrty_good "$cert_sig_algo"
+               fileout "${jsonID}${json_postfix}" "OK" "$cert_sig_algo"
                ;;
           *)
                out "$cert_sig_algo ("
@@ -8099,73 +8940,129 @@ certificate_info() {
           case $cert_key_algo in
                *RSA*|*rsa*)             short_keyAlgo="RSA";;
                *ecdsa*|*ecPublicKey)    short_keyAlgo="EC";;
+               *Ed25519*|*Ed448*)       short_keyAlgo="EdDSA";;
                *DSA*|*dsa*)             short_keyAlgo="DSA";;
                *GOST*|*gost*)           short_keyAlgo="GOST";;
                *dh*|*DH*)               short_keyAlgo="DH" ;;
                *)                       pr_fixme "don't know $cert_key_algo "
-                                        let ret++ ;;
+                                        ((ret++)) ;;
           esac
           out "$short_keyAlgo "
-          # https://tools.ietf.org/html/rfc4492,  http://www.keylength.com/en/compare/
-          # http://infoscience.epfl.ch/record/164526/files/NPDF-22.pdf
-          # see http://csrc.nist.gov/publications/nistpubs/800-57/sp800-57_part1_rev3_general.pdf
-          # Table 2 @ chapter 5.6.1 (~ p64)
+          # https://tools.ietf.org/html/rfc4492,  https://www.keylength.com/en/compare/
+          # https://doi.org/10.1007/s00145-001-0009-4
+          # see https://csrc.nist.gov/publications/detail/sp/800-57-part-1/rev-4/final
+          # Table 2 @ chapter 5.6.1 (~ p66)
           if [[ $cert_key_algo =~ ecdsa ]] || [[ $cert_key_algo =~ ecPublicKey ]]; then
                if [[ "$cert_keysize" -le 110 ]]; then       # a guess
                     pr_svrty_critical "$cert_keysize"
-                    fileout "${jsonID}${json_postfix}" "CRITICAL" "$short_keyAlgo $cert_keysize bits"
+                    json_rating="CRITICAL"; json_msg="$short_keyAlgo $cert_keysize bits"
                elif [[ "$cert_keysize" -le 123 ]]; then     # a guess
                     pr_svrty_high "$cert_keysize"
-                    fileout "${jsonID}${json_postfix}" "HIGH" "$short_keyAlgo $cert_keysize bits"
+                    json_rating="HIGH"; json_msg="$short_keyAlgo $cert_keysize bits"
                elif [[ "$cert_keysize" -le 163 ]]; then
                     pr_svrty_medium "$cert_keysize"
-                    fileout "${jsonID}${json_postfix}" "MEDIUM" "$short_keyAlgo $cert_keysize bits"
+                    json_rating="MEDIUM"; json_msg="$short_keyAlgo $cert_keysize bits"
                elif [[ "$cert_keysize" -le 224 ]]; then
                     out "$cert_keysize"
-                    fileout "${jsonID}${json_postfix}" "INFO" "$short_keyAlgo $cert_keysize bits"
+                    json_rating="INFO"; json_msg="$short_keyAlgo $cert_keysize bits"
                elif [[ "$cert_keysize" -le 533 ]]; then
                     pr_svrty_good "$cert_keysize"
-                    fileout "${jsonID}${json_postfix}" "OK" "$short_keyAlgo $cert_keysize bits"
+                    json_rating="OK"; json_msg="$short_keyAlgo $cert_keysize bits"
                else
                     out "keysize: $cert_keysize (not expected, FIXME)"
-                    fileout "${jsonID}${json_postfix}" "DEBUG" " $cert_keysize bits (not expected)"
+                    json_rating="DEBUG"; json_msg=" $cert_keysize bits (not expected)"
                     ((ret++))
                fi
-               outln " bits"
+               out " bits"
+
+               set_key_str_score "$short_keyAlgo" "$cert_keysize"
           elif [[ $cert_key_algo =~ RSA ]] || [[ $cert_key_algo =~ rsa ]] || [[ $cert_key_algo =~ dsa ]] || \
                [[ $cert_key_algo =~ dhKeyAgreement ]] || [[ $cert_key_algo == X9.42\ DH ]]; then
                if [[ "$cert_keysize" -le 512 ]]; then
                     pr_svrty_critical "$cert_keysize"
-                    outln " bits"
-                    fileout "${jsonID}${json_postfix}" "CRITICAL" "$short_keyAlgo $cert_keysize bits"
+                    out " bits"
+                    json_rating="CRITICAL"; json_msg="$short_keyAlgo $cert_keysize bits"
                elif [[ "$cert_keysize" -le 768 ]]; then
                     pr_svrty_high "$cert_keysize"
-                    outln " bits"
-                    fileout "${jsonID}${json_postfix}" "HIGH" "$short_keyAlgo $cert_keysize bits"
+                    out " bits"
+                    json_rating="HIGH"; json_msg="$short_keyAlgo $cert_keysize bits"
                elif [[ "$cert_keysize" -le 1024 ]]; then
                     pr_svrty_medium "$cert_keysize"
-                    outln " bits"
-                    fileout "${jsonID}${json_postfix}" "MEDIUM" "$short_keyAlgo $cert_keysize bits"
+                    out " bits"
+                    json_rating="MEDIUM"; json_msg="$short_keyAlgo $cert_keysize bits"
                elif [[ "$cert_keysize" -le 2048 ]]; then
-                    outln "$cert_keysize bits"
-                    fileout "${jsonID}${json_postfix}" "INFO" "$short_keyAlgo $cert_keysize bits"
+                    out "$cert_keysize bits"
+                    json_rating="INFO"; json_msg="$short_keyAlgo $cert_keysize bits"
                elif [[ "$cert_keysize" -le 4096 ]]; then
                     pr_svrty_good "$cert_keysize"
-                    fileout "${jsonID}${json_postfix}" "OK" "$short_keyAlgo $cert_keysize bits"
-                    outln " bits"
+                    json_rating="OK"; json_msg="$short_keyAlgo $cert_keysize bits"
+                    out " bits"
                else
-                    pr_warning "weird key size: $cert_keysize bits"; outln " (could cause compatibility problems)"
-                    fileout "${jsonID}${json_postfix}" "WARN" "$cert_keysize bits (Odd)"
+                    pr_warning "weird key size: $cert_keysize bits"; out " (could cause compatibility problems)"
+                    json_rating="WARN"; json_msg="$cert_keysize bits (Odd)"
                     ((ret++))
                fi
+
+               set_key_str_score "$short_keyAlgo" "$cert_keysize"
+          elif [[ $cert_key_algo == Ed* ]]; then
+               pr_svrty_good "$cert_key_algo"
+               json_rating="OK"; json_msg="$short_keyAlgo $cert_key_algo"
+               set_key_str_score "$short_keyAlgo" "$cert_keysize"
           else
                out "$cert_key_algo + $cert_keysize bits ("
                pr_warning "FIXME: can't tell whether this is good or not"
-               outln ")"
-               fileout "${jsonID}${json_postfix}" "WARN" "Server keys $cert_keysize bits, unknown public key algorithm $cert_key_algo"
+               out ")"
+               json_rating="WARN"; json_msg="Server keys $cert_keysize bits, unknown public key algorithm $cert_key_algo"
                ((ret++))
           fi
      fi
+
+     case "$short_keyAlgo" in
+          "RSA") cert_spki_info="${cert_txt##*Subject Public Key Info:}"
+                 cert_spki_info="${cert_spki_info##*Public Key Algorithm:}"
+                 cert_spki_info="${cert_spki_info#*Exponent:}"
+                 cert_spki_info="$(strip_leading_space "$cert_spki_info")"
+                 cert_spki_info="${cert_spki_info%%[[:space:]]*}"
+                 if [[ -n "$cert_spki_info" ]]; then
+                      if [[ $cert_spki_info -eq 1 ]]; then
+                           out " (exponent is "; pr_svrty_critical "$cert_spki_info"; out ")"
+                           json_rating="CRITICAL"
+                           set_grade_cap "F" "RSA certificate uses exponent of 1"
+                      else
+                           out " (exponent is $cert_spki_info)"
+                      fi
+                      json_msg+=" (exponent is $cert_spki_info)"
+                 fi
+                 ;;
+          "EC")  cert_spki_info="${cert_txt##*Subject Public Key Info:}"
+                 cert_spki_info="${cert_spki_info##*Public Key Algorithm:}"
+                 cert_spki_info="${cert_spki_info##*ASN1 OID: }"
+                 [[ "$cert_spki_info" =~ NIST\ CURVE:\  ]] && cert_spki_info="${cert_spki_info##*NIST CURVE: }"
+                 cert_spki_info="${cert_spki_info%%[[:space:]]*}"
+                 cert_spki_info="$(strip_lf "$(strip_spaces "$cert_spki_info")")"
+                 if [[ -n "$cert_spki_info" ]]; then
+                      out " (curve $cert_spki_info)"
+                      json_msg+=" (curve $cert_spki_info)"
+                 fi
+                 ;;
+          "DH")  if [[ -s "$common_primes_file" ]]; then
+                      cert_spki_info="${cert_txt##*Subject Public Key Info:}"
+                      cert_spki_info="${cert_spki_info##*Public Key Algorithm:}"
+                      cert_spki_info="$(awk '/prime:|P:/,/generator:|G:/' <<< "$cert_spki_info" | grep -Ev "prime|P:|generator|G:")"
+                      cert_spki_info="$(strip_spaces "$(colon_to_spaces "$(newline_to_spaces "$cert_spki_info")")")"
+                      [[ "${cert_spki_info:0:2}" == 00 ]] && cert_spki_info="${cert_spki_info:2}"
+                      cert_spki_info="$(toupper "$cert_spki_info")"
+                      lineno_matched=$(grep -n "$cert_spki_info" "$common_primes_file" 2>/dev/null | awk -F':' '{ print $1 }')
+                      if [[ "$lineno_matched" -ne 0 ]]; then
+                           cert_spki_info="$(awk "NR == $lineno_matched-1" "$common_primes_file" | awk -F'"' '{ print $2 }')"
+                           out " ($cert_spki_info)"
+                           json_msg+=" ($cert_spki_info)"
+                      fi
+                 fi
+                 ;;
+     esac
+     outln
+     fileout "${jsonID}${json_postfix}" "$json_rating" "$json_msg"
 
      out "$indent"; pr_bold " Server key usage             ";
      outok=true
@@ -8173,19 +9070,19 @@ certificate_info() {
      cert_keyusage="$(strip_leading_space "$(awk '/X509v3 Key Usage:/ { getline; print $0 }' <<< "$cert_txt")")"
      if [[ -n "$cert_keyusage" ]]; then
           outln "$cert_keyusage"
-          if ( [[ " $cert_type " =~ " RSASig " ]] || [[ " $cert_type " =~ " DSA " ]] || [[ " $cert_type " =~ " ECDSA " ]] ) && \
-             [[ ! "$cert_keyusage" =~ "Digital Signature" ]]; then
+          if ( [[ " $cert_type " =~ \ RSASig\  ]] || [[ " $cert_type " =~ \ DSA\  ]] || [[ " $cert_type " =~ \ ECDSA\  ]] || [[ " $cert_type " =~ \ EdDSA\  ]] ) && \
+             [[ ! "$cert_keyusage" =~ Digital\ Signature ]]; then
                prln_svrty_high "$indent                              Certificate incorrectly used for digital signatures"
                fileout "${jsonID}${json_postfix}" "HIGH" "Certificate incorrectly used for digital signatures: \"$cert_keyusage\""
                outok=false
           fi
-          if [[ " $cert_type " =~ " RSAKMK " ]] && [[ ! "$cert_keyusage" =~ "Key Encipherment" ]]; then
+          if [[ " $cert_type " =~ \ RSAKMK\  ]] && [[ ! "$cert_keyusage" =~ Key\ Encipherment ]]; then
                prln_svrty_high "$indent                              Certificate incorrectly used for key encipherment"
                fileout "${jsonID}${json_postfix}" "HIGH" "Certificate incorrectly used for key encipherment: \"$cert_keyusage\""
                outok=false
           fi
-          if ( [[ " $cert_type " =~ " DH " ]] || [[ " $cert_type " =~ " ECDH " ]] ) && \
-             [[ ! "$cert_keyusage" =~ "Key Agreement" ]]; then
+          if ( [[ " $cert_type " =~ \ DH\  ]] || [[ " $cert_type " =~ \ ECDH\  ]] ) && \
+             [[ ! "$cert_keyusage" =~ Key\ Agreement ]]; then
                prln_svrty_high "$indent                              Certificate incorrectly used for key agreement"
                fileout "${jsonID}${json_postfix}" "HIGH" "Certificate incorrectly used for key agreement: \"$cert_keyusage\""
                outok=false
@@ -8216,48 +9113,70 @@ certificate_info() {
           outok=false
      fi
      if "$outok"; then
-          fileout "${jsonID}${json_postfix}" "INFO" "cert_ext_keyusage"
+          fileout "${jsonID}${json_postfix}" "INFO" "$cert_ext_keyusage"
      fi
 
-     out "$indent"; pr_bold " Serial / Fingerprints        "
-     cert_serial="$($OPENSSL x509 -noout -in $HOSTCERT -serial 2>>$ERRFILE | sed 's/serial=//')"
+     hostcert="$(<$HOSTCERT)"
+
+     out "$indent"; pr_bold " Serial                       "
+     cert_serial="$(determine_cert_fingerprint_serial "$hostcert" "-serial")"
      fileout "cert_serialNumber${json_postfix}" "INFO" "$cert_serial"
+     out "$cert_serial"
 
-     cert_fingerprint_sha1="$($OPENSSL x509 -noout -in $HOSTCERT -fingerprint -sha1 2>>$ERRFILE | sed 's/Fingerprint=//' | sed 's/://g')"
-     fileout "cert_fingerprintSHA1${json_postfix}" "INFO" "${cert_fingerprint_sha1//SHA1 /}"
-     outln "$cert_serial / $cert_fingerprint_sha1"
+     len_cert_serial=${#cert_serial}
+     len_cert_serial=$(( len_cert_serial / 2 ))
 
-     cert_fingerprint_sha2="$($OPENSSL x509 -noout -in $HOSTCERT -fingerprint -sha256 2>>$ERRFILE | sed 's/Fingerprint=//' | sed 's/://g' )"
-     fileout "cert_fingerprintSHA256${json_postfix}" "INFO" "${cert_fingerprint_sha2//SHA256 /}"
-     outln "$spaces$cert_fingerprint_sha2"
+     if [[ $len_cert_serial -gt 20 ]]; then
+          # https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.2
+          outln
+          prln_svrty_low "${spaces}NOT ok: length must not exceed 20 bytes (is: $len_cert_serial bytes)"
+          fileout "cert_serialNumberLen${json_postfix}" "LOW" "$len_cert_serial is too long"
+     elif [[ $len_cert_serial -lt 8 ]] && [[ $SERVICE == HTTP ]]; then
+          # We only want this check for browsers as this requirement comes from the CA browser forum,
+          # see e.g. https://cabforum.org/wp-content/uploads/CA-Browser-Forum-BR-1.8.0.pdf
+          prln_svrty_low "   NOT ok: length should be >= 64 bits entropy (is: $len_cert_serial bytes)"
+          fileout "cert_serialNumberLen${json_postfix}" "LOW" "$len_cert_serial is not enough entropy"
+     else
+          outln " (OK: length $len_cert_serial)"
+          fileout "cert_serialNumberLen${json_postfix}" "INFO" "$len_cert_serial"
+     fi
 
-     # " " needs to be converted back to lf in JSON/CSV output
-     fileout "cert${json_postfix}" "INFO" "$(< $HOSTCERT)"
+     out "$indent"; pr_bold " Fingerprints                 "
+     cert_fingerprint_sha1="$(determine_cert_fingerprint_serial "$hostcert" "-fingerprint -sha1")"
+     outln "SHA1 $cert_fingerprint_sha1"
+     fileout "cert_fingerprintSHA1${json_postfix}" "INFO" "${cert_fingerprint_sha1}"
+
+     cert_fingerprint_sha2="$(determine_cert_fingerprint_serial "$hostcert" "-fingerprint -sha256")"
+     fileout "cert_fingerprintSHA256${json_postfix}" "INFO" "${cert_fingerprint_sha2}"
+     outln "${spaces}SHA256 ${cert_fingerprint_sha2}"
+
+     # " " needs to be converted back to lf in JSON/CSV output. watch out leading/ending line containing "CERTIFICATE"
+     fileout "cert${json_postfix}" "INFO" "$hostcert"
 
      [[ -z $CERT_FINGERPRINT_SHA2 ]] && \
           CERT_FINGERPRINT_SHA2="$cert_fingerprint_sha2" ||
           CERT_FINGERPRINT_SHA2="$cert_fingerprint_sha2 $CERT_FINGERPRINT_SHA2"
      [[ -z $RSA_CERT_FINGERPRINT_SHA2 ]] && \
-          ( [[ $cert_key_algo = *RSA* ]] || [[ $cert_key_algo = *rsa* ]] ) &&
+          ( [[ $cert_key_algo =~ RSA ]] || [[ $cert_key_algo =~ rsa ]] ) &&
           RSA_CERT_FINGERPRINT_SHA2="$cert_fingerprint_sha2"
 
      out "$indent"; pr_bold " Common Name (CN)             "
-     cnfinding="Common Name (CN) : "
+     cn_finding="Common Name (CN) : "
      cn="$(get_cn_from_cert $HOSTCERT)"
      if [[ -n "$cn" ]]; then
           pr_italic "$cn"
-          cnfinding="$cn"
+          cn_finding="$cn"
      else
           cn="no CN field in subject"
           out "($cn)"
-          cnfinding="$cn"
+          cn_finding="$cn"
           cnok="INFO"
      fi
-     fileout "cert_commonName${json_postfix}" "$cnok" "$cnfinding"
-     cnfinding=""
+     fileout "cert_commonName${json_postfix}" "$cnok" "$cn_finding"
+     cn_finding=""
 
      if [[ -n "$sni_used" ]]; then
-          if grep -q "\-\-\-\-\-BEGIN" "$HOSTCERT.nosni"; then
+          if grep -qe '-----BEGIN' "$HOSTCERT.nosni"; then
                cn_nosni="$(get_cn_from_cert "$HOSTCERT.nosni")"
                [[ -z "$cn_nosni" ]] && cn_nosni="no CN field in subject"
           fi
@@ -8268,24 +9187,24 @@ certificate_info() {
 
      if [[ -z "$sni_used" ]] || [[ "$(toupper "$cn_nosni")" == "$(toupper "$cn")" ]]; then
           outln
-          cnfinding="$cn"
+          cn_finding="$cn"
      elif [[ -z "$cn_nosni" ]]; then
           out " (request w/o SNI didn't succeed";
-          cnfinding+="request w/o SNI didn't succeed"
+          cn_finding+="request w/o SNI didn't succeed"
           if [[ $cert_sig_algo =~ ecdsa ]]; then
                out ", usual for EC certificates"
-               cnfinding+=", usual for EC certificates"
+               cn_finding+=", usual for EC certificates"
           fi
           outln ")"
-          cnfinding+=""
+          cn_finding+=""
      elif [[ "$cn_nosni" == *"no CN field"* ]]; then
           outln ", (request w/o SNI: $cn_nosni)"
-          cnfinding="$cn_nosni"
+          cn_finding="$cn_nosni"
      else
           out " (CN in response to request w/o SNI: "; pr_italic "$cn_nosni"; outln ")"
-          cnfinding="$cn_nosni"
+          cn_finding="$cn_nosni"
      fi
-     fileout "cert_commonName_wo_SNI${json_postfix}" "INFO" "$cnfinding"
+     fileout "cert_commonName_wo_SNI${json_postfix}" "INFO" "$cn_finding"
 
      sans=$(grep -A2 "Subject Alternative Name" <<< "$cert_txt" | \
           grep -E "DNS:|IP Address:|email:|URI:|DirName:|Registered ID:" | tr ',' '\n' | \
@@ -8303,7 +9222,7 @@ certificate_info() {
           prln_italic "$(out_row_aligned_max_width "$all_san" "$indent                              " $TERM_WIDTH)"
           fileout "${jsonID}${json_postfix}" "INFO" "$all_san"
      else
-          if [[ $SERVICE == "HTTP" ]] || "$ASSUME_HTTP"; then
+          if [[ $SERVICE == HTTP ]] || "$ASSUME_HTTP"; then
                pr_svrty_high "missing (NOT ok)"; outln " -- Browsers are complaining"
                fileout "${jsonID}${json_postfix}" "HIGH" "No SAN, browsers are complaining"
           else
@@ -8312,47 +9231,12 @@ certificate_info() {
           fi
      fi
 
-     out "$indent"; pr_bold " Issuer                       "
-     jsonID="cert_caIssuers"
-     #FIXME: oid would be better maybe (see above)
-     issuer="$($OPENSSL x509 -in  $HOSTCERT -noout -issuer -nameopt multiline,-align,sname,-esc_msb,utf8,-space_eq 2>>$ERRFILE)"
+     # Determine the issuer now as we need them for host certificate warning
+     issuer="$($OPENSSL x509 -noout -issuer -nameopt multiline,-align,sname,-esc_msb,utf8,-space_eq 2>>$ERRFILE <<< "$hostcert")"
      issuer_CN="$(awk -F'=' '/CN=/ { print $2 }' <<< "$issuer")"
      issuer_O="$(awk -F'=' '/O=/ { print $2 }' <<< "$issuer")"
      issuer_C="$(awk -F'=' '/ C=/ { print $2 }' <<< "$issuer")"
      issuer_DC="$(awk -F'=' '/DC=/ { print $2 }' <<< "$issuer")"
-
-     if [[ "$issuer_O" == "issuer=" ]] || [[ "$issuer_O" == "issuer= " ]] || [[ "$issuer_CN" == "$cn" ]]; then
-          prln_svrty_critical "self-signed (NOT ok)"
-          fileout "${jsonID}${json_postfix}" "CRITICAL" "selfsigned"
-     else
-          issuerfinding="$issuer_CN"
-          pr_italic "$issuer_CN"
-          if [[ -z "$issuer_O" ]] && [[ -n "$issuer_DC" ]]; then
-               for san in $issuer_DC; do
-                    if [[ -z "$issuer_O" ]]; then
-                         issuer_O="${san}"
-                    else
-                         issuer_O="${san}.${issuer_O}"
-                    fi
-               done
-          fi
-          if [[ -n "$issuer_O" ]]; then
-               issuerfinding+=" ("
-               out " ("
-               issuerfinding+="$issuer_O"
-               pr_italic "$issuer_O"
-               if [[ -n "$issuer_C" ]]; then
-                    issuerfinding+=" from "
-                    out " from "
-                    issuerfinding+="$issuer_C"
-                    pr_italic "$issuer_C"
-               fi
-               issuerfinding+=")"
-               out ")"
-          fi
-          outln
-          fileout "${jsonID}${json_postfix}" "INFO" "$issuerfinding"
-     fi
 
      out "$indent"; pr_bold " Trust (hostname)             "
      compare_server_name_to_cert "$HOSTCERT"
@@ -8367,7 +9251,9 @@ certificate_info() {
      has_dns_sans=$HAS_DNS_SANS
 
      case $trust_sni in
-          0) trustfinding="certificate does not match supplied URI" ;;
+          0) trustfinding="certificate does not match supplied URI"
+             set_grade_cap "M" "Domain name mismatch"
+             ;;
           1) trustfinding="Ok via SAN" ;;
           2) trustfinding="Ok via SAN wildcard" ;;
           4) if "$has_dns_sans"; then
@@ -8394,8 +9280,8 @@ certificate_info() {
      if [[ $trust_sni -eq 0 ]]; then
           pr_svrty_high "$trustfinding"
           trust_sni_finding="HIGH"
-     elif ( [[ $trust_sni -eq 4 ]] || [[ $trust_sni -eq 8 ]] ); then
-          if [[ $SERVICE == "HTTP" ]] || "$ASSUME_HTTP"; then
+     elif [[ $trust_sni -eq 4 ]] || [[ $trust_sni -eq 8 ]]; then
+          if [[ $SERVICE == HTTP ]] || "$ASSUME_HTTP"; then
                # https://bugs.chromium.org/p/chromium/issues/detail?id=308330
                # https://bugzilla.mozilla.org/show_bug.cgi?id=1245280
                # https://www.chromestatus.com/feature/4981025180483584
@@ -8432,24 +9318,24 @@ certificate_info() {
           fi
      elif [[ $trust_nosni -eq 4 ]] || [[ $trust_nosni -eq 8 ]] || [[ $trust_sni -eq 4 ]] || [[ $trust_sni -eq 8 ]]; then
           case $trust_nosni in
-               1) trustfinding_nosni="(w/o SNI: Ok via SAN)" ;;
-               2) trustfinding_nosni="(w/o SNI: Ok via SAN wildcard)" ;;
+               1) trustfinding_nosni=" (w/o SNI: Ok via SAN)" ;;
+               2) trustfinding_nosni=" (w/o SNI: Ok via SAN wildcard)" ;;
                4) if "$has_dns_sans_nosni"; then
-                       trustfinding_nosni="(w/o SNI: via CN, but not SAN)"
+                       trustfinding_nosni=" (w/o SNI: via CN, but not SAN)"
                   else
-                       trustfinding_nosni="(w/o SNI: via CN only)"
+                       trustfinding_nosni=" (w/o SNI: via CN only)"
                   fi
                   ;;
-               5) trustfinding_nosni="(w/o SNI: Ok via SAN and CN)" ;;
-               6) trustfinding_nosni="(w/o SNI: Ok via SAN wildcard and CN)" ;;
+               5) trustfinding_nosni=" (w/o SNI: Ok via SAN and CN)" ;;
+               6) trustfinding_nosni=" (w/o SNI: Ok via SAN wildcard and CN)" ;;
                8) if "$has_dns_sans_nosni"; then
-                       trustfinding_nosni="(w/o SNI: via CN wildcard, but not SAN)"
+                       trustfinding_nosni=" (w/o SNI: via CN wildcard, but not SAN)"
                   else
-                       trustfinding_nosni="(w/o SNI: via CN (wildcard) only)"
+                       trustfinding_nosni=" (w/o SNI: via CN (wildcard) only)"
                   fi
                   ;;
-               9) trustfinding_nosni="(w/o SNI: Ok via CN wildcard and SAN)" ;;
-              10) trustfinding_nosni="(w/o SNI: Ok via SAN wildcard and CN wildcard)" ;;
+               9) trustfinding_nosni=" (w/o SNI: Ok via CN wildcard and SAN)" ;;
+              10) trustfinding_nosni=" (w/o SNI: Ok via SAN wildcard and CN wildcard)" ;;
           esac
      elif [[ $trust_sni -ne 0 ]]; then
           trustfinding_nosni=" (works w/o SNI)"
@@ -8458,7 +9344,7 @@ certificate_info() {
      fi
      if [[ -n "$sni_used" ]] || [[ $trust_nosni -eq 0 ]] || ( [[ $trust_nosni -ne 4 ]] && [[ $trust_nosni -ne 8 ]] ); then
           outln "$trustfinding_nosni"
-     elif [[ $SERVICE == "HTTP" ]] || "$ASSUME_HTTP"; then
+     elif [[ $SERVICE == HTTP ]] || "$ASSUME_HTTP"; then
           prln_svrty_high "$trustfinding_nosni"
      else
           prln_svrty_medium "$trustfinding_nosni"
@@ -8472,12 +9358,13 @@ certificate_info() {
           # Shortcut for this special case here.
           pr_italic "WoSign/StartCom"; out " are " ; prln_svrty_critical "not trusted anymore (NOT ok)"
           fileout "${jsonID}${json_postfix}" "CRITICAL" "Issuer not trusted anymore (WoSign/StartCom)"
+          set_grade_cap "T" "Untrusted certificate chain"
      else
           # Also handles fileout, keep error if happened
           determine_trust "$jsonID" "$json_postfix" || ((ret++))
      fi
 
-     # http://events.ccc.de/congress/2010/Fahrplan/attachments/1777_is-the-SSLiverse-a-safe-place.pdf, see page 40pp
+     # https://fahrplan.events.ccc.de/congress/2010/Fahrplan/attachments/1777_is-the-SSLiverse-a-safe-place.pdf, see p40+
      out "$indent"; pr_bold " EV cert"; out " (experimental)       "
      jsonID="cert_certificatePolicies_EV"
      # only the first one, seldom we have two
@@ -8496,67 +9383,35 @@ certificate_info() {
           out "no "
           fileout "${jsonID}${json_postfix}" "INFO" "no"
      fi
-     debugme echo "($(newline_to_spaces "$policy_oid"))"
+     debugme echo -n "($(newline_to_spaces "$policy_oid"))"
      outln
 #TODO: check browser OIDs:
-#         https://mxr.mozilla.org/mozilla-central/source/security/certverifier/ExtendedValidation.cpp
-#         http://src.chromium.org/chrome/trunk/src/net/cert/ev_root_ca_metadata.cc
+#         https://dxr.mozilla.org/mozilla-central/source/security/certverifier/ExtendedValidation.cpp
+#         https://chromium.googlesource.com/chromium/chromium/+/master/net/base/ev_root_ca_metadata.cc
 #         https://certs.opera.com/03/ev-oids.xml
 #         see #967
 
-     out "$indent"; pr_bold " ETS/\"eTLS\""
-     out ", visibility info  "
-     jsonID="cert_eTLS"
-     etsi_etls_visibility_info "$jsonID" "$spaces" "$HOSTCERT" "$cert_txt"
-     # *Currently* this is even listed as a vulnerability (CWE-310, CVE-2019-919), see
-     # https://nvd.nist.gov/vuln/detail/CVE-2019-9191, https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-9191
-     # For now we leave this here. We may want to change that later or add infos to other sections (PFS & vulnerability)
-
      out "$indent"; pr_bold " Certificate Validity (UTC)   "
+     IFS=',' read -r startdate enddate diffseconds days2expire yearstart < <(determine_dates_certificate "$cert_txt")
 
-     # FreeBSD + OSX can't swallow the leading blank:
-     enddate="${cert_txt#*Validity*Not Before: *Not After : }"
-     enddate="${enddate%%GMT*}GMT"
-     startdate="${cert_txt#*Validity*Not Before: }"
-     startdate="${startdate%%GMT*}GMT"
-     # Now we have a normalized enddate and startdate like "Feb 27 10:03:20 2017 GMT" -- also for OpenBSD
-     debugme echo "$enddate - $startdate"
-     # In all OS except OpenBSD it'll be reduced to "2017-02-27 11:03"
-     enddate="$(parse_date "$enddate" +"%F %H:%M" "%b %d %T %Y %Z")"
-     startdate="$(parse_date "$startdate" +"%F %H:%M" "%b %d %T %Y %Z")"
-
-     if "$HAS_OPENBSDDATE"; then
-          # best we are able to do under OpenBSD
-          days2expire=""
-          read a b c yearstart tz  <<< "$startdate"
-          read a b c yearend tz  <<< "$enddate"
-          # we only take the year here as OpenBSD's date is not for conversion
-          diffseconds=$((yearend - yearstart))
-          diffseconds=$((diffseconds * 3600 * 24 * 365))
-     else
-          days2expire=$(( $(parse_date "$enddate" "+%s" $'%F %H:%M') - $(LC_ALL=C date "+%s") ))  # first in seconds
-          days2expire=$((days2expire  / 3600 / 24 ))
-          # we adjust the thresholds by %50 for LE certificates, relaxing those warnings
-          # . instead of \' because it does not break syntax highlighting in vim
-          if [[ "$issuer_CN" =~ ^Let.s\ Encrypt\ Authority ]] ; then
-                 days2warn2=$((days2warn2 / 2))
-                 days2warn1=$((days2warn1 / 2))
-          fi
-          diffseconds=$(( $(parse_date "$enddate" "+%s" $'%F %H:%M') - $(parse_date "$startdate" "+%s" $'%F %H:%M') ))
+     # We adjust the thresholds by %50 for LE certificates, relaxing warnings for those certificates.
+     # . instead of \' because it does not break syntax highlighting in vim
+     if [[ "$issuer_O" =~ ^Let.s\ Encrypt ]] ; then
+          days2warn2=$((days2warn2 / 2))
+          days2warn1=$((days2warn1 / 2))
      fi
-     debugme echo -n "diffseconds: $diffseconds"
-     expire=$($OPENSSL x509 -in $HOSTCERT -checkend 1 2>>$ERRFILE)
-     if ! grep -qw not <<< "$expire" ; then
+
+     debugme echo -n "(diffseconds: $diffseconds)"
+     if ! [[ "$($OPENSSL x509 -checkend 1 2>>$ERRFILE <<< "$hostcert")" =~ \ not\  ]]; then
           pr_svrty_critical "expired"
           expfinding="expired"
           expok="CRITICAL"
+          set_grade_cap "T" "Certificate expired"
      else
-          secs2warn=$((24 * 60 * 60 * days2warn2))          # low threshold first
-          expire=$($OPENSSL x509 -in $HOSTCERT -checkend $secs2warn 2>>$ERRFILE)
-          if grep -qw not <<< "$expire"; then
-               secs2warn=$((24 * 60 * 60 * days2warn1))     # high threshold
-               expire=$($OPENSSL x509 -in $HOSTCERT -checkend $secs2warn 2>>$ERRFILE)
-               if grep -qw not <<< "$expire"; then
+          # low threshold first
+          if [[ "$($OPENSSL x509 -checkend $((secsaday*days2warn2)) 2>>$ERRFILE <<< "$hostcert")" =~ \ not\  ]]; then
+               # high threshold
+               if [[ "$($OPENSSL x509 -checkend $((secsaday*days2warn1)) 2>>$ERRFILE <<< "$hostcert")" =~ \ not\  ]]; then
                     pr_svrty_good "$days2expire >= $days2warn1 days"
                     expfinding+="$days2expire >= $days2warn1 days"
                else
@@ -8575,30 +9430,70 @@ certificate_info() {
      fileout "cert_notBefore${json_postfix}" "INFO" "$startdate"      # we assume that the certificate has no start time in the future
      fileout "cert_notAfter${json_postfix}" "$expok" "$enddate"       # They are in UTC
 
-     if [[ $diffseconds -ge $((3600 * 24 * 365 * 10)) ]]; then
-          # certificate is valid >= 10 years
+     # Internal certificates or those from appliances often have too high validity periods.
+     # We check for ~10 years and >~ 5 years
+     if [[ $diffseconds -ge $((secsaday*365*10)) ]]; then
           out "$spaces"
           prln_svrty_high ">= 10 years is way too long"
-          fileout "cert_validityPeriod${json_postfix}" "HIGH" "$((diffseconds / 3600 * 24 )) days"
-     elif [[ $diffseconds -ge $((3600 * 24 * 365 * 5)) ]]; then
+          fileout "cert_extlifeSpan${json_postfix}" "HIGH" "$((diffseconds / secsaday)) days"
+     elif [[ $diffseconds -ge $((secsaday*365*5)) ]]; then
           out "$spaces"
           prln_svrty_medium ">= 5 years is too long"
-          fileout "cert_validityPeriod${json_postfix}" "MEDIUM" "$((diffseconds / 3600 * 24 )) days"
+          fileout "cert_extlifeSpan${json_postfix}" "MEDIUM" "$((diffseconds / secsaday)) days"
+     elif [[ $diffseconds -ge $((secsaday*398 + 1)) ]]; then
+     # Also "official" certificates issued from september 1st 2020 (1598918400) aren't supposed
+     # to be valid longer than 398 days which is 34387200 in epoch seconds
+          gt_398=true
+          if "$HAS_OPENBSDDATE"; then
+               if [[ 20200901 -le ${yearstart//-/} ]]; then
+                    gt_398warn=true
+               fi
+          elif [[ $(parse_date "$startdate" "+%s" $'%F %H:%M') -ge 1598918400 ]]; then
+               gt_398warn=true
+          fi
+          # Now, the verdict, depending on the issuing date
+          out "$spaces"
+          if "$gt_398warn" && "$gt_398"; then
+               prln_svrty_medium "> 398 days issued after 2020/09/01 is too long"
+               fileout "cert_extlifeSpan${json_postfix}" "MEDIUM" "$((diffseconds / secsaday)) > 398 days"
+          elif "$gt_398"; then
+               outln ">= 398 days certificate life time but issued before 2020/09/01"
+               fileout "cert_extlifeSpan${json_postfix}" "INFO" "$((diffseconds / secsaday)) =< 398 days"
+          fi
+     elif [[ $diffseconds -ge $((secsaday*825 + 1)) ]]; then
+     # Also "official" certificates issued from March 1st, 2018 (1517353200) aren't supposed
+     # to be valid longer than 825 days which is 1517353200 in epoch seconds
+          gt_825=true
+          if "$HAS_OPENBSDDATE"; then
+               if [[ 20180301 -le ${yearstart//-/} ]]; then
+                    gt_825warn=true
+               fi
+          elif [[ $(parse_date "$startdate" "+%s" $'%F %H:%M') -ge 1517353200 ]]; then
+               gt_825warn=true
+          fi
+          # Now, the verdict, depending on the issuing date
+          out "$spaces"
+          if "$gt_825warn" && "$gt_825"; then
+               prln_svrty_medium "> 825 days issued after 2018/03/01 is too long"
+               fileout "cert_extlifeSpan${json_postfix}" "MEDIUM" "$((diffseconds / secsaday)) > 825 days"
+          elif "$gt_825"; then
+               outln ">= 825 days certificate life time but issued before 2018/03/01"
+               fileout "cert_extlifeSpan${json_postfix}" "INFO" "$((diffseconds / secsaday)) =< 825 days"
+          fi
      else
-          [[ "$DEBUG" -ge 1 ]] && outln "${spaces}OK: below 5 years certificate life time"
-          fileout "cert_validityPeriod${json_postfix}" "INFO" "$((diffseconds / 3600 * 24 )) days"
+          # All is fine with validity period
+          # We ignore for now certificates < 2018/03/01. On the screen we only show debug info
+          debugme echo "${spaces}DEBUG: all is fine with total certificate life time"
+          fileout "cert_extlifeSpan${json_postfix}" "OK" "certificate has no extended life time according to browser forum"
      fi
 
-     certificates_provided=1+$(grep -c "\-\-\-\-\-BEGIN CERTIFICATE\-\-\-\-\-" $TEMPDIR/intermediatecerts.pem)
-     out "$indent"; pr_bold " # of certificates provided"; out "   $certificates_provided"
-     fileout "certs_countServer${json_postfix}" "INFO" "${certificates_provided}"
-     if "$certificate_list_ordering_problem"; then
-          prln_svrty_low " (certificate list ordering problem)"
-          fileout "certs_list_ordering_problem${json_postfix}" "LOW" "yes"
-     else
-          fileout "certs_list_ordering_problem${json_postfix}" "INFO" "no"
-          outln
-     fi
+     out "$indent"; pr_bold " ETS/\"eTLS\""
+     out ", visibility info  "
+     jsonID="cert_eTLS"
+     etsi_ets_visibility_info "${jsonID}${json_postfix}" "$spaces" "$hostcert" "$cert_txt"
+     # *Currently* this is even listed as a vulnerability (CWE-310, CVE-2019-919), see
+     # https://nvd.nist.gov/vuln/detail/CVE-2019-9191, https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2019-9191
+     # For now we leave this here. We may want to change that later or add infos to other sections (FS & vulnerability)
 
      if "$PHONE_OUT"; then
           out "$indent"; pr_bold " In pwnedkeys.com DB          "
@@ -8614,7 +9509,7 @@ certificate_info() {
      out "$indent"; pr_bold " Certificate Revocation List  "
      jsonID="cert_crlDistributionPoints"
      # ~ get next 50 lines after pattern , strip until Signature Algorithm and retrieve URIs
-     crl="$(awk '/X509v3 CRL Distribution/{i=50} i&&i--' <<< "$cert_txt" | awk '/^$/,/^            [a-zA-Z0-9]+|^    Signature Algorithm:/' | awk -F'URI:' '/URI/ { print $2 }')"
+     crl="$(awk '/X509v3 CRL Distribution/{i=50} i&&i--' <<< "$cert_txt" | awk '/^$|^.*Name.*$|^.*Reasons.*$|^.*CRL Issuer.*$/,/^            [a-zA-Z0-9]+|^    Signature Algorithm:/' | awk -F'URI:' '/URI/ { print $2 }')"
      if [[ -z "$crl" ]] ; then
           fileout "${jsonID}${json_postfix}" "INFO" "--"
           outln "--"
@@ -8647,14 +9542,14 @@ certificate_info() {
 
      out "$indent"; pr_bold " OCSP URI                     "
      jsonID="cert_ocspURL"
-     ocsp_uri=$($OPENSSL x509 -in $HOSTCERT -noout -ocsp_uri 2>>$ERRFILE)
+     ocsp_uri="$($OPENSSL x509 -noout -ocsp_uri 2>>$ERRFILE <<< "$hostcert")"
      if [[ -z "$ocsp_uri" ]]; then
           outln "--"
           fileout "${jsonID}${json_postfix}" "INFO" "--"
      else
           if [[ $(count_lines "$ocsp_uri") -eq 1 ]]; then
                out "$ocsp_uri"
-               if [[ "$expfinding" != "expired" ]]; then
+               if [[ "$expfinding" != expired ]]; then
                     check_revocation_ocsp "$ocsp_uri" "" "cert_ocspRevoked${json_postfix}"
                fi
                ret=$((ret +$?))
@@ -8668,7 +9563,7 @@ certificate_info() {
                          out "$spaces"
                     fi
                     out "$line"
-                    if [[ "$expfinding" != "expired" ]]; then
+                    if [[ "$expfinding" != expired ]]; then
                          check_revocation_ocsp "$line" "" "cert_ocspRevoked${json_postfix}"
                          ret=$((ret +$?))
                     fi
@@ -8712,7 +9607,7 @@ certificate_info() {
                else
                     out "(response status unknown)"
                     fileout "${jsonID}${json_postfix}" "OK" " not sure what's going on here, '$ocsp_response'"
-                    debugme grep -a -A20 -B2 "OCSP response"  <<<"$ocsp_response"
+                    debugme grep -a -A20 -B2 "OCSP response" <<< "$ocsp_response"
                     ((ret++))
                fi
           fi
@@ -8726,13 +9621,13 @@ certificate_info() {
      jsonID="DNS_CAArecord"
      caa_node="$NODE"
      caa=""
-     while ( [[ -z "$caa" ]] &&  [[ ! -z "$caa_node" ]] ); do
+     while [[ -z "$caa" ]] &&  [[ -n "$caa_node" ]]; do
           caa="$(get_caa_rr_record $caa_node)"
           [[ $caa_node =~ '.'$ ]] || caa_node+="."
           caa_node=${caa_node#*.}
      done
      if [[ -n "$caa" ]]; then
-          pr_svrty_good "available"; out " - please check for match with \"Issuer\" above"
+          pr_svrty_good "available"; out " - please check for match with \"Issuer\" below"
           if [[ $(count_lines "$caa") -eq 1 ]]; then
                out ": "
           else
@@ -8764,6 +9659,132 @@ certificate_info() {
           outln "$ct"
           fileout "${jsonID}${json_postfix}" "INFO" "$ct"
      fi
+
+     out "$indent"; pr_bold " Certificates provided"
+     certificates_provided="$(grep -ace '-----BEGIN CERTIFICATE-----' <<< "$intermediates")"
+     ((certificates_provided++))                  # plus host certificate
+     out "        $certificates_provided"
+     fileout "certs_countServer${json_postfix}" "INFO" "${certificates_provided}"
+     if "$certificate_list_ordering_problem"; then
+          prln_svrty_low " (certificate list ordering problem)"
+          fileout "certs_list_ordering_problem${json_postfix}" "LOW" "yes"
+     else
+          fileout "certs_list_ordering_problem${json_postfix}" "INFO" "no"
+          outln
+     fi
+
+     out "$indent"; pr_bold " Issuer                       "
+     jsonID="cert_caIssuers"
+
+     if [[ "$issuer_O" == issuer= ]] || [[ "$issuer_O" == issuer=\  ]] || [[ "$issuer_CN" == "$cn" ]]; then
+          prln_svrty_critical "self-signed (NOT ok)"
+          fileout "${jsonID}${json_postfix}" "CRITICAL" "selfsigned"
+          set_grade_cap "T" "Self-signed certificate"
+     else
+          issuerfinding="$issuer_CN"
+          pr_italic "$issuer_CN"
+          if [[ -z "$issuer_O" ]] && [[ -n "$issuer_DC" ]]; then
+               for san in $issuer_DC; do
+                    if [[ -z "$issuer_O" ]]; then
+                         issuer_O="${san}"
+                    else
+                         issuer_O="${san}.${issuer_O}"
+                    fi
+               done
+          fi
+          if [[ -n "$issuer_O" ]]; then
+               issuerfinding+=" ("
+               out " ("
+               issuerfinding+="$issuer_O"
+               pr_italic "$issuer_O"
+               if [[ -n "$issuer_C" ]]; then
+                    issuerfinding+=" from "
+                    out " from "
+                    issuerfinding+="$issuer_C"
+                    pr_italic "$issuer_C"
+               fi
+               issuerfinding+=")"
+               out ")"
+          fi
+          outln
+          fileout "${jsonID}${json_postfix}" "INFO" "$issuerfinding"
+     fi
+
+
+# Now we take care of the intermediate certificates. We basically (should) have them on disk
+# as "intermediatecerts.pem" (which could be split into intermediatecert1.crt, intermediatecert2.crt, ..)
+# However we do this in RAM which is better as it was passed to this function.
+# We should keep in mind though this is somewhat redundant code. We do similar stuff elsewhere,
+# e.g. in extract_certificates() and run_hpkp() but don't keep the certificates
+
+     # Store all of the text output of the intermediate certificates in an array so that they can
+     # be used later (e.g., to check their expiration dates).
+     for (( i=1; i < certificates_provided; i++ )); do
+          [[ "$intermediates" =~ \-\-\-\-\-BEGIN\ CERTIFICATE\-\-\-\-\- ]] || break
+          intermediates="${intermediates#*-----BEGIN CERTIFICATE-----}"
+          cert="${intermediates%%-----END CERTIFICATE-----*}"
+          intermediates="${intermediates#${cert}-----END CERTIFICATE-----}"
+          cert="-----BEGIN CERTIFICATE-----${cert}-----END CERTIFICATE-----"
+
+          fileout "intermediate_cert <#${i}>${json_postfix}" "INFO" "$cert"
+          fileout "intermediate_cert_fingerprintSHA256 <#${i}>${json_postfix}" "INFO" "$(determine_cert_fingerprint_serial "$cert" "-fingerprint -sha256")"
+
+          intermediate_certs_txt[i]="$($OPENSSL x509 -text -noout 2>/dev/null <<< "$cert")"
+
+          # We don't need every value here. For the sake of being consistent here we add the rest
+          IFS=',' read -r startdate enddate diffseconds days2expire yearstart < <(determine_dates_certificate "${intermediate_certs_txt[i]}")
+          fileout "intermediate_cert_notBefore <#${i}>${json_postfix}"  "INFO" "$startdate"
+
+          if $first; then
+               out "$indent"; pr_bold " Intermediate cert validity   "
+               first=false
+          else
+               out "$indent$spaces"
+          fi
+          out "#${i}: "
+          if ! [[ "$($OPENSSL x509 -checkend 1 2>>$ERRFILE <<< "$cert")" =~ \ not\  ]]; then
+               cn_finding="expired!"
+               pr_svrty_critical "$cn_finding"
+               expok="CRITICAL"
+          elif ! [[ "$($OPENSSL x509 -checkend $((secsaday*20)) 2>>$ERRFILE <<< "$cert")" =~ \ not\  ]]; then
+               cn_finding="expires <= 20 days"
+               pr_svrty_high "$cn_finding"
+               expok="HIGH"
+          elif ! [[ "$($OPENSSL x509 -checkend $((secsaday*40)) 2>>$ERRFILE <<< "$cert")" =~ \ not\  ]]; then
+               cn_finding="expires <= 40 days"
+               pr_svrty_medium "$cn_finding"
+               expok="MEDIUM"
+          else
+               cn_finding="ok > 40 days"
+               pr_svrty_good "$cn_finding"
+               expok="OK"
+          fi
+          out " ($enddate). "
+          cn="$(awk -F= '/Subject:.*CN/ { print $NF }' <<< "${intermediate_certs_txt[i]}")"
+          issuer_CN="$(awk -F= '/Issuer:.*CN/ { print $NF }' <<< "${intermediate_certs_txt[i]}")"
+          pr_italic "$(strip_leading_space "$cn")"; out " <-- "; prln_italic "$(strip_leading_space "$issuer_CN")"
+          fileout "intermediate_cert_notAfter <#${i}>${json_postfix}" "$expok" "$enddate"
+          fileout "intermediate_cert_expiration <#${i}>${json_postfix}" "$expok" "$cn_finding"
+          fileout "intermediate_cert_chain <#${i}>${json_postfix}" "INFO" "$cn <-- $issuer_CN"
+     done
+
+     # Courtesy Hanno Böck (see https://github.com/hannob/badocspcert)
+     out "$indent"; pr_bold " Intermediate Bad OCSP"
+     out " (exp.) "
+     jsonID="intermediate_cert_badOCSP"
+
+     for (( i=1; i < certificates_provided; i++ )); do
+          cert_ext_keyusage="$(awk '/X509v3 Extended Key Usage:/ { getline; print $0 }' <<< "${intermediate_certs_txt[i]}")"
+          [[ "$cert_ext_keyusage" =~ OCSP\ Signing ]] && badocsp=0 && break
+     done
+     if [[ $badocsp -eq 0 ]]; then
+          prln_svrty_medium "NOT ok"
+          fileout "${jsonID}${json_postfix}" "MEDIUM" "NOT ok is intermediate certificate ${i}"
+     else
+          prln_svrty_good "Ok"
+          fileout "${jsonID}${json_postfix}" "OK" "intermediate certificate(s) is/are ok"
+     fi
+
      outln
      return $ret
 }
@@ -8771,16 +9792,16 @@ certificate_info() {
 run_server_defaults() {
      local ciph newhostcert sni
      local match_found
-     local sessticket_lifetime_hint="" lifetime unit
+     local sessticket_lifetime_hint="" sessticket_proto="" lifetime unit
      local -i i n
      local -i certs_found=0
      local -i ret=0
      local -a previous_hostcert previous_hostcert_txt previous_hostcert_type
-     local -a previous_hostcert_issuer previous_intermediates previous_ordering_problem keysize cipher
+     local -a previous_hostcert_issuer previous_intermediates previous_ordering_problem keysize tested_cipher
      local -a ocsp_response_binary ocsp_response ocsp_response_status sni_used tls_version ct
      local -a ciphers_to_test certificate_type
      local -a -i success
-     local cn_nosni cn_sni sans_nosni sans_sni san tls_extensions
+     local cn_nosni cn_sni sans_nosni sans_sni san tls_extensions client_auth_ca
      local using_sockets=true
 
      "$SSL_NATIVE" && using_sockets=false
@@ -8802,27 +9823,28 @@ run_server_defaults() {
      ciphers_to_test[7]=""
      ciphers_to_test[8]="tls1_3_RSA"
      ciphers_to_test[9]="tls1_3_ECDSA"
+     ciphers_to_test[10]="tls1_3_EdDSA"
      certificate_type[1]="" ; certificate_type[2]=""
      certificate_type[3]=""; certificate_type[4]=""
      certificate_type[5]="" ; certificate_type[6]=""
      certificate_type[7]="" ; certificate_type[8]="RSASig"
-     certificate_type[9]="ECDSA"
+     certificate_type[9]="ECDSA" ; certificate_type[10]="EdDSA"
 
-     for (( n=1; n <= 16 ; n++ )); do
+     for (( n=1; n <= 17 ; n++ )); do
           # Some servers use a different certificate if the ClientHello
           # specifies TLSv1.1 and doesn't include a server name extension.
           # So, for each public key type for which a certificate was found,
           # try again, but only with TLSv1.1 and without SNI.
           if [[ $n -ne 1 ]] && [[ "$OPTIMAL_PROTO" == -ssl2 ]]; then
                ciphers_to_test[n]=""
-          elif [[ $n -ge 10 ]]; then
+          elif [[ $n -ge 11 ]]; then
                ciphers_to_test[n]=""
-               [[ ${success[n-9]} -eq 0 ]] && [[ $(has_server_protocol "tls1_1") -ne 1 ]] && \
-                    ciphers_to_test[n]="${ciphers_to_test[n-9]}" && certificate_type[n]="${certificate_type[n-9]}"
+               [[ ${success[n-10]} -eq 0 ]] && [[ $(has_server_protocol "tls1_1") -ne 1 ]] && \
+                    ciphers_to_test[n]="${ciphers_to_test[n-10]}" && certificate_type[n]="${certificate_type[n-10]}"
           fi
 
           if [[ -n "${ciphers_to_test[n]}" ]]; then
-               if [[ $n -ge 10 ]]; then
+               if [[ $n -ge 11 ]]; then
                     sni="$SNI"
                     SNI=""
                     get_server_certificate "${ciphers_to_test[n]}" "tls1_1"
@@ -8833,11 +9855,12 @@ run_server_defaults() {
                     success[n]=$?
                fi
                if [[ ${success[n]} -eq 0 ]] && [[ -s "$HOSTCERT" ]]; then
-                    [[ $n -ge 10 ]] && [[ ! -e $HOSTCERT.nosni ]] && cp $HOSTCERT $HOSTCERT.nosni
+                    [[ $n -ge 11 ]] && [[ ! -e $HOSTCERT.nosni ]] && cp $HOSTCERT $HOSTCERT.nosni
                     cp "$TEMPDIR/$NODEIP.get_server_certificate.txt" $TMPFILE
                     >$ERRFILE
                     if [[ -z "$sessticket_lifetime_hint" ]]; then
-                         sessticket_lifetime_hint=$(awk '/session ticket life/' $TMPFILE)
+                         sessticket_lifetime_hint=$(awk '/session ticket life/ { if (!found) print; found=1 }' $TMPFILE)
+                         sessticket_proto="$(get_protocol "$TMPFILE")"
                     fi
 
                     if [[ $n -le 7 ]]; then
@@ -8866,7 +9889,7 @@ run_server_defaults() {
                               if [[ -z "${ciphers_to_test[n+1]}" ]]; then
                                    ciphers_to_test[n+1]="${ciphers_to_test[n]/aDSS/}"
                                    ciphers_to_test[n+1]="${ciphers_to_test[n+1]/::/:}"
-                                   [[ "${ciphe-S 127.0.0.1rs_to_test[n+1]:0:1}" == : ]] && ciphers_to_test[n+1]="${ciphers_to_test[n+1]:1}"
+                                   [[ "${ciphers_to_test[n+1]:0:1}" == : ]] && ciphers_to_test[n+1]="${ciphers_to_test[n+1]:1}"
                               fi
                               ciphers_to_test[n]="aDSS"
                          elif [[ "$ciph" == TLS_DH_* ]]; then
@@ -8914,7 +9937,7 @@ run_server_defaults() {
                          fi
                          i=$((i + 1))
                     done
-                    if ! "$match_found" && [[ $n -ge 10 ]] && [[ $certs_found -ne 0 ]]; then
+                    if ! "$match_found" && [[ $n -ge 11 ]] && [[ $certs_found -ne 0 ]]; then
                          # A new certificate was found using TLSv1.1 without SNI.
                          # Check to see if the new certificate should be displayed.
                          # It should be displayed if it is either a match for the
@@ -8940,7 +9963,7 @@ run_server_defaults() {
                                         success[n]=0
                                    else
                                         while read -r san; do
-                                             [[ -n "$san" ]] && [[ " $sans_sni " =~ " $san " ]] && success[n]=0 && break
+                                             [[ -n "$san" ]] && [[ " $sans_sni " =~ \ $san\  ]] && success[n]=0 && break
                                         done <<< "$sans_nosni"
                                    fi
                               fi
@@ -8952,7 +9975,7 @@ run_server_defaults() {
                     fi
                     if ! "$match_found"; then
                          certs_found=$(( certs_found + 1))
-                         cipher[certs_found]=${ciphers_to_test[n]}
+                         tested_cipher[certs_found]=${ciphers_to_test[n]}
                          keysize[certs_found]=$(awk '/Server public key/ { print $(NF-1) }' $TMPFILE)
                          # If an OCSP response was sent, then get the full
                          # response so that certificate_info() can determine
@@ -8971,7 +9994,7 @@ run_server_defaults() {
                          [[ -n "${previous_intermediates[certs_found]}" ]] && [[ -r $TEMPDIR/hostcert_issuer.pem ]] && \
                               previous_hostcert_issuer[certs_found]=$(cat $TEMPDIR/hostcert_issuer.pem)
                          previous_ordering_problem[certs_found]=$CERTIFICATE_LIST_ORDERING_PROBLEM
-                         [[ $n -ge 10 ]] && sni_used[certs_found]="" || sni_used[certs_found]="$SNI"
+                         [[ $n -ge 11 ]] && sni_used[certs_found]="" || sni_used[certs_found]="$SNI"
                          tls_version[certs_found]="$DETECTED_TLS_VERSION"
                          previous_hostcert_type[certs_found]=" ${certificate_type[n]}"
                          if [[ $DEBUG -ge 1 ]]; then
@@ -8986,15 +10009,31 @@ run_server_defaults() {
      done
 
      determine_tls_extensions
-
      if [[ $? -eq 0 ]] && [[ "$OPTIMAL_PROTO" != -ssl2 ]]; then
           cp "$TEMPDIR/$NODEIP.determine_tls_extensions.txt" $TMPFILE
           >$ERRFILE
-          [[ -z "$sessticket_lifetime_hint" ]] && sessticket_lifetime_hint=$(awk '/session ticket lifetime/' $TMPFILE)
+          if [[ -z "$sessticket_lifetime_hint" ]]; then
+               sessticket_lifetime_hint=$(awk '/session ticket lifetime/ { if (!found) print; found=1 }' $TMPFILE)
+               sessticket_proto="$(get_protocol "$TMPFILE")"
+          fi
      fi
-     if "$using_sockets" && [[ -z "$sessticket_lifetime_hint" ]] && [[ "$OPTIMAL_PROTO" != -ssl2 ]]; then
-          $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS "$OPTIMAL_PROTO" -connect $NODEIP:$PORT $PROXY $SNI") </dev/null 2>$ERRFILE >$TMPFILE
-          sclient_connect_successful $? $TMPFILE && sessticket_lifetime_hint=$(awk '/session ticket lifetime/' $TMPFILE)
+     TLS13_CERT_COMPRESS_METHODS=""
+     "$using_sockets" && determine_cert_compression
+     [[ -n "$TLS13_CERT_COMPRESS_METHODS" ]] && [[ "$TLS13_CERT_COMPRESS_METHODS" != "none" ]] && \
+          extract_new_tls_extensions "$TEMPDIR/$NODEIP.determine_cert_compression.txt"
+
+     if "$using_sockets" && ! "$TLS13_ONLY" && [[ -z "$sessticket_lifetime_hint" ]] && [[ "$OPTIMAL_PROTO" != -ssl2 ]]; then
+          if "$HAS_TLS13" && ( [[ -z "$OPTIMAL_PROTO" ]] || [[ "$OPTIMAL_PROTO" == -tls1_3 ]] ) ; then
+               # If a session ticket were sent in response to a TLSv1.3 ClientHello, then a session ticket
+               # would have been found by get_server_certificate(). So, try again with a TLSv1.2 ClientHello.
+               $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -no_tls1_3 -connect $NODEIP:$PORT $PROXY $SNI") </dev/null 2>$ERRFILE >$TMPFILE
+          else
+               $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS "$OPTIMAL_PROTO" -connect $NODEIP:$PORT $PROXY $SNI") </dev/null 2>$ERRFILE >$TMPFILE
+          fi
+          if sclient_connect_successful $? $TMPFILE; then
+               sessticket_lifetime_hint=$(awk '/session ticket lifetime/ { if (!found) print; found=1 }' $TMPFILE)
+               sessticket_proto="$(get_protocol "$TMPFILE")"
+          fi
      fi
      [[ -z "$sessticket_lifetime_hint" ]] && TLS_TICKETS=false || TLS_TICKETS=true
 
@@ -9002,7 +10041,8 @@ run_server_defaults() {
      # Now that all of the server's certificates have been found, determine for
      # each certificate whether certificate transparency information is provided.
      for (( i=1; i <= certs_found; i++ )); do
-          ct[i]="$(certificate_transparency "${previous_hostcert_txt[i]}" "${ocsp_response[i]}" "$certs_found" "${cipher[i]}" "${sni_used[i]}" "${tls_version[i]}")"
+          certificate_transparency "${previous_hostcert_txt[i]}" "${ocsp_response[i]}" "$certs_found" "${tested_cipher[i]}" "${sni_used[i]}" "${tls_version[i]}"
+          ct[i]="$CERTIFICATE_TRANSPARENCY_SOURCE"
           # If certificate_transparency() called tls_sockets() and found a "signed certificate timestamps" extension,
           # then add it to $TLS_EXTENSIONS, since it may not have been found by determine_tls_extensions().
           [[ $certs_found -gt 1 ]] && [[ "${ct[i]}" == TLS\ extension ]] && extract_new_tls_extensions "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt"
@@ -9044,7 +10084,7 @@ run_server_defaults() {
           unit=$(grep -a lifetime <<< "$sessticket_lifetime_hint" | sed -e 's/^.*'"$lifetime"'//' -e 's/[ ()]//g')
           out "$lifetime $unit"
           if [[ $((3600 * 24)) -lt $lifetime ]]; then
-               prln_svrty_low " but: PFS requires session ticket keys to be rotated < daily !"
+               prln_svrty_low " but: FS requires session ticket keys to be rotated < daily !"
                fileout "$jsonID" "LOW" "valid for $lifetime $unit (>daily)"
           else
                outln ", session tickets keys seems to be rotated < daily"
@@ -9064,27 +10104,22 @@ run_server_defaults() {
 
      pr_bold " Session Resumption           "
      jsonID="sessionresumption_ticket"
-     sub_session_resumption
+     sub_session_resumption "$sessticket_proto"
      case $? in
-          0) SESS_RESUMPTION[2]="ticket=yes"
-             out "Tickets: yes, "
+          0) out "Tickets: yes, "
              fileout "$jsonID" "INFO" "supported"
           ;;
-          1) SESS_RESUMPTION[2]="ticket=no"
-             out "Tickets no, "
+          1) out "Tickets no, "
              fileout "$jsonID" "INFO" "not supported"
              ;;
-          5) SESS_RESUMPTION[2]="ticket=noclue"
-             pr_warning "Ticket resumption test failed, pls report / "
+          5) pr_warning "Ticket resumption test failed, pls report / "
              fileout "$jsonID" "WARN" "check failed, pls report"
              ((ret++))
              ;;
-          6) SESS_RESUMPTION[2]="ticket=clientauth"
-             pr_warning "Client Auth: Ticket resumption test not supported / "
+          6) pr_warning "Client Auth: Ticket resumption test not supported / "
              fileout "$jsonID" "WARN" "check couldn't be performed because of client authentication"
              ;;
-          7) SESS_RESUMPTION[2]="ticket=unsuccessful"
-             pr_warning "Connect problem: Ticket resumption test not possible / "
+          7) pr_warning "Connect problem: Ticket resumption test not possible / "
              fileout "$jsonID" "WARN" "check failed because of connect problem"
              ((ret++))
              ;;
@@ -9092,32 +10127,25 @@ run_server_defaults() {
 
      jsonID="sessionresumption_ID"
      if "$NO_SSL_SESSIONID"; then
-          SESS_RESUMPTION[1]="ID=no"
           outln "ID: no"
           fileout "$jsonID" "INFO" "No Session ID, no resumption"
      else
-          sub_session_resumption ID
+          sub_session_resumption "$sessticket_proto" ID
           case $? in
-               0) SESS_RESUMPTION[1]="ID=yes"
-                  outln "ID: yes"
+               0) outln "ID: yes"
                   fileout "$jsonID" "INFO" "supported"
                   ;;
-               1|2) SESS_RESUMPTION[1]="ID=no"
-                  outln "ID: no"
+               1|2) outln "ID: no"
                   fileout "$jsonID" "INFO" "not supported"
                   ;;
-               5) SESS_RESUMPTION[1]="ID=noclue"
-                  prln_warning "ID resumption test failed, pls report"
+               5) prln_warning "ID resumption test failed, pls report"
                   fileout "$jsonID" "WARN" "check failed, pls report"
                   ((ret++))
                   ;;
-               6) SESS_RESUMPTION[1]="ID=clientauth"
-                  [[ ${SESS_RESUMPTION[2]} =~ clientauth ]] || pr_warning "Client Auth: "
-                  prln_warning "ID resumption resumption test not supported"
+               6) prln_warning "Client Auth: ID resumption test not supported"
                   fileout "$jsonID" "WARN" "check couldn't be performed because of client authentication"
                   ;;
-               7) SESS_RESUMPTION[1]="ID=unsuccessful"
-                  prln_warning "ID resumption test failed"
+               7) prln_warning "ID resumption test failed"
                   fileout "$jsonID" "WARN" "check failed because of connect problem"
                   ((ret++))
                   ;;
@@ -9125,6 +10153,44 @@ run_server_defaults() {
      fi
 
      tls_time
+
+     jsonID="cert_compression"
+     if ! "$using_sockets"; then
+          # At the moment support for certificate compression can only be
+          # tested using tls_sockets().
+          :
+     elif [[ $(has_server_protocol "tls1_3") -eq 0 ]]; then
+          jsonID="certificate_compression"
+          pr_bold " Certificate Compression      "
+          outln "$TLS13_CERT_COMPRESS_METHODS"
+          fileout "$jsonID" "INFO" "$TLS13_CERT_COMPRESS_METHODS"
+     else
+         fileout "$jsonID" "INFO" "N/A"
+     fi
+
+     jsonID="clientAuth"
+     pr_bold " Client Authentication        "
+     if [[ "$CLIENT_AUTH" == unknown ]]; then
+          prln_local_problem "$OPENSSL doesn't support \"s_client -enable_pha\""
+     else
+          outln "$CLIENT_AUTH"
+     fi
+     fileout "$jsonID" "INFO" "$CLIENT_AUTH"
+     if [[ "$CLIENT_AUTH" == optional ]] || [[ "$CLIENT_AUTH" == required ]]; then
+          jsonID="clientAuth_CA_list"
+          pr_bold " CA List for Client Auth      "
+          out_row_aligned "$CLIENT_AUTH_CA_LIST" "                              "
+          if [[ "$CLIENT_AUTH_CA_LIST" == empty ]] || [[ $(count_lines "$CLIENT_AUTH_CA_LIST") -eq 1 ]]; then
+               fileout "$jsonID" "INFO" "$CLIENT_AUTH_CA_LIST"
+          else
+               i=1
+               while read client_auth_ca; do
+                    fileout "$jsonID #$i" "INFO" "$client_auth_ca"
+                    i+=1
+               done <<< "$CLIENT_AUTH_CA_LIST"
+               fi
+     fi
+
 
      if [[ -n "$SNI" ]] && [[ $certs_found -ne 0 ]] && [[ ! -e $HOSTCERT.nosni ]]; then
           # no cipher suites specified here. We just want the default vhost subject
@@ -9164,7 +10230,14 @@ run_server_defaults() {
           fi
      elif [[ $certs_found -eq 0 ]] && [[ -s "$HOSTCERT" ]]; then
           outln
-          generic_nonfatal "Client problem, shouldn't happen: Host certificate found but we can't continue with \"server defaults\""
+          generic_nonfatal "Client problem, shouldn't happen: Host certificate found but we can't continue with \"server defaults\"."
+     elif [[ $certs_found -eq 0 ]]; then
+          outln
+          if $TLS13_ONLY; then
+               generic_nonfatal "Client problem: We need openssl supporting TLS 1.3. We can't continue with \"server defaults\" as we cannot retrieve the certificate. "
+          else
+               generic_nonfatal "Client problem: No server certificate could be retrieved. Thus we can't continue with \"server defaults\"."
+          fi
      fi
      [[ $DEBUG -ge 1 ]] && [[ -e $HOSTCERT.nosni ]] && $OPENSSL x509 -in $HOSTCERT.nosni -text -noout 2>>$ERRFILE > $HOSTCERT.nosni.txt
 
@@ -9173,8 +10246,8 @@ run_server_defaults() {
           echo "${previous_hostcert[i]}" > $HOSTCERT
           echo "${previous_intermediates[i]}" > $TEMPDIR/intermediatecerts.pem
           echo "${previous_hostcert_issuer[i]}" > $TEMPDIR/hostcert_issuer.pem
-          certificate_info "$i" "$certs_found" "${previous_hostcert_txt[i]}" \
-               "${cipher[i]}" "${keysize[i]}" "${previous_hostcert_type[i]}" \
+          certificate_info "$i" "$certs_found" "${previous_hostcert_txt[i]}" "${previous_intermediates[i]}" \
+               "${tested_cipher[i]}" "${keysize[i]}" "${previous_hostcert_type[i]}" \
                "${ocsp_response_binary[i]}" "${ocsp_response[i]}" \
                "${ocsp_response_status[i]}" "${sni_used[i]}" "${ct[i]}" \
                "${previous_ordering_problem[i]}"
@@ -9194,15 +10267,15 @@ get_san_dns_from_cert() {
 }
 
 
-run_pfs() {
+run_fs() {
      local -i sclient_success
-     local pfs_offered=false ecdhe_offered=false ffdhe_offered=false
-     local pfs_tls13_offered=false
-     local protos_to_try proto hexc dash pfs_cipher sslvers auth mac export curve dhlen
+     local fs_offered=false ecdhe_offered=false ffdhe_offered=false
+     local fs_tls13_offered=false
+     local protos_to_try proto hexc dash fs_cipher sslvers auth mac export curve dhlen
      local -a hexcode normalized_hexcode ciph rfc_ciph kx enc ciphers_found sigalg ossl_supported
      # generated from 'kEECDH:kEDH:!aNULL:!eNULL:!DES:!3DES:!RC4' with openssl 1.0.2i and openssl 1.1.0
-     local pfs_cipher_list="DHE-DSS-AES128-GCM-SHA256:DHE-DSS-AES128-SHA256:DHE-DSS-AES128-SHA:DHE-DSS-AES256-GCM-SHA384:DHE-DSS-AES256-SHA256:DHE-DSS-AES256-SHA:DHE-DSS-CAMELLIA128-SHA256:DHE-DSS-CAMELLIA128-SHA:DHE-DSS-CAMELLIA256-SHA256:DHE-DSS-CAMELLIA256-SHA:DHE-DSS-SEED-SHA:DHE-RSA-AES128-CCM8:DHE-RSA-AES128-CCM:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-CCM8:DHE-RSA-AES256-CCM:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:DHE-RSA-CAMELLIA128-SHA256:DHE-RSA-CAMELLIA128-SHA:DHE-RSA-CAMELLIA256-SHA256:DHE-RSA-CAMELLIA256-SHA:DHE-RSA-CHACHA20-POLY1305-OLD:DHE-RSA-CHACHA20-POLY1305:DHE-RSA-SEED-SHA:ECDHE-ECDSA-AES128-CCM8:ECDHE-ECDSA-AES128-CCM:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-ECDSA-AES256-CCM8:ECDHE-ECDSA-AES256-CCM:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-ECDSA-CAMELLIA128-SHA256:ECDHE-ECDSA-CAMELLIA256-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305-OLD:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-RSA-CAMELLIA128-SHA256:ECDHE-RSA-CAMELLIA256-SHA384:ECDHE-RSA-CHACHA20-POLY1305-OLD:ECDHE-RSA-CHACHA20-POLY1305"
-     local pfs_hex_cipher_list="" ciphers_to_test tls13_ciphers_to_test
+     local fs_cipher_list="DHE-DSS-AES128-GCM-SHA256:DHE-DSS-AES128-SHA256:DHE-DSS-AES128-SHA:DHE-DSS-AES256-GCM-SHA384:DHE-DSS-AES256-SHA256:DHE-DSS-AES256-SHA:DHE-DSS-CAMELLIA128-SHA256:DHE-DSS-CAMELLIA128-SHA:DHE-DSS-CAMELLIA256-SHA256:DHE-DSS-CAMELLIA256-SHA:DHE-DSS-SEED-SHA:DHE-RSA-AES128-CCM8:DHE-RSA-AES128-CCM:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-CCM8:DHE-RSA-AES256-CCM:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-SHA256:DHE-RSA-AES256-SHA:DHE-RSA-CAMELLIA128-SHA256:DHE-RSA-CAMELLIA128-SHA:DHE-RSA-CAMELLIA256-SHA256:DHE-RSA-CAMELLIA256-SHA:DHE-RSA-CHACHA20-POLY1305-OLD:DHE-RSA-CHACHA20-POLY1305:DHE-RSA-SEED-SHA:ECDHE-ECDSA-AES128-CCM8:ECDHE-ECDSA-AES128-CCM:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-ECDSA-AES256-CCM8:ECDHE-ECDSA-AES256-CCM:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-ECDSA-CAMELLIA128-SHA256:ECDHE-ECDSA-CAMELLIA256-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305-OLD:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-RSA-CAMELLIA128-SHA256:ECDHE-RSA-CAMELLIA256-SHA384:ECDHE-RSA-CHACHA20-POLY1305-OLD:ECDHE-RSA-CHACHA20-POLY1305"
+     local fs_hex_cipher_list="" ciphers_to_test tls13_ciphers_to_test
      local ecdhe_cipher_list="" tls13_cipher_list="" ecdhe_cipher_list_hex="" ffdhe_cipher_list_hex=""
      local curves_hex=("00,01" "00,02" "00,03" "00,04" "00,05" "00,06" "00,07" "00,08" "00,09" "00,0a" "00,0b" "00,0c" "00,0d" "00,0e" "00,0f" "00,10" "00,11" "00,12" "00,13" "00,14" "00,15" "00,16" "00,17" "00,18" "00,19" "00,1a" "00,1b" "00,1c" "00,1d" "00,1e")
      local -a curves_ossl=("sect163k1" "sect163r1" "sect163r2" "sect193r1" "sect193r2" "sect233k1" "sect233r1" "sect239k1" "sect283k1" "sect283r1" "sect409k1" "sect409r1" "sect571k1" "sect571r1" "secp160k1" "secp160r1" "secp160r2" "secp192k1" "prime192v1" "secp224k1" "secp224r1" "secp256k1" "prime256v1" "secp384r1" "secp521r1" "brainpoolP256r1" "brainpoolP384r1" "brainpoolP512r1" "X25519" "X448")
@@ -9215,20 +10288,21 @@ run_pfs() {
      local -a ffdhe_groups_output=("ffdhe2048" "ffdhe3072" "ffdhe4096" "ffdhe6144" "ffdhe8192")
      local -a supported_curve
      local -i nr_supported_ciphers=0 nr_curves=0 nr_ossl_curves=0 i j low high
-     local pfs_ciphers curves_offered="" curves_to_test temp
+     local fs_ciphers curves_offered="" curves_to_test temp
+     local curves_option="" curves_list1="" curves_list2=""
      local len1 len2 curve_found
      local key_bitstring quality_str
      local -i len_dh_p quality
      local has_dh_bits="$HAS_DH_BITS"
      local using_sockets=true
-     local jsonID="PFS"
+     local jsonID="FS"
 
      "$SSL_NATIVE" && using_sockets=false
      "$FAST" && using_sockets=false
      [[ $TLS_NR_CIPHERS == 0 ]] && using_sockets=false
 
      outln
-     pr_headline " Testing robust (perfect) forward secrecy"; prln_underline ", (P)FS -- omitting Null Authentication/Encryption, 3DES, RC4 "
+     pr_headline " Testing robust forward secrecy (FS)"; prln_underline " -- omitting Null Authentication/Encryption, 3DES, RC4 "
      if ! "$using_sockets"; then
           [[ $TLS_NR_CIPHERS == 0 ]] && ! "$SSL_NATIVE" && ! "$FAST" && pr_warning " Cipher mapping not available, doing a fallback to openssl"
           if ! "$HAS_DH_BITS" && "$WIDE"; then
@@ -9240,12 +10314,12 @@ run_pfs() {
 
      if "$using_sockets" || [[ $OSSL_VER_MAJOR -lt 1 ]]; then
           for (( i=0; i < TLS_NR_CIPHERS; i++ )); do
-               pfs_cipher="${TLS_CIPHER_RFC_NAME[i]}"
+               fs_cipher="${TLS_CIPHER_RFC_NAME[i]}"
                hexc="${TLS_CIPHER_HEXCODE[i]}"
-               if ( [[ "$pfs_cipher" == "TLS_DHE_"* ]] || [[ "$pfs_cipher" == "TLS_ECDHE_"* ]] || [[ "${hexc:2:2}" == "13" ]] ) && \
-                  [[ ! "$pfs_cipher" =~ NULL ]] && [[ ! "$pfs_cipher" =~ DES ]] && [[ ! "$pfs_cipher" =~ RC4 ]] && \
-                  [[ ! "$pfs_cipher" =~ PSK ]] && ( "$using_sockets" || "${TLS_CIPHER_OSSL_SUPPORTED[i]}" ); then
-                    pfs_hex_cipher_list+=", ${hexc:2:2},${hexc:7:2}"
+               if ( [[ "$fs_cipher" == "TLS_DHE_"* ]] || [[ "$fs_cipher" == "TLS_ECDHE_"* ]] || [[ "${hexc:2:2}" == "13" ]] ) && \
+                  [[ ! "$fs_cipher" =~ NULL ]] && [[ ! "$fs_cipher" =~ DES ]] && [[ ! "$fs_cipher" =~ RC4 ]] && \
+                  [[ ! "$fs_cipher" =~ PSK ]] && ( "$using_sockets" || "${TLS_CIPHER_OSSL_SUPPORTED[i]}" ); then
+                    fs_hex_cipher_list+=", ${hexc:2:2},${hexc:7:2}"
                     ciph[nr_supported_ciphers]="${TLS_CIPHER_OSSL_NAME[i]}"
                     rfc_ciph[nr_supported_ciphers]="${TLS_CIPHER_RFC_NAME[i]}"
                     kx[nr_supported_ciphers]="${TLS_CIPHER_KX[i]}"
@@ -9274,41 +10348,76 @@ run_pfs() {
                sigalg[nr_supported_ciphers]=""
                ossl_supported[nr_supported_ciphers]=true
                nr_supported_ciphers+=1
-          done < <(actually_supported_ciphers "$pfs_cipher_list" "ALL" "-V")
+          done < <(actually_supported_osslciphers "$fs_cipher_list" "ALL" "-V")
      fi
-     export=""
 
      if [[ $(has_server_protocol "tls1_3") -eq 0 ]]; then
-          # All TLSv1.3 cipher suites offer robust PFS.
+          # All TLSv1.3 cipher suites offer robust FS.
           sclient_success=0
      elif "$using_sockets"; then
-          tls_sockets "04" "${pfs_hex_cipher_list:2}, 00,ff"
+          tls_sockets "04" "${fs_hex_cipher_list:2}, 00,ff"
           sclient_success=$?
           [[ $sclient_success -eq 2 ]] && sclient_success=0
+          # Sometimes a TLS 1.3 ClientHello will fail, but a TLS 1.2 ClientHello will succeed. See #2131.
+          if [[ $sclient_success -ne 0 ]]; then
+               tls_sockets "03" "${fs_hex_cipher_list:2}, 00,ff"
+               sclient_success=$?
+               [[ $sclient_success -eq 2 ]] && sclient_success=0
+          fi
      else
           debugme echo $nr_supported_ciphers
-          debugme echo $(actually_supported_ciphers $pfs_cipher_list "ALL")
-          if [[ "$nr_supported_ciphers" -le "$CLIENT_MIN_PFS" ]]; then
+          debugme echo $(actually_supported_osslciphers $fs_cipher_list "ALL")
+          if [[ "$nr_supported_ciphers" -le "$CLIENT_MIN_FS" ]]; then
                outln
-               prln_local_problem "You only have $nr_supported_ciphers PFS ciphers on the client side "
-               fileout "$jsonID" "WARN" "tests skipped as you only have $nr_supported_ciphers PFS ciphers on the client site. ($CLIENT_MIN_PFS are required)"
+               prln_local_problem "You only have $nr_supported_ciphers FS ciphers on the client side "
+               fileout "$jsonID" "WARN" "tests skipped as you only have $nr_supported_ciphers FS ciphers on the client site. ($CLIENT_MIN_FS are required)"
                return 1
           fi
-          $OPENSSL s_client $(s_client_options "-cipher $pfs_cipher_list -ciphersuites "ALL" $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE </dev/null
+          # By default, OpenSSL 1.1.1 and above only include a few curves in the ClientHello, so in order
+          # to test all curves, the -curves option must be added. In addition, OpenSSL limits the number of
+          # curves that can be specified to 28. So, if more than 28 curves are supported, then the curves must
+          # be tested in batches.
+          curves_list1="$(strip_trailing_space "$(strip_leading_space "$OSSL_SUPPORTED_CURVES")")"
+          curves_list1="${curves_list1//  / }"
+          if [[ "$(count_words "$OSSL_SUPPORTED_CURVES")" -gt 28 ]]; then
+               # Place the first 28 supported curves in curves_list1 and the remainder in curves_list2.
+               curves_list2="${curves_list1#* * * * * * * * * * * * * * * * * * * * * * * * * * * * }"
+               curves_list1="${curves_list1%$curves_list2}"
+               curves_list1="$(strip_trailing_space "$curves_list1")"
+               curves_list2="${curves_list2// /:}"
+          fi
+          curves_list1="${curves_list1// /:}"
+          $OPENSSL s_client $(s_client_options "-cipher $fs_cipher_list -ciphersuites ALL $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE </dev/null
           sclient_connect_successful $? $TMPFILE
           sclient_success=$?
           [[ $sclient_success -eq 0 ]] && [[ $(grep -ac "BEGIN CERTIFICATE" $TMPFILE) -eq 0 ]] && sclient_success=1
+          # Sometimes a TLS 1.3 ClientHello will fail, but a TLS 1.2 ClientHello will succeed. See #2131.
+          if [[ $sclient_success -ne 0 ]]; then
+               curves_option="-curves $curves_list1"
+               $OPENSSL s_client $(s_client_options "-cipher $fs_cipher_list $curves_option $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE </dev/null
+               sclient_connect_successful $? $TMPFILE
+               sclient_success=$?
+               [[ $sclient_success -eq 0 ]] && [[ $(grep -ac "BEGIN CERTIFICATE" $TMPFILE) -eq 0 ]] && sclient_success=1
+               if [[ $sclient_success -ne 0 ]] && [[ -n "$curves_list2" ]]; then
+                    curves_option="-curves $curves_list2"
+                    $OPENSSL s_client $(s_client_options "-cipher $fs_cipher_list $curves_option $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE </dev/null
+                    sclient_connect_successful $? $TMPFILE
+                    sclient_success=$?
+                    [[ $sclient_success -eq 0 ]] && [[ $(grep -ac "BEGIN CERTIFICATE" $TMPFILE) -eq 0 ]] && sclient_success=1
+               fi
+          fi
      fi
 
      if [[ $sclient_success -ne 0 ]]; then
           outln
-          prln_svrty_medium " No ciphers supporting Forward Secrecy offered"
-          fileout "$jsonID" "MEDIUM" "No ciphers supporting (P)FS offered"
+          prln_svrty_medium " No ciphers supporting Forward Secrecy (FS) offered"
+          fileout "$jsonID" "MEDIUM" "No ciphers supporting Forward Secrecy offered"
+          set_grade_cap "B" "Forward Secrecy (FS) is not supported"
      else
           outln
-          pfs_offered=true
-          pfs_ciphers=""
-          pr_svrty_good " PFS is offered (OK)"
+          fs_offered=true
+          fs_ciphers=""
+          pr_svrty_good " FS is offered (OK) "
           fileout "$jsonID" "OK" "offered"
           if "$WIDE"; then
                outln ", ciphers follow (client/browser support is important here) \n"
@@ -9318,17 +10427,25 @@ run_pfs() {
           fi
           if "$HAS_TLS13"; then
                protos_to_try="-no_ssl2 -no_tls1_3"
+               ! "$using_sockets" && [[ -z "$curves_option" ]] && protos_to_try+=" curves1-no_tls1_3"
+               ! "$using_sockets" && [[ -z "$curves_option" ]] && [[ -n "$curves_list2" ]] && protos_to_try+=" curves2-no_tls1_3"
           else
                protos_to_try="-no_ssl2"
+               ! "$using_sockets" && [[ -z "$curves_option" ]] && protos_to_try+=" curves1-no_ssl2"
+               ! "$using_sockets" && [[ -z "$curves_option" ]] && [[ -n "$curves_list2" ]] && protos_to_try+=" curves2-no_ssl2"
           fi
 
           for proto in $protos_to_try; do
+               # If ECDHE ciphers were already found, then no need to try
+               # again with a different "-curves" option.
+               [[ "$proto" =~ curves1 ]] && "$ecdhe_offered" && break
+               [[ "$proto" =~ curves2 ]] && "$ecdhe_offered" && break
                while true; do
                     ciphers_to_test=""
                     tls13_ciphers_to_test=""
                     for (( i=0; i < nr_supported_ciphers; i++ )); do
                          if ! "${ciphers_found[i]}" && "${ossl_supported[i]}"; then
-                              if [[ "${ciph[i]}" == TLS13* ]] || [[ "${ciph[i]}" == TLS_* ]]; then
+                              if [[ "${ciph[i]}" == TLS13* ]] || [[ "${ciph[i]}" == TLS_* ]] || [[ "${ciph[i]}" == AEAD-* ]]; then
                                    tls13_ciphers_to_test+=":${ciph[i]}"
                               else
                                    ciphers_to_test+=":${ciph[i]}"
@@ -9336,24 +10453,31 @@ run_pfs() {
                          fi
                     done
                     [[ -z "$ciphers_to_test" ]] && [[ -z "$tls13_ciphers_to_test" ]] && break
-                    $OPENSSL s_client $(s_client_options "$proto -cipher "\'${ciphers_to_test:1}\'" -ciphersuites "\'${tls13_ciphers_to_test:1}\'" $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") &>$TMPFILE </dev/null
+                    if [[ "$proto" =~ curves1 ]]; then
+                         curves_option="-curves $curves_list1"
+                    elif [[ "$proto" =~ curves2 ]]; then
+                         curves_option="-curves $curves_list2"
+                    fi
+                    $OPENSSL s_client $(s_client_options "-${proto#*-} -cipher "\'${ciphers_to_test:1}\'" -ciphersuites "\'${tls13_ciphers_to_test:1}\'" $curves_option $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") &>$TMPFILE </dev/null
                     sclient_connect_successful $? $TMPFILE || break
-                    pfs_cipher=$(get_cipher $TMPFILE)
-                    [[ -z "$pfs_cipher" ]] && break
+                    fs_cipher=$(get_cipher $TMPFILE)
+                    [[ -z "$fs_cipher" ]] && break
                     for (( i=0; i < nr_supported_ciphers; i++ )); do
-                         [[ "$pfs_cipher" == "${ciph[i]}" ]] && break
+                         [[ "$fs_cipher" == "${ciph[i]}" ]] && break
                     done
                     [[ $i -eq $nr_supported_ciphers ]] && break
                     ciphers_found[i]=true
-                    if [[ "$pfs_cipher" == TLS13* ]] || [[ "$pfs_cipher" == TLS_* ]]; then
-                         pfs_tls13_offered=true
+                    if [[ "$fs_cipher" == TLS13* ]] || [[ "$fs_cipher" == TLS_* ]] || [[ "$fs_cipher" == AEAD-* ]]; then
+                         fs_tls13_offered=true
                          "$WIDE" && kx[i]="$(read_dhtype_from_file $TMPFILE)"
+                    elif [[ "$fs_cipher" == ECDHE-* ]]; then
+                         ecdhe_offered=true
                     fi
                     if "$WIDE"; then
                          dhlen=$(read_dhbits_from_file "$TMPFILE" quiet)
                          kx[i]="${kx[i]} $dhlen"
                     fi
-                    "$WIDE" && "$SHOW_SIGALGO" && grep -q "\-\-\-\-\-BEGIN CERTIFICATE\-\-\-\-\-" $TMPFILE && \
+                    "$WIDE" && "$SHOW_SIGALGO" && grep -qe '-----BEGIN CERTIFICATE-----' $TMPFILE && \
                          sigalg[i]="$(read_sigalg_from_file "$TMPFILE")"
                done
           done
@@ -9375,14 +10499,14 @@ run_pfs() {
                          fi
                          sclient_success=$?
                          [[ $sclient_success -ne 0 ]] && [[ $sclient_success -ne 2 ]] && break
-                         pfs_cipher=$(get_cipher "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")
+                         fs_cipher=$(get_cipher "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")
                          for (( i=0; i < nr_supported_ciphers; i++ )); do
-                              [[ "$pfs_cipher" == "${rfc_ciph[i]}" ]] && break
+                              [[ "$fs_cipher" == "${rfc_ciph[i]}" ]] && break
                          done
                          [[ $i -eq $nr_supported_ciphers ]] && break
                          ciphers_found[i]=true
                          if [[ "${kx[i]}" == Kx=any ]]; then
-                              pfs_tls13_offered=true
+                              fs_tls13_offered=true
                               "$WIDE" && kx[i]="$(read_dhtype_from_file "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")"
                          fi
                          if "$WIDE"; then
@@ -9398,32 +10522,33 @@ run_pfs() {
                ! "${ciphers_found[i]}" && ! "$SHOW_EACH_C" && continue
                if "${ciphers_found[i]}"; then
                     if ( [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]] && [[ "${ciph[i]}" != "-" ]] ) || [[ "${rfc_ciph[i]}" == "-" ]]; then
-                         pfs_cipher="${ciph[i]}"
+                         fs_cipher="${ciph[i]}"
                     else
-                         pfs_cipher="${rfc_ciph[i]}"
+                         fs_cipher="${rfc_ciph[i]}"
                     fi
-                    pfs_ciphers+="$pfs_cipher "
+                    fs_ciphers+="$fs_cipher "
 
-                    if [[ "${ciph[i]}" == ECDHE-* ]] || [[ "${ciph[i]}" == TLS13* ]] || [[ "${ciph[i]}" == TLS_* ]] || ( "$using_sockets" && [[ "${rfc_ciph[i]}" == TLS_ECDHE_* ]] ); then
+                    if [[ "${ciph[i]}" == ECDHE-* ]] || [[ "${ciph[i]}" == TLS13* ]] || [[ "${ciph[i]}" == TLS_* ]] || \
+                       [[ "${ciph[i]}" == AEAD-* ]] || ( "$using_sockets" && [[ "${rfc_ciph[i]}" == TLS_ECDHE_* ]] ); then
                          ecdhe_offered=true
                          ecdhe_cipher_list_hex+=", ${hexcode[i]}"
                          if [[ "${ciph[i]}" != "-" ]]; then
-                              if  [[ "${ciph[i]}" == TLS13* ]] || [[ "${ciph[i]}" == TLS_* ]]; then
-                                   tls13_cipher_list+=":$pfs_cipher"
+                              if  [[ "${ciph[i]}" == TLS13* ]] || [[ "${ciph[i]}" == TLS_* ]] || [[ "${ciph[i]}" == AEAD-* ]]; then
+                                   tls13_cipher_list+=":$fs_cipher"
                               else
-                                   ecdhe_cipher_list+=":$pfs_cipher"
+                                   ecdhe_cipher_list+=":$fs_cipher"
                               fi
                          fi
                     fi
                     if [[ "${ciph[i]}" == "DHE-"* ]] || ( "$using_sockets" && [[ "${rfc_ciph[i]}" == "TLS_DHE_"* ]] ); then
                          ffdhe_offered=true
                          ffdhe_cipher_list_hex+=", ${hexcode[i]}"
-                    elif [[ "${ciph[i]}" == TLS13* ]] || [[ "${ciph[i]}" == TLS_* ]]; then
+                    elif [[ "${ciph[i]}" == TLS13* ]] || [[ "${ciph[i]}" == TLS_* ]] || [[ "${ciph[i]}" == AEAD-* ]]; then
                          ffdhe_cipher_list_hex+=", ${hexcode[i]}"
                     fi
                fi
                if "$WIDE"; then
-                    neat_list "$(tolower "${normalized_hexcode[i]}")" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${ciphers_found[i]}"
+                    neat_list "$(tolower "${normalized_hexcode[i]}")" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "" "${ciphers_found[i]}"
                     if "$SHOW_EACH_C"; then
                          if "${ciphers_found[i]}"; then
                               pr_cipher_quality "${rfc_ciph[i]}" "available"
@@ -9436,14 +10561,14 @@ run_pfs() {
           done
           if ! "$WIDE"; then
                if [[ "$COLOR" -le 2 ]]; then
-                    out "$(out_row_aligned_max_width "$pfs_ciphers" "                              " $TERM_WIDTH)"
+                    out "$(out_row_aligned_max_width "$fs_ciphers" "                              " $TERM_WIDTH)"
                else
-                    out_row_aligned_max_width_by_entry "$pfs_ciphers" "                              " $TERM_WIDTH pr_cipher_quality
+                    out_row_aligned_max_width_by_entry "$fs_ciphers" "                              " $TERM_WIDTH pr_cipher_quality
                fi
           fi
-          debugme echo $pfs_offered
+          debugme echo $fs_offered
           "$WIDE" || outln
-          fileout "${jsonID}_ciphers" "INFO" "$pfs_ciphers"
+          fileout "${jsonID}_ciphers" "INFO" "$fs_ciphers"
      fi
 
      # find out what elliptic curves are supported.
@@ -9451,7 +10576,7 @@ run_pfs() {
           for curve in "${curves_ossl[@]}"; do
                ossl_supported[nr_curves]=false
                supported_curve[nr_curves]=false
-               [[ "$OSSL_SUPPORTED_CURVES" =~ " $curve " ]] && ossl_supported[nr_curves]=true && nr_ossl_curves+=1
+               [[ "$OSSL_SUPPORTED_CURVES" =~ \ $curve\  ]] && ossl_supported[nr_curves]=true && nr_ossl_curves+=1
                nr_curves+=1
           done
 
@@ -9473,7 +10598,7 @@ run_pfs() {
                     fi
                fi
                if "$HAS_TLS13"; then
-                    if "$pfs_tls13_offered"; then
+                    if "$fs_tls13_offered"; then
                          protos_to_try="-no_ssl2 -no_tls1_3"
                     else
                          protos_to_try="-no_tls1_3"
@@ -9500,7 +10625,10 @@ run_pfs() {
                               curve_found="${curve_found%%,*}"
                          fi
                          for (( i=low; i < high; i++ )); do
-                              ! "${supported_curve[i]}" && [[ "${curves_ossl_output[i]}" == "$curve_found" ]] && break
+                              if ! "${supported_curve[i]}"; then
+                                   [[ "${curves_ossl_output[i]}" == "$curve_found" ]] && break
+                                   [[ "${curves_ossl[i]}" == "$curve_found" ]] && break
+                              fi
                          done
                          [[ $i -eq $high ]] && break
                          supported_curve[i]=true
@@ -9510,7 +10638,7 @@ run_pfs() {
      fi
      if "$ecdhe_offered" && "$using_sockets"; then
           protos_to_try="03"
-          "$pfs_tls13_offered" && protos_to_try="04 03"
+          "$fs_tls13_offered" && protos_to_try="04 03"
           for proto in $protos_to_try; do
                if [[ "$proto" == 03 ]]; then
                     ecdhe_cipher_list_hex="$(strip_inconsistent_ciphers "03" "$ecdhe_cipher_list_hex")"
@@ -9571,9 +10699,11 @@ run_pfs() {
      fi
      CURVES_OFFERED="$curves_offered"
      CURVES_OFFERED=$(strip_trailing_space "$CURVES_OFFERED")
+     # Keep it "on file" for debugging purposes
+     [[ "$DEBUG" -ge 1 ]] && safe_echo "$CURVES_OFFERED" >"$TEMPDIR/$NODE.$NODEIP.curves_offered.txt"
 
      # find out what groups are supported.
-     if "$using_sockets" && ( "$pfs_tls13_offered" || "$ffdhe_offered" ); then
+     if "$using_sockets" && ( "$fs_tls13_offered" || "$ffdhe_offered" ); then
           nr_curves=0
           for curve in "${ffdhe_groups_output[@]}"; do
                supported_curve[nr_curves]=false
@@ -9581,9 +10711,9 @@ run_pfs() {
                nr_curves+=1
           done
           protos_to_try=""
-          "$pfs_tls13_offered" && protos_to_try="04"
+          "$fs_tls13_offered" && protos_to_try="04"
           if "$ffdhe_offered"; then
-               if "$pfs_tls13_offered"; then
+               if "$fs_tls13_offered"; then
                     protos_to_try="04 03"
                else
                     protos_to_try="03"
@@ -9638,7 +10768,13 @@ run_pfs() {
                     # this global will get the name of the group either here or in run_logjam()
                     key_bitstring="$(awk '/-----BEGIN PUBLIC KEY/,/-----END PUBLIC KEY/ { print $0 }' $TEMPDIR/$NODEIP.parse_tls_serverhello.txt)"
                     get_common_prime "$jsonID" "$key_bitstring" ""
-                    [[ $? -eq 0 ]] && curves_offered="$DH_GROUP_OFFERED" && len_dh_p=$DH_GROUP_LEN_P
+                    case $? in
+                         0) curves_offered="$DH_GROUP_OFFERED"
+                              len_dh_p=$DH_GROUP_LEN_P ;;
+                         2) pr_bold " DH or FF group offered :     "
+                              prln_local_problem "Your $OPENSSL does not support the pkey utility."
+                              fileout "$jsonID" "WARN" "$OPENSSL does not support the pkey utility."
+                         esac
                else
                     curves_offered="$DH_GROUP_OFFERED"
                     len_dh_p=$DH_GROUP_LEN_P
@@ -9682,7 +10818,7 @@ run_pfs() {
 
 
 # good source for configuration and bugs: https://wiki.mozilla.org/Security/Server_Side_TLS
-# good start to read: http://en.wikipedia.org/wiki/Transport_Layer_Security#Attacks_against_TLS.2FSSL
+# good start to read: https://en.wikipedia.org/wiki/Transport_Layer_Security#Attacks_against_TLS.2FSSL
 
 
 npn_pre(){
@@ -9746,7 +10882,7 @@ run_npn() {
                ((ret++))
           fi
      fi
-     # btw: nmap can do that too http://nmap.org/nsedoc/scripts/tls-nextprotoneg.html
+     # btw: nmap can do that too https://nmap.org/nsedoc/scripts/tls-nextprotoneg.html
      # nmap --script=tls-nextprotoneg #NODE -p $PORT is your friend if your openssl doesn't want to test this
      tmpfile_handle ${FUNCNAME[0]}.txt
      return $ret
@@ -9812,49 +10948,63 @@ run_alpn() {
      return $ret
 }
 
-# arg1: string to send
-# arg2: possible success strings a egrep pattern, needed!
-# arg3: wait in seconds
+# arg1: send string
+# arg2: success string: an egrep pattern
+# arg3: number of loops we should read from the buffer (optional, otherwise STARTTLS_SLEEP)
 starttls_io() {
-     local waitsleep=$STARTTLS_SLEEP
+     local nr_waits=$STARTTLS_SLEEP
      local buffer=""
+     local -i i
 
      [[ -n "$3" ]] && waitsleep=$3
      [[ -z "$2" ]] && echo "FIXME $((LINENO))"
-     debugme echo -en "C: \"$1\""
-     echo -en "$1" >&5
+
+     # If there's a sending part it's IO. Postgres sends via socket and replies via
+     # strings "S". So there's no I part of IO ;-)
+     if [[ -n "$1" ]]; then
+          debugme echo -en "C: $1"
+          echo -en "$1" >&5
+     fi
+     if [[ "$2" == JUSTSEND ]]; then
+          debugme echo -e "\n  (only sent)\n"
+          dd of=/dev/null bs=512 count=1 <&5 2>/dev/null &
+          return 0
+     fi
 
      # This seems a bit dangerous but works. No blockings yet. "if=nonblock" doesn't work on BSDs
      buffer="$(dd bs=512 count=1 <&5 2>/dev/null)"
-     [[ "$DEBUG" -ge 2 ]] && echo -en "\nS: " && echo $buffer
 
-     for ((i=1; i < $waitsleep; i++ )); do
+     for ((i=1; i < nr_waits; i++ )); do
+          [[ "$DEBUG" -ge 2 ]] && echo -en "\nS: " && echo $buffer
           if [[ "$buffer" =~ $2 ]]; then
                debugme echo "     ---> reply matched \"$2\""
                # the fd sometimes still seem to contain chars which confuses the following TLS handshake, trying to empty:
-               dd of=/dev/null bs=512 count=1 <&5 2>/dev/null
+               # dd of=/dev/null bs=512 count=1 <&5 2>/dev/null
                return 0
           else
                # no match yet, more reading from fd helps.
                buffer+=$(dd bs=512 count=1 <&5 2>/dev/null)
           fi
-          sleep 0.5
      done
-     return 0
+     return 1
 }
 
 
 # Line-based send with newline characters appended (arg2 empty)
-# Stream-based send: arg2: <any>
+# arg2: debug_string -- what we had in the caller previously
 starttls_just_send(){
-     if [[ -z "$2" ]] ; then
-          debugme echo -e "C: $1 plus lf"
-          echo -ne "$1\r\n" >&5
+     local -i ret=0
+
+     debugme echo "C: $1\r\n"
+     # We need cat here, otherwise the appended ELHO after STARTTLS will be in the next packet
+     printf "%b" "$1\r\n" | cat >&5
+     ret=$?
+     if [[ $ret -eq 0 ]]; then
+          debugme echo "  > succeeded: $2"
      else
-          debugme echo -e "C: $1"
-          echo -ne "$1" >&5
+          debugme echo "  > failed: $2 ($ret)"
      fi
-     return $?
+     return $ret
 }
 
 # arg1: (optional): wait time
@@ -9872,173 +11022,290 @@ starttls_just_read(){
 }
 
 starttls_full_read(){
+     local cont_pattern="$1"
+     local end_pattern="$2"
+     local starttls_regex="$3"     # optional: pattern we search for in the server's response
+     local debug_str="$4"          # optional
      local starttls_read_data=()
      local one_line=""
      local ret=0
-     local cont_pattern="$1"
-     local end_pattern="$2"
      local ret_found=0
+     local debugpad="  > found: "
+     local oldIFS="$IFS"
 
      debugme echo "=== reading banner ... ==="
-     if [[ $# -ge 3 ]]; then
-          debugme echo "=== we'll have to search for \"$3\" pattern ==="
+     if [[ -n "$starttls_regex" ]]; then
+          debugme echo "=== we'll have to search for \"$starttls_regex\" pattern ==="
+          # pre-set an error if we won't find the ~regex
           ret_found=3
      fi
 
-     local oldIFS="$IFS"
      IFS=''
+     # Now read handshake line by line and act on the args supplied.
+     # Exit the subshell if timeout has been hit (-t $STARTTLS_SLEEP)
      while read -r -t $STARTTLS_SLEEP one_line; ret=$?; (exit $ret); do
-          debugme echo "S: ${one_line}"
-          if [[ $# -ge 3 ]]; then
-               if [[ ${one_line} =~ $3 ]]; then
+          debugme tmln_out "S: ${one_line}"
+          if [[ $DEBUG -ge 5 ]]; then
+               echo "end_pattern/cont_pattern: ${end_pattern} / ${cont_pattern}"
+          fi
+          if [[ -n "$starttls_regex" ]]; then
+               if [[ ${one_line} =~ $starttls_regex ]]; then
+                    debugme tmln_out "${debugpad} ${one_line} "
+                    # We don't exit here as the buffer is not empty. So we continue reading but save the status:
                     ret_found=0
-                    debugme echo "^^^^^^^ that's what we were looking for ==="
                fi
           fi
           starttls_read_data+=("${one_line}")
-          if [[ $DEBUG -ge 4 ]]; then
-               echo "one_line: ${one_line}"
-               echo "end_pattern: ${end_pattern}"
-               echo "cont_pattern: ${cont_pattern}"
-          fi
           if [[ ${one_line} =~ ${end_pattern} ]]; then
-               debugme echo "=== full read finished ==="
+               debugme tmln_out "${debugpad} ${one_line} "
                IFS="${oldIFS}"
-               return ${ret_found}
+               break
           fi
           if [[ ! ${one_line} =~ ${cont_pattern} ]]; then
                debugme echo "=== full read syntax error, expected regex pattern ${cont_pattern} (cont) or ${end_pattern} (end) ==="
                IFS="${oldIFS}"
-               return 2
+               ret_found=2
+               break
           fi
      done <&5
-     if [[ $DEBUG -ge 2 ]]; then
+     if [[ $ret_found -eq 0 ]]; then
+          # Print the debug statement we previously had in the caller function
+          [[ -n "$debug_str" ]] && debugme echo "  >> $debug_str"
+     else
           if [[ $ret -ge 128 ]]; then
-               echo "=== timeout reading ==="
-          else
-               echo "=== full read error (no timeout) ==="
+               debugme echo "=== timeout reading ==="
+               ret_found=$ret
           fi
      fi
      IFS="${oldIFS}"
-     return $ret
+     return $ret_found
 }
 
 starttls_ftp_dialog() {
+     local -i ret=0
+     local reSTARTTLS='^ AUTH'
+
      debugme echo "=== starting ftp STARTTLS dialog ==="
-     local reAUTHTLS='^ AUTH TLS'
-     starttls_full_read '^220-' '^220 '                    && debugme echo "received server greeting" &&
-     starttls_just_send 'FEAT'                             && debugme echo "sent FEAT" &&
-     starttls_full_read '^(211-| )' '^211 ' "${reAUTHTLS}" && debugme echo "received server features and checked STARTTLS availability" &&
-     starttls_just_send 'AUTH TLS'                         && debugme echo "initiated STARTTLS" &&
-     starttls_full_read '^234-' '^234 '                    && debugme echo "received ack for STARTTLS"
-     local ret=$?
+     starttls_full_read '^220-' '^220 '     ''                   "received server greeting" &&
+     starttls_just_send 'FEAT'                                   "sent FEAT" &&
+     starttls_full_read '^(211-| )' '^211 ' "${reSTARTTLS}"      "received server features and checked STARTTLS availability" &&
+     starttls_just_send 'AUTH TLS'                               "initiated STARTTLS" &&
+     starttls_full_read '^234-' '^234 '     ''                   "received ack for STARTTLS"
+     ret=$?
      debugme echo "=== finished ftp STARTTLS dialog with ${ret} ==="
      return $ret
 }
 
 # argv1: empty: SMTP, "lmtp" : LMTP
+# argv2: payload for STARTTLS injection test
 #
 starttls_smtp_dialog() {
-     local greet_str="EHLO"
+     local greet_str="EHLO testssl.sh"
      local proto="smtp"
+     local reSTARTTLS='^250[ -]STARTTLS'
+     local starttls="STARTTLS"
+     local -i ret=0
 
+     "$SNEAKY" && greet_str="EHLO google.com"
+     [[ -n "$2" ]] && starttls="$starttls\r\n$2"            # this adds a payload if supplied
      if [[ "$1" == lmtp ]]; then
           proto="lmtp"
-          greet_str="LHLO"
+          greet_str="LHLO testssl.sh"
      fi
      debugme echo "=== starting $proto STARTTLS dialog ==="
 
-     local re250STARTTLS='^250[ -]STARTTLS'
-     starttls_full_read '^220-' '^220 '                    && debugme echo "received server greeting" &&
-     starttls_just_send "$greet_str testssl.sh"            && debugme echo "sent $greet_str" &&
-     starttls_full_read '^250-' '^250 ' "${re250STARTTLS}" && debugme echo "received server capabilities and checked STARTTLS availability" &&
-     starttls_just_send 'STARTTLS'                         && debugme echo "initiated STARTTLS" &&
-     starttls_full_read '^220-' '^220 '                    && debugme echo "received ack for STARTTLS"
-     local ret=$?
+     starttls_full_read '^220-' '^220 '  ''                 "received server greeting" &&
+     starttls_just_send "$greet_str"                        "sent $greet_str" &&
+     starttls_full_read '^250-' '^250 '  "${reSTARTTLS}"    "received server capabilities and checked STARTTLS availability" &&
+     starttls_just_send "$starttls"                         "initiated STARTTLS" &&
+     starttls_full_read '^220-' '^220 '  ''                 "received ack for STARTTLS"
+     ret=$?
      debugme echo "=== finished $proto STARTTLS dialog with ${ret} ==="
      return $ret
 }
 
+# argv1: payload for STARTTLS injection test
+#
 starttls_pop3_dialog() {
+     local -i ret=0
+     local starttls="STLS"
+
+     [[ -n "$1" ]] && starttls="$starttls\r\n$1"            # this adds a payload if supplied
      debugme echo "=== starting pop3 STARTTLS dialog ==="
-     starttls_full_read '^\+OK' '^\+OK'                    && debugme echo "received server greeting" &&
-     starttls_just_send 'STLS'                             && debugme echo "initiated STARTTLS" &&
-     starttls_full_read '^\+OK' '^\+OK'                    && debugme echo "received ack for STARTTLS"
-     local ret=$?
+     starttls_full_read '^\+OK' '^\+OK'   ''      "received server greeting" &&
+     starttls_just_send "$starttls"               "initiated STARTTLS" &&
+     starttls_full_read '^\+OK' '^\+OK'   ''      "received ack for STARTTLS"
+     ret=$?
      debugme echo "=== finished pop3 STARTTLS dialog with ${ret} ==="
      return $ret
 }
 
+# argv1: payload for STARTTLS injection test
+#
 starttls_imap_dialog() {
-     debugme echo "=== starting imap STARTTLS dialog ==="
+     local -i ret=0
      local reSTARTTLS='^\* CAPABILITY(( .*)? IMAP4rev1( .*)? STARTTLS(.*)?|( .*)? STARTTLS( .*)? IMAP4rev1(.*)?)$'
-     starttls_full_read '^\* ' '^\* OK '                   && debugme echo "received server greeting" &&
-     starttls_just_send 'a001 CAPABILITY'                  && debugme echo "sent CAPABILITY" &&
-     starttls_full_read '^\* ' '^a001 OK ' "${reSTARTTLS}" && debugme echo "received server capabilities and checked STARTTLS availability" &&
-     starttls_just_send 'a002 STARTTLS'                    && debugme echo "initiated STARTTLS" &&
-     starttls_full_read '^\* ' '^a002 OK '                 && debugme echo "received ack for STARTTLS"
-     local ret=$?
+     local starttls="a002 STARTTLS"
+
+     [[ -n "$1" ]] && starttls="$starttls\r\n$1"            # this adds a payload if supplied
+     debugme echo "=== starting imap STARTTLS dialog ==="
+     starttls_full_read '^\* ' '^\* OK '   ''               "received server greeting" &&
+     starttls_just_send 'a001 CAPABILITY'                   "sent CAPABILITY" &&
+     starttls_full_read '^\* ' '^a001 OK ' "${reSTARTTLS}"  "received server capabilities and checked STARTTLS availability" &&
+     starttls_just_send "$starttls"                         "initiated STARTTLS" &&
+     starttls_full_read '^\* ' '^a002 OK ' ''               "received ack for STARTTLS"
+     ret=$?
      debugme echo "=== finished imap STARTTLS dialog with ${ret} ==="
      return $ret
 }
 
+# argv1: payload for STARTTLS injection test
+#
+starttls_sieve_dialog() {
+     local -i ret=0
+     local starttls="STARTTLS"
+
+     [[ -n "$1" ]] && starttls="$starttls\r\n$1"            # this adds a payload if supplied
+     debugme echo "=== starting sieve STARTTLS dialog ==="
+     starttls_full_read '^"' '^OK '   '"STARTTLS"'          "received server capabilities and checked STARTTLS availability" &&
+     starttls_just_send "$starttls"                         "initiated STARTTLS" &&
+     starttls_full_read '^OK ' '^OK ' ''                    "received ack for STARTTLS"
+     ret=$?
+     debugme echo "=== finished sieve STARTTLS dialog with ${ret} ==="
+     return $ret
+}
+
 starttls_xmpp_dialog() {
-     debugme echo "=== starting imap XMPP dialog ==="
+     local -i ret=0
+
+     debugme echo "=== starting xmpp STARTTLS dialog ==="
      [[ -z $XMPP_HOST ]] && XMPP_HOST="$NODE"
 
-     starttls_io "<stream:stream xmlns:stream='http://etherx.jabber.org/streams' xmlns='jabber:client' to='"$XMPP_HOST"' version='1.0'>"  'starttls(.*)features'  1 &&
+     namespace="jabber:client"
+     [[ "$STARTTLS_PROTOCOL" == xmpp-server ]] && namespace="jabber:server"
+
+     starttls_io "<stream:stream xmlns:stream='http://etherx.jabber.org/streams' xmlns='"$namespace"' to='"$XMPP_HOST"' version='1.0'>"  'starttls(.*)features' 1 &&
      starttls_io "<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>"  '<proceed'  1
-     local ret=$?
-     debugme echo "=== finished XMPP STARTTLS dialog with ${ret} ==="
+     # starttls_io "<stream:stream xmlns:stream='http://etherx.jabber.org/streams' xmlns='"$namespace"' to='"$XMPP_HOST"' version='1.0'>"  'JUSTSEND' 2
+     ret=$?
+     debugme echo "=== finished xmpp STARTTLS dialog with ${ret} ==="
      return $ret
 }
 
 starttls_nntp_dialog() {
+     local -i ret=0
+
      debugme echo "=== starting nntp STARTTLS dialog ==="
-     starttls_full_read '$^' '^20[01] '                    && debugme echo "received server greeting" &&
-     starttls_just_send 'STARTTLS'                         && debugme echo "initiated STARTTLS" &&
-     starttls_full_read '$^' '^382 '                       && debugme echo "received ack for STARTTLS"
-     local ret=$?
+     starttls_full_read '$^' '^20[01] '  ''  "received server greeting" &&
+     starttls_just_send 'STARTTLS'           "initiated STARTTLS" &&
+     starttls_full_read '$^' '^382 '     ''  "received ack for STARTTLS"
+     ret=$?
      debugme echo "=== finished nntp STARTTLS dialog with ${ret} ==="
      return $ret
 }
 
 starttls_postgres_dialog() {
+     local -i ret=0
+     local debugpad="  > "
+     local starttls_init=", x00, x00 ,x00 ,x08 ,x04 ,xD2 ,x16 ,x2F"
+
      debugme echo "=== starting postgres STARTTLS dialog ==="
-     local init_tls="\x00\x00\x00\x08\x04\xD2\x16\x2F"
-     starttls_just_send "${init_tls}"                      && debugme echo "initiated STARTTLS" &&
-     starttls_full_read '' '' 'S'                          && debugme echo "received ack for STARTTLS"
-     local ret=$?
+     socksend "${starttls_init}" 0                          && debugme echo "${debugpad}initiated STARTTLS" &&
+     starttls_io "" S 1                                     && debugme echo "${debugpad}received ack (=\"S\") for STARTTLS"
+     ret=$?
      debugme echo "=== finished postgres STARTTLS dialog with ${ret} ==="
      return $ret
 }
 
+
+# RFC 2830
+starttls_ldap_dialog() {
+     local debugpad="  > "
+     local -i ret=0
+     local result=""
+     local starttls_init=",
+     x30, x1d, x02, x01,                                                             # LDAP extendedReq
+     x01,                                                                            # messageID: 1
+     x77, x18, x80, x16, x31, x2e, x33, x2e, x36, x2e,                               # ProtocolOP: extendedReq
+     x31, x2e, x34, x2e, x31, x2e, x31, x34, x36, x36, x2e, x32, x30, x30, x33, x37" # OID for STATRTTLS = "1.3.6.1.4.1.1466.20037"
+
+     debugme echo "=== starting LDAP STARTTLS dialog ==="
+     socksend "${starttls_init}"   0    && debugme echo "${debugpad}initiated STARTTLS" &&
+     result=$(sockread_fast 256)
+     [[ $DEBUG -ge 6 ]] && safe_echo "$debugpad $result\n"
+
+     # response is typically 30 0c 02 01 01 78 07 0a 01 00 04 00 04 00
+     #                                                  ^^ == success!  [9] is checked below
+     if [[ ${result:18:2} == 00 ]]; then
+          ret=0
+     elif [[ ${result:18:2} == 01 ]]; then
+          ret=1
+     else
+          ret=127
+     fi
+     debugme echo "=== finished LDAP STARTTLS dialog with ${ret} ==="
+     return $ret
+}
+
 starttls_mysql_dialog() {
+     local debugpad="  > "
+     local -i ret=0
+     local starttls_init="
+     , x20, x00, x00, x01,                   # payload_length, sequence_id
+     x85, xae, xff, x00,                     # capability flags, CLIENT_SSL always set
+     x00, x00, x00, x01,                     # max-packet size
+     x21,                                    # character set
+     x00, x00, x00, x00, x00, x00, x00, x00, # string[23] reserved (all [0])
+     x00, x00, x00, x00, x00, x00, x00, x00,
+     x00, x00, x00, x00, x00, x00, x00"
+
      debugme echo "=== starting mysql STARTTLS dialog ==="
-     local login_request="
-     , 20, 00, 00, 01,               # payload_length, sequence_id
-     85, ae, ff, 00,                 # capability flags, CLIENT_SSL always set
-     00, 00, 00, 01,                 # max-packet size
-     21,                             # character set
-     00, 00, 00, 00, 00, 00, 00, 00, # string[23] reserved (all [0])
-     00, 00, 00, 00, 00, 00, 00, 00,
-     00, 00, 00, 00, 00, 00, 00"
-     code2network "${login_request}"
-     # 1 is the timeout value which only MySQL needs
-     starttls_just_read 1                    && debugme echo -e "\nreceived server greeting" &&
-     starttls_just_send  "$NW_STR" "no-lf"   && debugme echo "initiated STARTTLS"
+     socksend "${starttls_init}"   0    && debugme echo "${debugpad}initiated STARTTLS" &&
+     starttls_just_read            1    "read succeeded"
+     # 1 is the timeout value which only MySQL needs. Note, there seems no response whether STARTTLS
+     # succeeded. We could try harder, see https://github.com/openssl/openssl/blob/master/apps/s_client.c
+     # but atm this seems sufficient as later we will fail if there's no STARTTLS.
+     # BUT: there seem to be cases when the handshake fails (8S01Bad handshake --> 30 38 53 30 31 42 61 64 20 68 61 6e 64 73 68 61 6b 65).
+     #      also there's a banner in the reply "<version><somebytes>mysql_native_password"
      # TODO: We could detect if the server supports STARTTLS via the "Server Capabilities"
      # bit field, but we'd need to parse the binary stream, with greater precision than regex.
-     local ret=$?
+     ret=$?
      debugme echo "=== finished mysql STARTTLS dialog with ${ret} ==="
      return $ret
 }
 
-# arg1: fd for socket -- which we don't use as it is a hassle and it is not clear whether it works under every bash version
+starttls_telnet_dialog() {
+     local debugpad="  > "
+     local tnres=""
+     local -i ret=0
+     local msg1="
+     , xff, xfb, x2e"
+     local msg2="
+     , xff, xfa, x2e, x01, xff, xf0
+     "
+
+     debugme echo "=== starting telnet STARTTLS dialog ==="
+     socksend "${msg1}"            0    && debugme echo "${debugpad}initiated STARTTLS" &&
+     socksend "${msg2}"            1    &&
+     tnres=$(sockread_fast 20)          && debugme echo "read succeeded"
+     [[ $DEBUG -ge 6 ]] && safe_echo "$debugpad $tnres\n"
+     # check for START_TLS and FOLLOWS
+     if [[ ${tnres:10:2} == 2E ]] && [[ ${tnres:12:2} == 01 ]]; then
+          ret=0
+     else
+          ret=1
+     fi
+     debugme echo "=== finished telnet STARTTLS dialog with ${ret} ==="
+     return $ret
+}
+
+# arg1: fd for socket -- which we don't use yes as it is a hassle (not clear whether it works under every bash version)
+# arg2: optional: for STARTTLS additional command to be injected
 # returns 6 if opening the socket caused a problem, 1 if STARTTLS handshake failed, 0: all ok
 #
 fd_socket() {
-     local jabber=""
+     local fd="$1"
+     local payload="$2"
      local proyxline=""
      local nodeip="$(tr -d '[]' <<< $NODEIP)"          # sockets do not need the square brackets we have of IPv6 addresses
                                                        # we just need do it here, that's all!
@@ -10062,14 +11329,14 @@ fd_socket() {
                read -t $PROXY_WAIT -r proyxline <&5
                if [[ $? -ge 128 ]]; then
                     pr_warning "Proxy timed out. Unable to CONNECT via proxy. "
-                    close_socket
+                    close_socket 5
                     return 6
                elif [[ "${proyxline%/*}" == HTTP ]]; then
                     proyxline=${proyxline#* }
                     if [[ "${proyxline%% *}" != 200 ]]; then
                          pr_warning "Unable to CONNECT via proxy. "
                          [[ "$PORT" != 443 ]] && prln_warning "Check whether your proxy supports port $PORT and the underlying protocol."
-                         close_socket
+                         close_socket 5
                          return 6
                     fi
                fi
@@ -10077,12 +11344,25 @@ fd_socket() {
                     break
                fi
           done
-     elif ! exec 5<>/dev/tcp/$nodeip/$PORT; then  #  2>/dev/null would remove an error message, but disables debugging
+     # For the following execs: 2>/dev/null would remove a potential error message, but disables debugging.
+     # First we check whether a socket connect timeout was specified. We exec the connect in a subshell,
+     # then we'll see whether we can connect. If not we take the emergency exit. If we're still alive we'll
+     # proceed with the "usual case", see below.
+     elif [[ -n "$CONNECT_TIMEOUT" ]]; then
+          if ! $TIMEOUT_CMD $CONNECT_TIMEOUT bash -c "exec 5<>/dev/tcp/$nodeip/$PORT"; then
+               ((NR_SOCKET_FAIL++))
+               connectivity_problem $NR_SOCKET_FAIL $MAX_SOCKET_FAIL "TCP connect problem" "repeated TCP connect problems (connect timeout), giving up"
+               outln
+               pr_warning "Unable to open a socket to $NODEIP:$PORT. "
+               return 6
+          fi
+     fi
+     # Now comes the usual case
+     if ! exec 5<>/dev/tcp/$nodeip/$PORT && [[ -z "$PROXY" ]]; then
           ((NR_SOCKET_FAIL++))
           connectivity_problem $NR_SOCKET_FAIL $MAX_SOCKET_FAIL "TCP connect problem" "repeated TCP connect problems, giving up"
           outln
           pr_warning "Unable to open a socket to $NODEIP:$PORT. "
-          # It can last ~2 minutes but for for those rare occasions we don't do a timeout handler here, KISS
           return 6
      fi
 
@@ -10092,54 +11372,90 @@ fd_socket() {
                     starttls_ftp_dialog
                     ;;
                smtp|smtps) # SMTP, see https://tools.ietf.org/html/rfc{2033,3207,5321}
-                    starttls_smtp_dialog
+                    starttls_smtp_dialog "" "$payload"
                     ;;
                lmtp|lmtps) # LMTP, see https://tools.ietf.org/html/rfc{2033,3207,5321}
                     starttls_smtp_dialog lmtp
                     ;;
                pop3|pop3s) # POP, see https://tools.ietf.org/html/rfc2595
-                    starttls_pop3_dialog
+                    starttls_pop3_dialog "$payload"
                     ;;
                nntp|nntps) # NNTP, see https://tools.ietf.org/html/rfc4642
                     starttls_nntp_dialog
                     ;;
                imap|imaps) # IMAP, https://tools.ietf.org/html/rfc2595, https://tools.ietf.org/html/rfc3501
-                    starttls_imap_dialog
+                    starttls_imap_dialog "$payload"
+                    ;;
+               sieve) # MANAGESIEVE, https://tools.ietf.org/html/rfc5804
+                    starttls_sieve_dialog "$payload"
                     ;;
                irc|ircs) # IRC, https://ircv3.net/specs/extensions/tls-3.1.html, https://ircv3.net/specs/core/capability-negotiation.html
                     fatal "FIXME: IRC+STARTTLS not yet supported" $ERR_NOSUPPORT
                     ;;
-               ldap|ldaps) # LDAP, https://tools.ietf.org/html/rfc2830, https://tools.ietf.org/html/rfc4511
-                    fatal "FIXME: LDAP+STARTTLS over sockets not supported yet (try \"--ssl-native\")" $ERR_NOSUPPORT
+               ldap|ldaps) # LDAP, https://tools.ietf.org/html/rfc2830#section-2.1, https://tools.ietf.org/html/rfc4511
+                    # https://ldap.com/ldapv3-wire-protocol-reference-extended/
+                    #fatal "FIXME: LDAP+STARTTLS over sockets not supported yet (try \"--ssl-native\")" $ERR_NOSUPPORT
+                    starttls_ldap_dialog
                     ;;
                acap|acaps) # ACAP = Application Configuration Access Protocol, see https://tools.ietf.org/html/rfc2595
                     fatal "ACAP Easteregg: not implemented -- probably never will" $ERR_NOSUPPORT
                     ;;
-               xmpp|xmpps) # XMPP, see https://tools.ietf.org/html/rfc6120
+               xmpp|xmpps|xmpp-server) # XMPP, see https://tools.ietf.org/html/rfc6120
                     starttls_xmpp_dialog
-                   # IM observatory: https://xmpp.net , XMPP server directory: https://xmpp.net/directory.php
+                    # IM observatory: https://xmpp.net , XMPP server directory: https://xmpp.net/directory.php
                     ;;
-               postgres) # Postgres SQL, see http://www.postgresql.org/docs/devel/static/protocol-message-formats.html
+               postgres) # Postgres SQL, see https://www.postgresql.org/docs/devel/protocol-message-formats.html
                     starttls_postgres_dialog
                     ;;
                mysql) # MySQL, see https://dev.mysql.com/doc/internals/en/x-protocol-lifecycle-lifecycle.html#x-protocol-lifecycle-tls-extension
                     starttls_mysql_dialog
                     ;;
+               telnet) # captured from a tn3270 negotiation against z/VM 7.2. Also, see OpenSSL apps/s_client.c for the handling of PROTO_TELNET
+                    starttls_telnet_dialog
+                    ;;
                *) # we need to throw an error here -- otherwise testssl.sh treats the STARTTLS protocol as plain SSL/TLS which leads to FP
-                    fatal "FIXME: STARTTLS protocol $STARTTLS_PROTOCOL is not yet supported" $ERR_NOSUPPORT
+                    fatal "FIXME: STARTTLS protocol $STARTTLS_PROTOCOL is not supported yet" $ERR_NOSUPPORT
+          esac
+          ret=$?
+          case $ret in
+               0)   return 0 ;;
+               3)   fatal "No STARTTLS found in handshake" $ERR_CONNECT ;;
+               *)   if [[ $ret -eq 2 ]] && [[ -n "$payload" ]]; then
+                         # We don't want this handling for STARTTLS injection
+                         return 0
+                    fi
+                    ((NR_STARTTLS_FAIL++))
+                    # This are mostly timeouts here (code >=128). We give the client a chance to try again later. For cases
+                    # where we have no STARTTLS in the server banner however - ret code=3 - we don't need to try again
+                    connectivity_problem $NR_STARTTLS_FAIL $MAX_STARTTLS_FAIL "STARTTLS handshake failed (code: $ret)" "repeated STARTTLS problems, giving up ($ret)"
+                    return 6 ;;
           esac
      fi
+     # Plain socket ok, yes or no?
      [[ $? -eq 0 ]] && return 0
-     prln_warning " STARTTLS handshake failed"
      return 1
 }
 
+# arg1: socket fd but atm we use 5 anyway, see comment for fd_socket()
+#
 close_socket(){
+     local fd="$1"
+
      exec 5<&-
      exec 5>&-
      return 0
 }
 
+send_close_notify() {
+     local detected_tlsversion="$1"
+
+     debugme echo "sending close_notify..."
+     if [[ $detected_tlsversion == 0300 ]]; then
+          socksend ",x15, x03, x00, x00, x02, x02, x00" 0
+     else
+          socksend ",x15, x03, x01, x00, x02, x02, x00" 0
+     fi
+}
 
 # Format string properly for socket
 # ARG1: any commented sequence of two bytes hex, separated by commas. It can contain comments, new lines, tabs and white spaces
@@ -10148,7 +11464,7 @@ code2network() {
      NW_STR=$(sed -e 's/,/\\\x/g' <<< "$1" | sed -e 's/# .*$//g' -e 's/ //g' -e '/^$/d' | tr -d '\n' | tr -d '\t')
 }
 
-# sockets inspired by http://blog.chris007.de/?p=238
+# sockets inspired by https://blog.chris007.de/using-bash-for-network-socket-operation/
 # ARG1: hexbytes separated by commas, with a leading comma
 # ARG2: seconds to sleep
 socksend_clienthello() {
@@ -10167,7 +11483,7 @@ socksend_clienthello() {
 }
 
 
-# ARG1: hexbytes -- preceeded by x -- separated by commas, with a leading comma
+# ARG1: hexbytes -- preceded by x -- separated by commas, with a leading comma
 # ARG2: seconds to sleep
 socksend() {
      local data line
@@ -10188,9 +11504,11 @@ socksend() {
 }
 
 
-# for SSLv2 to TLS 1.2:
+# Reads from socket. Uses SOCK_REPLY_FILE global to save socket reply
+# Not blocking, polling
 # ARG1: blocksize for reading
-sockread_serverhello() {
+#
+sockread() {
      [[ -z "$2" ]] && maxsleep=$MAX_WAITSOCK || maxsleep=$2
      SOCK_REPLY_FILE=$(mktemp $TEMPDIR/ddreply.XXXXXX) || return 7
      dd bs=$1 of=$SOCK_REPLY_FILE count=1 <&5 2>/dev/null &
@@ -10198,8 +11516,10 @@ sockread_serverhello() {
      return $?
 }
 
-#trying a faster version
+# Reads from socket. Utilises a pipe. Output is ASCII.
+# Faster as previous, blocks however when socket stream is empty
 # ARG1: blocksize for reading
+#
 sockread_fast() {
      dd bs=$1 count=1 <&5 2>/dev/null | hexdump -v -e '16/1 "%02X"'
 }
@@ -10219,8 +11539,18 @@ get_pub_key_size() {
      "$HAS_PKEY" || return 1
 
      # OpenSSL displays the number of bits for RSA and ECC
-     pubkeybits=$($OPENSSL x509 -noout -pubkey -in $HOSTCERT 2>>$ERRFILE | $OPENSSL pkey -pubin -text 2>>$ERRFILE | grep -aw "Public-Key:" | sed -e 's/.*(//' -e 's/)//')
+     pubkeybits=$($OPENSSL x509 -noout -pubkey -in $HOSTCERT 2>>$ERRFILE | $OPENSSL pkey -pubin -text_pub 2>>$ERRFILE)
+     if [[ "$pubkeybits" =~ E[Dd]25519 ]]; then
+          echo "Server public key is 253 bit" >> $TMPFILE
+          return 0
+     elif [[ "$pubkeybits" =~ E[Dd]448 ]]; then
+          echo "Server public key is 456 bit" >> $TMPFILE
+          return 0
+     fi
+     pubkeybits=$(awk -F'(' '/Public-Key/ { print $2 }' <<< "$pubkeybits")
      if [[ -n $pubkeybits ]]; then
+          # remainder e.g. "256 bit)"
+          pubkeybits="${pubkeybits//\)/}"
           echo "Server public key is $pubkeybits" >> $TMPFILE
      else
           # This extracts the public key for DSA, DH, and GOST
@@ -10230,83 +11560,83 @@ get_pub_key_size() {
           i=2
           len1="0x${pubkey:i:2}"
           if [[ $len1 -lt 0x80 ]]; then
-               i=$i+2
+               i+=2
           else
-               len1=$len1-0x80
-               i=$i+2*$len1+2
+               len1=$((len1-0x80))
+               i+=$((2*len1+2))
           fi
 
           # Skip over algorithm field
-          i=$i+2
+          i+=2
           len1="0x${pubkey:i:2}"
-          i=$i+2
+          i+=2
           if [[ $len1 -lt 0x80 ]]; then
-               i=$i+2*$len1
+               i+=$((2*len1))
           else
                case $len1 in
                     129) len="0x${pubkey:i:2}" ;;
                     130) len="0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*$len+"0x${pubkey:i:2}"
-                        ;;
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         ;;
                     131) len="0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*$len+"0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*$len+"0x${pubkey:i:2}"
-                        ;;
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         ;;
                     132) len="0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*$len+"0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*$len+"0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*$len+"0x${pubkey:i:2}"
-                        ;;
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         ;;
                esac
-               i=$i+2+2*$len
+               i+=$((2+2*len))
           fi
 
           # Next is the public key BIT STRING. Skip over tag, length, and number of unused bits.
-          i=$i+2
+          i+=2
           len1="0x${pubkey:i:2}"
           if [[ $len1 -lt 0x80 ]]; then
-               i=$i+4
+               i+=4
           else
-               len1=$len1-0x80
-               i=$i+2*$len1+4
+               len1=$((len1-0x80))
+               i+=$((2*len1+4))
           fi
 
           # Now get the length of the public key
-          i=$i+2
+          i+=2
           len1="0x${pubkey:i:2}"
-          i=$i+2
+          i+=2
           if [[ $len1 -lt 0x80 ]]; then
                len=$len1
           else
                case $len1 in
                     129) len="0x${pubkey:i:2}" ;;
                     130) len="0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*$len+"0x${pubkey:i:2}"
-                        ;;
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         ;;
                     131) len="0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*$len+"0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*$len+"0x${pubkey:i:2}"
-                        ;;
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         ;;
                     132) len="0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*"0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*"0x${pubkey:i:2}"
-                        i=$i+2
-                        len=256*"0x${pubkey:i:2}"
-                        ;;
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         i+=2
+                         len=256*$len+"0x${pubkey:i:2}"
+                         ;;
                esac
           fi
-          len=8*$len # convert from bytes to bits
+          len=$((8*len)) # convert from bytes to bits
           pubkeybits="$(printf "%d" $len)"
           echo "Server public key is $pubkeybits bit" >> $TMPFILE
      fi
@@ -10331,7 +11661,7 @@ get_dh_ephemeralkey() {
      fi
 
      # Subtract any leading 0 bytes
-     for (( i=4; i < offset; i=i+2 )); do
+     for (( i=4; i < offset; i+=2 )); do
           [[ "${tls_serverkeyexchange_ascii:i:2}" != "00" ]] && break
           dh_p_len=$dh_p_len-2
      done
@@ -10349,7 +11679,7 @@ get_dh_ephemeralkey() {
           return 1
      fi
      # Subtract any leading 0 bytes
-     for (( 1; i < offset; i=i+2 )); do
+     for (( 1; i < offset; i+=2 )); do
           [[ "${tls_serverkeyexchange_ascii:i:2}" != "00" ]] && break
           dh_g_len=$dh_g_len-2
      done
@@ -10367,7 +11697,7 @@ get_dh_ephemeralkey() {
           return 1
      fi
      # Subtract any leading 0 bytes
-     for (( 1; i < offset; i=i+2 )); do
+     for (( 1; i < offset; i+=2 )); do
           [[ "${tls_serverkeyexchange_ascii:i:2}" != "00" ]] && break
           dh_y_len=$dh_y_len-2
      done
@@ -10459,7 +11789,7 @@ get_dh_ephemeralkey() {
           len1="82$(printf "%04x" $((i/2)))"
      fi
      key_bitstring="30${len1}${dh_param}${dh_y}"
-     key_bitstring="$(asciihex_to_binary_file "$key_bitstring" "/dev/stdout" | $OPENSSL pkey -pubin -inform DER 2> $ERRFILE)"
+     key_bitstring="$(hex2binary "$key_bitstring" | $OPENSSL pkey -pubin -inform DER 2> $ERRFILE)"
      [[ -z "$key_bitstring" ]] && return 1
      tm_out "$key_bitstring"
      return 0
@@ -10550,7 +11880,7 @@ parse_sslv2_serverhello() {
                echo "SSLv2 cipher spec length:  0x$v2_hello_cipherspec_length"
           fi
 
-          if "$parse_complete" && [[ 2*$(hex2dec "$v2_hello_length") -ne ${#v2_hello_ascii}-4 ]]; then
+          if "$parse_complete" && [[ $((2*$(hex2dec "$v2_hello_length"))) -ne $((${#v2_hello_ascii}-4)) ]]; then
                ret=7
           fi
      fi
@@ -10564,7 +11894,7 @@ parse_sslv2_serverhello() {
           certificate_len=2*$(hex2dec "$v2_hello_cert_length")
 
           if [[ "$v2_cert_type" == "01" ]] && [[ "$v2_hello_cert_length" != "00" ]]; then
-               asciihex_to_binary_file "${v2_hello_ascii:26:certificate_len}" "/dev/stdout" | \
+               hex2binary "${v2_hello_ascii:26:certificate_len}" | \
                     $OPENSSL x509 -inform DER -outform PEM -out $HOSTCERT 2>$ERRFILE
                if [[ $? -ne 0 ]]; then
                     debugme echo "Malformed certificate in ServerHello."
@@ -10596,9 +11926,40 @@ hmac() {
      local key="$2" text="$3" output
      local -i ret
 
-     output="$(asciihex_to_binary_file "$text" "/dev/stdout" | $OPENSSL dgst "$hash_fn" -mac HMAC -macopt hexkey:"$key" 2>/dev/null)"
-     ret=$?
-     tm_out "$(awk  '/=/ { print $2 }' <<< "$output")"
+     if [[ ! "$OSSL_NAME" =~ LibreSSL ]] && [[ $OSSL_VER_MAJOR == 3 ]]; then
+          output="$(hex2binary "$text" | $OPENSSL mac -macopt digest:"${hash_fn/-/}" -macopt hexkey:"$key" HMAC 2>/dev/null)"
+          ret=$?
+          tm_out "$(strip_lf "$output")"
+     else
+          output="$(hex2binary "$text" | $OPENSSL dgst "$hash_fn" -mac HMAC -macopt hexkey:"$key" 2>/dev/null)"
+          ret=$?
+          tm_out "${output#*= }"
+     fi
+     return $ret
+}
+
+# arg1: hash function
+# arg2: key
+# arg3: transcript
+# Compute the HMAC of the hash of the transcript
+hmac-transcript() {
+     local hash_fn="$1"
+     local key="$2" transcript="$3" output
+     local -i ret
+
+     if [[ ! "$OSSL_NAME" =~ LibreSSL ]] && [[ $OSSL_VER_MAJOR == 3 ]]; then
+          output="$(hex2binary "$transcript" | \
+                    $OPENSSL dgst "$hash_fn" -binary 2>/dev/null | \
+                    $OPENSSL mac -macopt digest:"${hash_fn/-/}" -macopt hexkey:"$key" HMAC 2>/dev/null)"
+          ret=$?
+          tm_out "$(toupper "$(strip_lf "$output")")"
+     else
+          output="$(hex2binary "$transcript" | \
+                    $OPENSSL dgst "$hash_fn" -binary 2>/dev/null | \
+                    $OPENSSL dgst "$hash_fn" -mac HMAC -macopt hexkey:"$key" 2>/dev/null)"
+          ret=$?
+          tm_out "$(toupper "${output#*= }")"
+     fi
      return $ret
 }
 
@@ -10611,7 +11972,7 @@ hkdf-expand() {
      local hash_fn="$1"
      local prk="$2" info="$3" output=""
      local -i out_len="$4"
-     local -i i n mod_check hash_len ret
+     local -i i n hash_len ret
      local counter
      local ti tim1 # T(i) and T(i-1)
 
@@ -10622,8 +11983,7 @@ hkdf-expand() {
      esac
 
      n=$out_len/$hash_len
-     mod_check=$out_len%$hash_len
-     [[ $mod_check -ne 0 ]] && n+=1
+     [[ $((out_len%hash_len)) -ne 0 ]] && n+=1
 
      tim1=""
      for (( i=1; i <= n; i++ )); do
@@ -10633,7 +11993,7 @@ hkdf-expand() {
           output+="$ti"
           tim1="$ti"
      done
-     out_len=2*$out_len
+     out_len=$((2*out_len))
      tm_out "${output:0:out_len}"
      return 0
 }
@@ -10653,8 +12013,8 @@ hkdf-expand-label() {
      local hkdflabel_length
      local -i len
 
-     hkdflabel_length="$(printf "%04X\n" $length)"
-     if [[ "${TLS_SERVER_HELLO:8:2}" == "7F" ]] && [[ 0x${TLS_SERVER_HELLO:10:2} -lt 0x14 ]]; then
+     hkdflabel_length="$(printf "%04X\n" "$length")"
+     if [[ "${TLS_SERVER_HELLO:8:2}" == 7F ]] && [[ 0x${TLS_SERVER_HELLO:10:2} -lt 0x14 ]]; then
           # "544c5320312e332c20" = "TLS 1.3, "
           hkdflabel_label="544c5320312e332c20$label"
      else
@@ -10662,9 +12022,9 @@ hkdf-expand-label() {
           hkdflabel_label="746c73313320$label"
      fi
      len=${#hkdflabel_label}/2
-     hkdflabel_label="$(printf "%02X\n" $len)$hkdflabel_label"
+     hkdflabel_label="$(printf "%02X\n" "$len")$hkdflabel_label"
      len=${#context}/2
-     hkdflabel_context="$(printf "%02X\n" $len)$context"
+     hkdflabel_context="$(printf "%02X\n" "$len")$context"
      hkdflabel="$hkdflabel_length$hkdflabel_label$hkdflabel_context"
 
      hkdf-expand "$hash_fn" "$secret" "$hkdflabel" "$length"
@@ -10688,76 +12048,14 @@ derive-secret() {
           *) return 7
      esac
 
-     hash_messages="$(asciihex_to_binary_file "$messages" "/dev/stdout" | $OPENSSL dgst "$hash_fn" 2>/dev/null | awk  '/=/ { print $2 }')"
+     hash_messages="$(hex2binary "$messages" | $OPENSSL dgst "$hash_fn" 2>/dev/null)"
+     hash_messages="${hash_messages#*= }"
      hkdf-expand-label "$hash_fn" "$secret" "$label" "$hash_messages" "$hash_len"
      return $?
 }
 
 # arg1: hash function
-# arg2: private key file
-# arg3: file containing server's ephemeral public key
-# arg4: ASCII-HEX of messages (ClientHello...ServerHello)
-# See key derivation schedule diagram in Section 7.1 of RFC 8446
-derive-handshake-traffic-secret() {
-     local hash_fn="$1"
-     local priv_file="$2" pub_file="$3"
-     local messages="$4"
-     local -i i ret
-     local early_secret derived_secret shared_secret handshake_secret
-
-     "$HAS_PKUTIL" || return 1
-
-     # early_secret="$(hmac "$hash_fn" "000...000" "000...000")"
-     case "$hash_fn" in
-          "-sha256") early_secret="33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a"
-                     if [[ "${TLS_SERVER_HELLO:8:2}" == "7F" ]] && [[ 0x${TLS_SERVER_HELLO:10:2} -lt 0x14 ]]; then
-                          # "6465726976656420736563726574" = "derived secret"
-                          # derived_secret="$(derive-secret "$hash_fn" "$early_secret" "6465726976656420736563726574" "")"
-                          derived_secret="c1c0c36bf8fb1d1afa949fbd360e71af69a6244a4c2eaef5bbbb6442a7277d2c"
-                     else
-                          # "64657269766564" = "derived"
-                          # derived_secret="$(derive-secret "$hash_fn" "$early_secret" "64657269766564" "")"
-                          derived_secret="6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba"
-                     fi
-                     ;;
-          "-sha384") early_secret="7ee8206f5570023e6dc7519eb1073bc4e791ad37b5c382aa10ba18e2357e716971f9362f2c2fe2a76bfd78dfec4ea9b5"
-                     if [[ "${TLS_SERVER_HELLO:8:2}" == "7F" ]] && [[ 0x${TLS_SERVER_HELLO:10:2} -lt 0x14 ]]; then
-                           # "6465726976656420736563726574" = "derived secret"
-                           # derived_secret="$(derive-secret "$hash_fn" "$early_secret" "6465726976656420736563726574" "")"
-                          derived_secret="54c80fa05ee9e0532ce3db8ddeca37a0365683bcd3b27bdc88d2b9fdc115ca4ebc8edc1f0b72a6a0861e803fc34761ef"
-                     else
-                          # "64657269766564" = "derived"
-                          # derived_secret="$(derive-secret "$hash_fn" "$early_secret" "64657269766564" "")"
-                          derived_secret="1591dac5cbbf0330a4a84de9c753330e92d01f0a88214b4464972fd668049e93e52f2b16fad922fdc0584478428f282b"
-                     fi
-                     ;;
-          *) return 7
-     esac
-
-     shared_secret="$($OPENSSL pkeyutl -derive -inkey "$priv_file" -peerkey "$pub_file" 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
-
-     # For draft 18 use $early_secret rather than $derived_secret.
-     if [[ "${TLS_SERVER_HELLO:8:4}" == "7F12" ]]; then
-          handshake_secret="$(hmac "$hash_fn" "$early_secret" "${shared_secret%%[!0-9A-F]*}")"
-     else
-          handshake_secret="$(hmac "$hash_fn" "$derived_secret" "${shared_secret%%[!0-9A-F]*}")"
-     fi
-     [[ $? -ne 0 ]] && return 7
-
-     if [[ "${TLS_SERVER_HELLO:8:2}" == "7F" ]] && [[ 0x${TLS_SERVER_HELLO:10:2} -lt 0x14 ]]; then
-          # "7365727665722068616e647368616b65207472616666696320736563726574" = "server handshake traffic secret"
-          derived_secret="$(derive-secret "$hash_fn" "$handshake_secret" "7365727665722068616e647368616b65207472616666696320736563726574" "$messages")"
-     else
-          # "732068732074726166666963" = "s hs traffic"
-          derived_secret="$(derive-secret "$hash_fn" "$handshake_secret" "732068732074726166666963" "$messages")"
-     fi
-     [[ $? -ne 0 ]] && return 7
-     tm_out "$derived_secret"
-     return 0
-}
-
-# arg1: hash function
-# arg2: secret (created by derive-handshake-traffic-secret)
+# arg2: secret
 # arg3: purpose ("key" or "iv")
 # arg4: length of the key
 # See RFC 8446, Section 7.3
@@ -10774,20 +12072,216 @@ derive-traffic-key() {
 }
 
 #arg1: TLS cipher
+#arg2: First ClientHello, if response was a HelloRetryRequest
+#arg3: HelloRetryRequest, if one was sent
+#arg4: Final (or only) ClientHello
+#arg5: ServerHello
+create-initial-transcript() {
+     local cipher="$1"
+     local clienthello1="$2" hrr="$3" clienthello2="$4" serverhello="$5"
+     local hash_clienthello1 msg_transcript
+
+     if [[ -n "$hrr" ]] && [[ "${serverhello:8:4}" == 7F12 ]]; then
+          msg_transcript="$clienthello1$hrr$clienthello2$serverhello"
+     elif [[ -n "$hrr" ]]; then
+          if [[ "$cipher" == *SHA256 ]]; then
+               hash_fn="-sha256"
+               hash_len=32
+          elif [[ "$cipher" == *SHA384 ]]; then
+               hash_fn="-sha384"
+               hash_len=48
+          else
+               return 1
+          fi
+          hash_clienthello1="$(hex2binary "$clienthello1" | $OPENSSL dgst "$hash_fn" 2>/dev/null)"
+          hash_clienthello1="${hash_clienthello1#*= }"
+          msg_transcript="FE0000$(printf "%02x" $((${#hash_clienthello1}/2)))$hash_clienthello1$hrr$clienthello2$serverhello"
+     else
+          msg_transcript="$clienthello2$serverhello"
+     fi
+     tm_out "$msg_transcript"
+     return 0
+}
+
+#arg1: TLS cipher
 #arg2: file containing cipher name, public key, and private key
-#arg3: First ClientHello, if response was a HelloRetryRequest
-#arg4: HelloRetryRequest, if one was sent
-#arg5: Final (or only) ClientHello
-#arg6: ServerHello
-derive-handshake-traffic-keys() {
+derive-handshake-secret() {
      local cipher="$1"
      local tmpfile="$2"
-     local clienthello1="$3" hrr="$4" clienthello2="$5" serverhello="$6"
-     local hash_clienthello1
-     local -i key_len
      local -i retcode
      local hash_fn
      local pub_file priv_file tmpfile
+     local early_secret derived_secret shared_secret handshake_secret
+
+     "$HAS_PKUTIL" || return 1
+
+     if [[ "$cipher" == *SHA256 ]]; then
+          hash_fn="-sha256"
+     elif [[ "$cipher" == *SHA384 ]]; then
+          hash_fn="-sha384"
+     else
+          return 1
+     fi
+
+     pub_file="$(mktemp "$TEMPDIR/pubkey.XXXXXX")" || return 7
+     awk '/-----BEGIN PUBLIC KEY/,/-----END PUBLIC KEY/ { print $0 }' \
+          "$tmpfile" > "$pub_file"
+     [[ ! -s "$pub_file" ]] && return 1
+
+     priv_file="$(mktemp "$TEMPDIR/privkey.XXXXXX")" || return 7
+     if grep -qe "-----BEGIN EC PARAMETERS" "$tmpfile"; then
+          awk '/-----BEGIN EC PARAMETERS/,/-----END EC PRIVATE KEY/ { print $0 }' \
+               "$tmpfile" > "$priv_file"
+     else
+          awk '/-----BEGIN PRIVATE KEY/,/-----END PRIVATE KEY/ { print $0 }' \
+               "$tmpfile" > "$priv_file"
+     fi
+     [[ ! -s "$priv_file" ]] && return 1
+
+     # early_secret="$(hmac "$hash_fn" "000...000" "000...000")"
+     case "$hash_fn" in
+          "-sha256") early_secret="33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a"
+                     if [[ "${TLS_SERVER_HELLO:8:2}" == 7F ]] && [[ 0x${TLS_SERVER_HELLO:10:2} -lt 0x14 ]]; then
+                          # "6465726976656420736563726574" = "derived secret"
+                          # derived_secret="$(derive-secret "$hash_fn" "$early_secret" "6465726976656420736563726574" "")"
+                          derived_secret="c1c0c36bf8fb1d1afa949fbd360e71af69a6244a4c2eaef5bbbb6442a7277d2c"
+                     else
+                          # "64657269766564" = "derived"
+                          # derived_secret="$(derive-secret "$hash_fn" "$early_secret" "64657269766564" "")"
+                          derived_secret="6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba"
+                     fi
+                     ;;
+          "-sha384") early_secret="7ee8206f5570023e6dc7519eb1073bc4e791ad37b5c382aa10ba18e2357e716971f9362f2c2fe2a76bfd78dfec4ea9b5"
+                     if [[ "${TLS_SERVER_HELLO:8:2}" == 7F ]] && [[ 0x${TLS_SERVER_HELLO:10:2} -lt 0x14 ]]; then
+                           # "6465726976656420736563726574" = "derived secret"
+                           # derived_secret="$(derive-secret "$hash_fn" "$early_secret" "6465726976656420736563726574" "")"
+                          derived_secret="54c80fa05ee9e0532ce3db8ddeca37a0365683bcd3b27bdc88d2b9fdc115ca4ebc8edc1f0b72a6a0861e803fc34761ef"
+                     else
+                          # "64657269766564" = "derived"
+                          # derived_secret="$(derive-secret "$hash_fn" "$early_secret" "64657269766564" "")"
+                          derived_secret="1591dac5cbbf0330a4a84de9c753330e92d01f0a88214b4464972fd668049e93e52f2b16fad922fdc0584478428f282b"
+                     fi
+                     ;;
+     esac
+
+     shared_secret="$($OPENSSL pkeyutl -derive -inkey "$priv_file" -peerkey "$pub_file" 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
+     rm "$pub_file" "$priv_file"
+
+     # For draft 18 use $early_secret rather than $derived_secret.
+     if [[ "${TLS_SERVER_HELLO:8:4}" == "7F12" ]]; then
+          handshake_secret="$(hmac "$hash_fn" "$early_secret" "${shared_secret%%[!0-9A-F]*}")"
+     else
+          handshake_secret="$(hmac "$hash_fn" "$derived_secret" "${shared_secret%%[!0-9A-F]*}")"
+     fi
+     [[ $? -ne 0 ]] && return 7
+
+     tm_out "$handshake_secret"
+     return 0
+}
+
+# arg1: TLS cipher
+# arg2: handshake secret
+# arg3: transcript
+# arg4: "client" or "server"
+derive-handshake-traffic-keys() {
+     local cipher="$1" handshake_secret="$2" transcript="$3"
+     local sender="$4"
+     local hash_fn
+     local -i hash_len key_len
+     local handshake_traffic_secret label key iv finished="0000"
+
+     if [[ "$cipher" == *SHA256 ]]; then
+          hash_fn="-sha256"
+          hash_len=32
+     elif [[ "$cipher" == *SHA384 ]]; then
+          hash_fn="-sha384"
+          hash_len=48
+     else
+          return 1
+     fi
+     if [[ "$cipher" == *AES_128* ]]; then
+          key_len=16
+     elif [[ "$cipher" == *AES_256* ]] || [[ "$cipher" == *CHACHA20_POLY1305* ]]; then
+          key_len=32
+     else
+          return 1
+     fi
+
+     if [[ "${TLS_SERVER_HELLO:8:2}" == 7F ]] && [[ 0x${TLS_SERVER_HELLO:10:2} -lt 0x14 ]]; then
+          if [[ "$sender" == server ]]; then
+               # "7365727665722068616e647368616b65207472616666696320736563726574" = "server handshake traffic secret"
+               label="7365727665722068616e647368616b65207472616666696320736563726574"
+          else
+               # "636c69656e742068616e647368616b65207472616666696320736563726574" = "client handshake traffic secret"
+               label="636c69656e742068616e647368616b65207472616666696320736563726574"
+          fi
+     elif [[ "$sender" == server ]]; then
+          # "732068732074726166666963" = "s hs traffic"
+          label="732068732074726166666963"
+     else
+          # "632068732074726166666963" = "c hs traffic"
+          label="632068732074726166666963"
+     fi
+     handshake_traffic_secret="$(derive-secret "$hash_fn" "$handshake_secret" "$label" "$transcript")"
+     [[ $? -ne 0 ]] && return 7
+
+     # "6b6579" = "key"
+     key="$(derive-traffic-key "$hash_fn" "$handshake_traffic_secret" "6b6579" "$key_len")"
+     [[ $? -ne 0 ]] && return 1
+     # "6976" = "iv"
+     iv="$(derive-traffic-key "$hash_fn" "$handshake_traffic_secret" "6976" "12")"
+     [[ $? -ne 0 ]] && return 1
+     if [[ $DEBUG -ge 1 ]] || [[ "$sender" == client ]]; then
+          # "66696e6973686564" = "finished"
+          finished="$(derive-traffic-key "$hash_fn" "$handshake_traffic_secret" "66696e6973686564" "$hash_len")"
+          [[ $? -ne 0 ]] && return 1
+     fi
+     tm_out "$key $iv $finished"
+}
+
+#arg1: TLS cipher
+#arg2: handshake secret
+derive-master-secret() {
+     local cipher="$1"
+     local handshake_secret="$2"
+     local -i retcode
+     local hash_fn
+     local derived_secret zeros master_secret
+
+     if [[ "$cipher" == *SHA256 ]]; then
+          hash_fn="-sha256"
+          zeros="0000000000000000000000000000000000000000000000000000000000000000"
+     elif [[ "$cipher" == *SHA384 ]]; then
+          hash_fn="-sha384"
+          zeros="000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+     else
+          return 1
+     fi
+
+     if [[ "${TLS_SERVER_HELLO:8:4}" == 7F12 ]]; then
+          derived_secret="$handshake_secret"
+     elif [[ "${TLS_SERVER_HELLO:8:2}" == 7F ]] && [[ 0x${TLS_SERVER_HELLO:10:2} -lt 0x14 ]]; then
+          derived_secret="$(derive-secret "$hash_fn" "$handshake_secret" "6465726976656420736563726574" "")"
+     else
+          derived_secret="$(derive-secret "$hash_fn" "$handshake_secret" "64657269766564" "")"
+     fi
+     master_secret="$(hmac "$hash_fn" "$derived_secret" "$zeros")"
+     [[ $? -ne 0 ]] && return 7
+
+     tm_out "$master_secret"
+     return 0
+}
+
+# arg1: TLS cipher
+# arg2: master secret
+# arg3: transcript
+# arg4: "client" or "server"
+derive-application-traffic-keys() {
+     local cipher="$1" master_secret="$2" transcript="$3"
+     local sender="$4"
+     local hash_fn
+     local -i key_len
+     local application_traffic_secret_0 label key iv
 
      if [[ "$cipher" == *SHA256 ]]; then
           hash_fn="-sha256"
@@ -10798,104 +12292,40 @@ derive-handshake-traffic-keys() {
      fi
      if [[ "$cipher" == *AES_128* ]]; then
           key_len=16
-     elif ( [[ "$cipher" == *AES_256* ]] || [[ "$cipher" == *CHACHA20_POLY1305* ]] ); then
+     elif [[ "$cipher" == *AES_256* ]] || [[ "$cipher" == *CHACHA20_POLY1305* ]]; then
           key_len=32
      else
           return 1
      fi
-     pub_file="$(mktemp "$TEMPDIR/pubkey.XXXXXX")" || return 7
-     awk '/-----BEGIN PUBLIC KEY/,/-----END PUBLIC KEY/ { print $0 }' \
-          "$tmpfile" > "$pub_file"
-     [[ ! -s "$pub_file" ]] && return 1
 
-     priv_file="$(mktemp "$TEMPDIR/privkey.XXXXXX")" || return 7
-     if grep -q "\-\-\-\-\-BEGIN EC PARAMETERS" "$tmpfile"; then
-          awk '/-----BEGIN EC PARAMETERS/,/-----END EC PRIVATE KEY/ { print $0 }' \
-               "$tmpfile" > "$priv_file"
+     if [[ "${TLS_SERVER_HELLO:8:2}" == 7F ]] && [[ 0x${TLS_SERVER_HELLO:10:2} -lt 0x14 ]]; then
+          if [[ "$sender" == server ]]; then
+               # "736572766572206170706c69636174696f6e207472616666696320736563726574" = "server application traffic secret"
+               label="736572766572206170706c69636174696f6e207472616666696320736563726574"
+          else
+               # "636c69656e74206170706c69636174696f6e207472616666696320736563726574" = "client application traffic secret"
+               label="636c69656e74206170706c69636174696f6e207472616666696320736563726574"
+          fi
+     elif [[ "$sender" == server ]]; then
+          # "732061702074726166666963" = "s hs traffic"
+          label="732061702074726166666963"
      else
-          awk '/-----BEGIN PRIVATE KEY/,/-----END PRIVATE KEY/ { print $0 }' \
-               "$tmpfile" > "$priv_file"
+          # "632061702074726166666963" = "c hs traffic"
+          label="632061702074726166666963"
      fi
-     [[ ! -s "$priv_file" ]] && return 1
+     application_traffic_secret_0="$(derive-secret "$hash_fn" "$master_secret" "$label" "$transcript")"
+     [[ $? -ne 0 ]] && return 7
 
-     if [[ -n "$hrr" ]] && [[ "${serverhello:8:4}" == "7F12" ]]; then
-          derived_secret="$(derive-handshake-traffic-secret "$hash_fn" "$priv_file" "$pub_file" "$clienthello1$hrr$clienthello2$serverhello")"
-     elif [[ -n "$hrr" ]]; then
-          hash_clienthello1="$(asciihex_to_binary_file "$clienthello1" "/dev/stdout" | $OPENSSL dgst "$hash_fn" 2>/dev/null | awk  '/=/ { print $2 }')"
-          derived_secret="$(derive-handshake-traffic-secret "$hash_fn" "$priv_file" "$pub_file" "FE0000$(printf "%02x" $((${#hash_clienthello1}/2)))$hash_clienthello1$hrr$clienthello2$serverhello")"
-     else
-          derived_secret="$(derive-handshake-traffic-secret "$hash_fn" "$priv_file" "$pub_file" "$clienthello2$serverhello")"
-     fi
-     retcode=$?
-     rm $pub_file $priv_file
-     [[ $retcode -ne 0 ]] && return 1
      # "6b6579" = "key"
-     server_write_key="$(derive-traffic-key "$hash_fn" "$derived_secret" "6b6579" "$key_len")"
+     key="$(derive-traffic-key "$hash_fn" "$application_traffic_secret_0" "6b6579" "$key_len")"
      [[ $? -ne 0 ]] && return 1
      # "6976" = "iv"
-     server_write_iv="$(derive-traffic-key "$hash_fn" "$derived_secret" "6976" "12")"
+     iv="$(derive-traffic-key "$hash_fn" "$application_traffic_secret_0" "6976" "12")"
      [[ $? -ne 0 ]] && return 1
-     tm_out "$server_write_key $server_write_iv"
-     return 0
+     tm_out "$key $iv"
 }
 
-generate-ccm-gcm-keystream() {
-     local icb="$1" icb_msb icb_lsb1
-     local -i i icb_lsb n="$2"
-
-     icb_msb="${icb:0:24}"
-     icb_lsb=0x${icb:24:8}
-
-     for (( i=0; i < n; i=i+1 )); do
-          icb_lsb1="$(printf "%08X" $icb_lsb)"
-          printf "\x${icb_msb:0:2}\x${icb_msb:2:2}\x${icb_msb:4:2}\x${icb_msb:6:2}\x${icb_msb:8:2}\x${icb_msb:10:2}\x${icb_msb:12:2}\x${icb_msb:14:2}\x${icb_msb:16:2}\x${icb_msb:18:2}\x${icb_msb:20:2}\x${icb_msb:22:2}\x${icb_lsb1:0:2}\x${icb_lsb1:2:2}\x${icb_lsb1:4:2}\x${icb_lsb1:6:2}"
-          icb_lsb+=1
-     done
-     return 0
-}
-
-# arg1: an OpenSSL ecb cipher (e.g., -aes-128-ecb)
-# arg2: key
-# arg3: initial counter value (must be 128 bits)
-# arg4: ciphertext
-# See Sections 6.5 and 7.2 of SP 800-38D and Section 6.2 and Appendix A of SP 800-38C
-ccm-gcm-decrypt() {
-     local cipher="$1"
-     local key="$2"
-     local icb="$3"
-     local ciphertext="$4"
-     local -i i i1 i2 i3 i4
-     local -i ciphertext_len n mod_check
-     local y plaintext=""
-
-     [[ ${#icb} -ne 32 ]] && return 7
-
-     ciphertext_len=${#ciphertext}
-     n=$ciphertext_len/32
-     mod_check=$ciphertext_len%32
-     [[ $mod_check -ne 0 ]] && n+=1
-     y="$(generate-ccm-gcm-keystream "$icb" "$n" | $OPENSSL enc "$cipher" -K "$key" -nopad 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
-
-     # XOR the ciphertext with the keystream ($y). For efficiency, work in blocks of 16 bytes at a time (but with each XOR operation working on
-     # 32 bits.
-     [[ $mod_check -ne 0 ]] && n=$n-1
-     for (( i=0; i < n; i++ )); do
-          i1=32*$i; i2=$i1+8; i3=$i1+16; i4=$i1+24
-          plaintext+="$(printf "%08X%08X%08X%08X" "$((0x${ciphertext:i1:8} ^ 0x${y:i1:8}))" "$((0x${ciphertext:i2:8} ^ 0x${y:i2:8}))" "$((0x${ciphertext:i3:8} ^ 0x${y:i3:8}))" "$((0x${ciphertext:i4:8} ^ 0x${y:i4:8}))")"
-     done
-     # If the length of the ciphertext is not an even multiple of 16 bytes, then handle the final incomplete block.
-     if [[ $mod_check -ne 0 ]]; then
-          i1=32*$n
-          for (( i=0; i < mod_check; i=i+2 )); do
-               plaintext+="$(printf "%02X" "$((0x${ciphertext:i1:2} ^ 0x${y:i1:2}))")"
-               i1+=2
-          done
-     fi
-     tm_out "$plaintext"
-     return 0
-}
-
-# See RFC 7539, Section 2.1
+# See RFC 8439, Section 2.1
 chacha20_Qround() {
      local -i a="0x$1"
      local -i b="0x$2"
@@ -10939,11 +12369,11 @@ chacha20_Qround() {
      y=$((y << 7))
      b=$((x | y))
 
-     tm_out "$(printf "%x" $a) $(printf "%x" $b) $(printf "%x" $c) $(printf "%x" $d)"
+     tm_out "$(printf "%X" $a) $(printf "%X" $b) $(printf "%X" $c) $(printf "%X" $d)"
      return 0
 }
 
-# See RFC 7539, Section 2.3.1
+# See RFC 8439, Section 2.3.1
 chacha20_inner_block() {
      local s0="$1" s1="$2" s2="$3" s3="$4"
      local s4="$5" s5="$6" s6="$7" s7="$8"
@@ -10972,7 +12402,7 @@ chacha20_inner_block() {
      return 0
 }
 
-# See RFC 7539, Sections 2.3 and 2.3.1
+# See RFC 8439, Sections 2.3 and 2.3.1
 chacha20_block() {
      local key="$1"
      local counter="$2"
@@ -11047,7 +12477,7 @@ chacha20_block() {
      return 0
 }
 
-# See RFC 7539, Section 2.4
+# See RFC 8439, Section 2.4
 chacha20() {
      local key="$1"
      local -i counter=1
@@ -11057,12 +12487,19 @@ chacha20() {
      local -i i1 i2 i3 i4 i5 i6 i7 i8 i9 i10 i11 i12 i13 i14 i15 i16
      local keystream plaintext=""
 
+     if "$HAS_CHACHA20"; then
+          plaintext="$(hex2binary "$ciphertext" | \
+                       $OPENSSL enc -chacha20 -K "$key" -iv "01000000$nonce" 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
+          tm_out "$(strip_spaces "$plaintext")"
+          return 0
+     fi
+
      ciphertext_len=${#ciphertext}
      num_blocks=$ciphertext_len/128
 
      for (( i=0; i < num_blocks; i++)); do
-          i1=128*$i; i2=$i1+8; i3=$i1+16; i4=$i1+24; i5=$i1+32; i6=$i1+40; i7=$i1+48; i8=$i1+56
-          i9=$i1+64; i10=$i1+72; i11=$i1+80; i12=$i1+88; i13=$i1+96; i14=$i1+104; i15=$i1+112; i16=$i1+120
+          i1=$((128*i)); i2=$((i1+8)); i3=$((i1+16)); i4=$((i1+24)); i5=$((i1+32)); i6=$((i1+40)); i7=$((i1+48)); i8=$((i1+56))
+          i9=$((i1+64)); i10=$((i1+72)); i11=$((i1+80)); i12=$((i1+88)); i13=$((i1+96)); i14=$((i1+104)); i15=$((i1+112)); i16=$((i1+120))
           keystream="$(chacha20_block "$key" "$(printf "%08X" $counter)" "$nonce")"
           plaintext+="$(printf "%08X%08X%08X%08X%08X%08X%08X%08X%08X%08X%08X%08X%08X%08X%08X%08X" \
                "$((0x${ciphertext:i1:8} ^ 0x${keystream:0:8}))" \
@@ -11087,8 +12524,8 @@ chacha20() {
      mod_check=$ciphertext_len%128
      if [[ $mod_check -ne 0 ]]; then
           keystream="$(chacha20_block "$key" "$(printf "%08X" $counter)" "$nonce")"
-          i1=128*$num_blocks
-          for (( i=0; i < mod_check; i=i+2 )); do
+          i1=$((128*num_blocks))
+          for (( i=0; i < mod_check; i+=2 )); do
                plaintext+="$(printf "%02X" "$((0x${ciphertext:i1:2} ^ 0x${keystream:i:2}))")"
                i1+=2
           done
@@ -11097,17 +12534,731 @@ chacha20() {
      return 0
 }
 
+# Implement U8to32 from https://github.com/floodyberry/poly1305-donna/blob/master/poly1305-donna-32.h
+# Used to decode value encoded as 32-bit little-endian integer
+u8to32() {
+     local p="$1"
+
+     tm_out "0x${p:6:2}${p:4:2}${p:2:2}${p:0:2}"
+     return 0
+}
+
+# Implement U32to8 from https://github.com/floodyberry/poly1305-donna/blob/master/poly1305-donna-32.h
+# Used to encode value as 32-bit little-endian integer
+u32to8() {
+     local -i v="$1"
+     local p
+
+     v=$((v & 0xffffffff))
+     p="$(printf "%08X" $v)"
+     tm_out "${p:6:2}${p:4:2}${p:2:2}${p:0:2}"
+     return 0
+}
+
+# Used to encode value as 64-bit little-endian integer
+u64to8() {
+     local -i v="$1"
+     local p
+
+     p="$(printf "%016X" "$v")"
+     tm_out "${p:14:2}${p:12:2}${p:10:2}${p:8:2}${p:6:2}${p:4:2}${p:2:2}${p:0:2}"
+     return 0
+}
+
+
+# arg1: 32-byte key
+# arg2: message to be authenticated
+# See RFC 8439, Section 2.5
+# Implementation based on https://github.com/floodyberry/poly1305-donna
+poly1305_mac() {
+     local key="$1" nonce="$2" ciphertext="$3" aad="$4"
+     local mac_key msg
+     local -i ciphertext_len aad_len
+     local -i bytes
+     local -i r0 r1 r2 r3 r4
+     local -i h0=0 h1=0 h2=0 h3=0 h4=0
+     local -i pad0 pad1 pad2 pad3
+     local -i s1 s2 s3 s4
+     local -i d0 d1 d2 d3 d4
+     local -i g0 g1 g2 g3 g4
+     local -i i c f blocksize hibit
+
+     # poly1305_key_gen - RFC 8439, Section 2.6
+     # The MAC key is actually just the first 64 characters (32 bytes) of the
+     # output of the chacha20_block function. However, there is no need to
+     # truncate the key, since the code below will ignore all but the first
+     # 64 characters.
+     mac_key="$(chacha20_block "$key" "00000000" "$nonce")"
+
+     # Construct message to be authenticated. RFC 8439, Section 2.8
+     msg="$aad"
+     aad_len=$((${#aad}/2))
+     bytes=$(( aad_len % 16 ))
+     if [[ $bytes -ne 0 ]]; then
+          for (( i=bytes; i < 16; i++ )); do
+               msg+="00"
+          done
+     fi
+     msg+="$ciphertext"
+     ciphertext_len=$((${#ciphertext}/2))
+     bytes=$(( ciphertext_len % 16 ))
+     if [[ $bytes -ne 0 ]]; then
+          for (( i=bytes; i < 16; i++ )); do
+               msg+="00"
+          done
+     fi
+     msg+="$(u64to8 $aad_len)$(u64to8 $ciphertext_len)"
+     bytes="${#msg}"
+
+     # poly1305_init
+     r0=$(( $(u8to32 "${mac_key:0:8}") & 0x3ffffff ))
+     r1=$(( ($(u8to32 "${mac_key:6:8}") >> 2) & 0x3ffff03 ))
+     r2=$(( ($(u8to32 "${mac_key:12:8}") >> 4) & 0x3ffc0ff ))
+     r3=$(( ($(u8to32 "${mac_key:18:8}") >> 6) & 0x3f03fff ))
+     r4=$(( ($(u8to32 "${mac_key:24:8}") >> 8) & 0x00fffff ))
+
+     s1=$((r1*5))
+     s2=$((r2*5))
+     s3=$((r3*5))
+     s4=$((r4*5))
+
+     pad0=$(u8to32 "${mac_key:32:8}")
+     pad1=$(u8to32 "${mac_key:40:8}")
+     pad2=$(u8to32 "${mac_key:48:8}")
+     pad3=$(u8to32 "${mac_key:56:8}")
+
+     # poly1305_update
+     for (( 1 ; bytes > 0; bytes=bytes-blocksize )); do
+          if [[ $bytes -ge 32 ]]; then
+               blocksize=32
+               hibit=0x1000000
+          else
+               blocksize=$bytes
+               hibit=0
+               msg+="01"
+               for (( i=bytes+2; i < 32; i+=2 )); do
+                    msg+="00"
+               done
+          fi
+          h0+=$(( $(u8to32 "${msg:0:8}") & 0x3ffffff ))
+          h1+=$(( ($(u8to32 "${msg:6:8}") >> 2) & 0x3ffffff ))
+          h2+=$(( ($(u8to32 "${msg:12:8}") >> 4) & 0x3ffffff ))
+          h3+=$(( ($(u8to32 "${msg:18:8}") >> 6) & 0x3ffffff ))
+          h4+=$(( (($(u8to32 "${msg:24:8}") >> 8) & 0xffffff) | hibit ))
+
+          d0=$(( h0*r0 + h1*s4 + h2*s3 + h3*s2 + h4*s1 ))
+          d1=$(( h0*r1 + h1*r0 + h2*s4 + h3*s3 + h4*s2 ))
+          d2=$(( h0*r2 + h1*r1 + h2*r0 + h3*s4 + h4*s3 ))
+          d3=$(( h0*r3 + h1*r2 + h2*r1 + h3*r0 + h4*s4 ))
+          d4=$(( h0*r4 + h1*r3 + h2*r2 + h3*r1 + h4*r0 ))
+
+          c=$(( (d0 >> 26) & 0x3fffffffff )); h0=$(( d0 & 0x3ffffff ))
+          d1+=$c; c=$(( (d1 >> 26) & 0x3fffffffff )); h1=$(( d1 & 0x3ffffff ))
+          d2+=$c; c=$(( (d2 >> 26) & 0x3fffffffff )); h2=$(( d2 & 0x3ffffff ))
+          d3+=$c; c=$(( (d3 >> 26) & 0x3fffffffff )); h3=$(( d3 & 0x3ffffff ))
+          d4+=$c; c=$(( (d4 >> 26) & 0x3fffffffff )); h4=$(( d4 & 0x3ffffff ))
+          h0+=$((c*5)); c=$(( (h0 >> 26) & 0x3fffffffff )); h0=$(( h0 & 0x3ffffff ))
+          h1+=$c
+
+          msg="${msg:32}"
+     done
+
+     # poly1305_finish
+     c=$(( (h0 >> 26) & 0x3f )); h1=$(( h1 & 0x3ffffff ))
+     h2+=$c; c=$(( (h2 >> 26) & 0x3f )); h2=$(( h2 & 0x3ffffff ))
+     h3+=$c; c=$(( (h3 >> 26) & 0x3f )); h3=$(( h3 & 0x3ffffff ))
+     h4+=$c; c=$(( (h4 >> 26) & 0x3f )); h4=$(( h4 & 0x3ffffff ))
+     h0+=$((c*5)); c=$(( (h0 >> 26) & 0x3f )); h0=$(( h0 & 0x3ffffff ))
+     h1+=$c
+
+     g0=$((h0+5)); c=$(( (g0 >> 26) & 0x3f )); g0=$(( g0 & 0x3ffffff ))
+     g1=$((h1+c)); c=$(( (g1 >> 26) & 0x3f )); g1=$(( g1 & 0x3ffffff ))
+     g2=$((h2+c)); c=$(( (g2 >> 26) & 0x3f )); g2=$(( g2 & 0x3ffffff ))
+     g3=$((h3+c)); c=$(( (g3 >> 26) & 0x3f )); g3=$(( g3 & 0x3ffffff ))
+     g4=$((h4+c-0x4000000))
+
+     if [[ $((g4 & 0x8000000000000000)) -eq 0 ]]; then
+          h0=$g0; h1=$g1; h2=$g2; h3=$g3; h4=$g4
+     fi
+     h0=$(( ( h0 | (h1 << 26)) & 0xffffffff))
+     h1=$(( ((h1 >> 6) | (h2 << 20)) & 0xffffffff))
+     h2=$(( ((h2 >> 12) | (h3 << 14)) & 0xffffffff))
+     h3=$(( ((h3 >> 18) | (h4 <<  8)) & 0xffffffff))
+
+     f=$(( h0+pad0 )); h0=$f
+     f=$(( h1+pad1+(f>>32) )); h1=$f
+     f=$(( h2+pad2+(f>>32) )); h2=$f
+     f=$(( h3+pad3+(f>>32) )); h3=$f
+
+     tm_out "$(u32to8 $h0)$(u32to8 $h1)$(u32to8 $h2)$(u32to8 $h3)"
+     return 0
+}
+
+# arg1: key
+# arg2: nonce (must be 96 bits in length)
+# arg3: ciphertext
+# arg4: additional authenticated data
+# arg5: expected tag
+# arg6: true if authentication tag should be checked. false otherwise.
+chacha20_aead_decrypt() {
+     local key="$1" nonce="$2" ciphertext="$3" aad="$4" expected_tag="$(toupper "$5")"
+     local compute_tag="$6"
+     local plaintext computed_tag
+
+     plaintext="$(chacha20 "$key" "$nonce" "$ciphertext")"
+     [[ $? -ne 0 ]] && return 7
+
+     if "$compute_tag"; then
+          computed_tag="$(poly1305_mac "$key" "$nonce" "$ciphertext" "$aad")"
+          [[ $? -ne 0 ]] && return 7
+          [[ "$computed_tag" == $expected_tag ]] || return 7
+     fi
+
+     tm_out "$plaintext"
+     return 0
+}
+
+# arg1: key
+# arg2: nonce (must be 96 bits in length)
+# arg3: plaintext
+# arg4: additional authenticated data
+chacha20_aead_encrypt() {
+     local key="$1" nonce="$2" plaintext="$3" aad="$4"
+     local ciphertext computed_tag
+
+     ciphertext="$(chacha20 "$key" "$nonce" "$plaintext")"
+     [[ $? -ne 0 ]] && return 7
+
+     computed_tag="$(poly1305_mac "$key" "$nonce" "$ciphertext" "$aad")"
+     [[ $? -ne 0 ]] && return 7
+
+     tm_out "$ciphertext $computed_tag"
+     return 0
+}
+
+# arg1: nonce (must be 96 bits)
+# arg2: number of blocks needed for plaintext/ciphertext
+# Generate the sequence of counter blocks, which are to be encrypted and then
+# XORed with either the plaintext or the ciphertext.
+# See Section 6.1, Section 6.2, and Appendix A.3 of NIST SP 800-38C and
+# Section 5.3 of RFC 5116.
+generate-ccm-counter-blocks() {
+     local ctr="02${1}000000" ctr_msb blocks=""
+     local -i i ctr_lsb n="$2"
+
+     ctr_msb="${ctr:0:24}"
+     ctr_lsb=0x${ctr:24:8}
+
+     for (( i=0; i <= n; i+=1 )); do
+          blocks+="${ctr_msb}$(printf "%08X" "$ctr_lsb")"
+          ctr_lsb+=1
+     done
+     hex2binary "$blocks"
+     return 0
+}
+
+# arg1: an OpenSSL ecb cipher (e.g., -aes-128-ecb)
+# arg2: key
+# arg3: iv (must be 96 bits in length)
+# arg4: additional authenticated data
+# arg5: plaintext
+# arg6: tag length (must be 16 or 32)
+# Compute the CCM authentication tag
+ccm-compute-tag() {
+     local cipher="$1" key="$2" iv="$3" aad="$4" plaintext="$5"
+     local -i tag_len="$6"
+     local b tag
+     local -i i aad_len plaintext_len final_block_len nr_blocks
+
+     aad_len=$((${#aad}/2))
+     plaintext_len=$((${#plaintext}/2))
+
+     # Apply the formatting function to create b=B0B1B2... as in
+     # Appendix A.2 of NIST SP 800-38C.
+
+     # The first block consists of the flags, nonce, and length of plaintext
+     # See Section 5.3 of RFC 5116 for value of q.
+     if [[ $aad_len -ne 0 ]]; then
+          if [[ $tag_len -eq 16 ]]; then
+               b="5A${iv}$(printf "%06X" $plaintext_len)"
+          else
+               b="7A${iv}$(printf "%06X" $plaintext_len)"
+          fi
+     elif [[ $tag_len -eq 16 ]]; then
+          b="1A${iv}$(printf "%06X" $plaintext_len)"
+     else
+          b="3A${iv}$(printf "%06X" $plaintext_len)"
+     fi
+
+     # Next comes any additional authenticated data
+     if [[ $aad_len -ne 0 ]]; then
+          if [[ $aad_len -lt 0xFF00 ]]; then
+               b+="$(printf "%04X" $aad_len)$aad"
+               final_block_len=$(( (aad_len+2) % 16 ))
+          elif [[ $aad_len -lt 0x100000000 ]]; then
+               b+="FFFE$(printf "%08X" $aad_len)$aad"
+               final_block_len=$(( (aad_len+6) % 16 ))
+          else
+               # AES-CCM supports lengths up to 2^64, but there doesn't
+               # seem to be any reason to try to support such lengths.
+               return 7
+          fi
+          # Add padding to complete block
+          if [[ $final_block_len -ne 0 ]]; then
+               for (( i=final_block_len; i < 16; i++ )); do
+                    b+="00"
+               done
+          fi
+     fi
+
+     # Finally add the plaintext and any padding needed to complete block
+     b+="$plaintext"
+     final_block_len=$((plaintext_len % 16))
+     if [[ $final_block_len -ne 0 ]]; then
+          for (( i=final_block_len; i < 16; i++ )); do
+               b+="00"
+          done
+     fi
+
+     # Compute the authentication tag as described in
+     # Sections 6.1 and 6.2 of NIST SP 800-38C.
+     nr_blocks=$((${#b}/32))
+     tag="${b:0:32}"
+     for (( i=0; i < nr_blocks; i++ )); do
+          # XOR current block with previous block and then encrypt
+          [[ $i -ne 0 ]] &&
+               tag="$(printf "%08X%08X%08X%08X" "$((0x${b:0:8} ^ 0x${tag:0:8}))" "$((0x${b:8:8} ^ 0x${tag:8:8}))" "$((0x${b:16:8} ^ 0x${tag:16:8}))" "$((0x${b:24:8} ^ 0x${tag:24:8}))")"
+
+          tag="$(hex2binary "$tag" | $OPENSSL enc "$cipher" -K "$key" -nopad 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
+          b="${b:32}"
+     done
+
+     tm_out "${tag:0:tag_len}"
+     return 0
+}
+
+# arg1: AES-CCM TLS cipher
+# arg2: key
+# arg3: nonce (must be 96 bits in length)
+# arg4: ciphertext
+# arg5: additional authenticated data
+# arg6: expected tag (must be 16 or 32 characters)
+# arg7: true if authentication tag should be checked. false otherwise.
+# See Section 6.2 of NIST SP 800-38C
+ccm-decrypt() {
+     local cipher="$1" key="$2" nonce="$3" ciphertext="$4" aad="$5" enciphered_expected_tag="$6"
+     local compute_tag="$7"
+     local plaintext="" expected_tag computed_tag
+     local -i i i1 i2 i3 i4 tag_len
+     local -i ciphertext_len n mod_check
+     local s s0
+
+     [[ ${#nonce} -ne 24 ]] && return 7
+
+     case "$cipher" in
+          *AES_128*) cipher="-aes-128-ecb" ;;
+          *AES_256*) cipher="-aes-256-ecb" ;;
+          *) return 7
+     esac
+
+     ciphertext_len=${#ciphertext}
+     n=$((ciphertext_len/32))
+     mod_check=$((ciphertext_len%32))
+     [[ $mod_check -ne 0 ]] && n+=1
+
+     # generate keystream
+     s="$(generate-ccm-counter-blocks "$nonce" "$n" | $OPENSSL enc "$cipher" -K "$key" -nopad 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
+
+     # The first 16-bytes of the keystream ($s) are used to decrypt the
+     # authentication tag and the remaining bytes are used to decrypt the
+     # ciphertext.
+     s0="${s:0:32}"
+     s="${s:32}"
+
+     # XOR the ciphertext with the keystream ($s). For efficiency, work in blocks
+     # of 16 bytes at a time (but with each XOR operation working on 32 bits.
+     [[ $mod_check -ne 0 ]] && n=$((n-1))
+     for (( i=0; i < n; i++ )); do
+          i1=$((32*i)); i2=$((i1+8)); i3=$((i1+16)); i4=$((i1+24))
+          plaintext+="$(printf "%08X%08X%08X%08X" "$((0x${ciphertext:i1:8} ^ 0x${s:i1:8}))" "$((0x${ciphertext:i2:8} ^ 0x${s:i2:8}))" "$((0x${ciphertext:i3:8} ^ 0x${s:i3:8}))" "$((0x${ciphertext:i4:8} ^ 0x${s:i4:8}))")"
+     done
+
+     # If the length of the ciphertext is not an even multiple of 16 bytes, then handle the final incomplete block.
+     if [[ $mod_check -ne 0 ]]; then
+          i1=$((32*n))
+          for (( i=0; i < mod_check; i+=2 )); do
+               plaintext+="$(printf "%02X" "$((0x${ciphertext:i1:2} ^ 0x${s:i1:2}))")"
+               i1+=2
+          done
+     fi
+
+     if "$compute_tag"; then
+          tag_len=${#enciphered_expected_tag}
+
+          # Decrypt the authentication tag that was provided with the message
+          if [[ $tag_len -eq 16 ]]; then
+               expected_tag="$(printf "%08X%08X" "$((0x${enciphered_expected_tag:0:8} ^ 0x${s0:0:8}))" "$((0x${enciphered_expected_tag:8:8} ^ 0x${s0:8:8}))")"
+          elif [[ $tag_len -eq 32 ]]; then
+               expected_tag="$(printf "%08X%08X%08X%08X" "$((0x${enciphered_expected_tag:0:8} ^ 0x${s0:0:8}))" "$((0x${enciphered_expected_tag:8:8} ^ 0x${s0:8:8}))" "$((0x${enciphered_expected_tag:16:8} ^ 0x${s0:16:8}))" "$((0x${enciphered_expected_tag:24:8} ^ 0x${s0:24:8}))")"
+          else
+               return 7
+          fi
+
+          # obtain the actual authentication tag for the decrypted message
+          computed_tag="$(ccm-compute-tag "$cipher" "$key" "$nonce" "$aad" "$plaintext" "$tag_len")"
+          [[ $? -ne 0 ]] && return 7
+     fi
+
+     if ! "$compute_tag" || [[ "$computed_tag" == $expected_tag ]]; then
+          tm_out "$plaintext"
+          return 0
+     else
+          return 7
+     fi
+}
+
+# arg1: AES-CCM TLS cipher
+# arg2: key
+# arg3: nonce (must be 96 bits in length)
+# arg4: plaintext
+# arg5: additional authenticated data
+# See Section 6.1 of NIST SP 800-38C
+ccm-encrypt() {
+     local cipher="$1" key="$2" nonce="$3" plaintext="$4" aad="$5"
+     local -i tag_len
+     local ossl_cipher="-aes-128-ecb"
+     local ciphertext="" tag encrypted_tag
+     local -i i i1 i2 i3 i4
+     local -i plaintext_len n mod_check
+     local s s0
+
+     [[ ${#nonce} -ne 24 ]] && return 7
+
+     case "$cipher" in
+          TLS_AES_128_CCM_SHA256) tag_len=32 ;;
+          TLS_AES_128_CCM_8_SHA256) tag_len=16 ;;
+          *) return 7
+     esac
+
+     # compute the authentication tag
+     tag="$(ccm-compute-tag "$ossl_cipher" "$key" "$nonce" "$aad" "$plaintext" "$tag_len")"
+     [[ $? -ne 0 ]] && return 7
+
+     plaintext_len=${#plaintext}
+     n=$((plaintext_len/32))
+     mod_check=$((plaintext_len%32))
+     [[ $mod_check -ne 0 ]] && n+=1
+
+     # generate keystream
+     s="$(generate-ccm-counter-blocks "$nonce" "$n" | $OPENSSL enc "$ossl_cipher" -K "$key" -nopad 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
+
+     # encrypt the authentication tag using the first 16 bytes of the keystrem ($s)
+     if [[ $tag_len -eq 16 ]]; then
+          encrypted_tag="$(printf "%08X%08X" "$((0x${tag:0:8} ^ 0x${s:0:8}))" "$((0x${tag:8:8} ^ 0x${s:8:8}))")"
+     elif [[ $tag_len -eq 32 ]]; then
+          encrypted_tag="$(printf "%08X%08X%08X%08X" "$((0x${tag:0:8} ^ 0x${s:0:8}))" "$((0x${tag:8:8} ^ 0x${s:8:8}))" "$((0x${tag:16:8} ^ 0x${s:16:8}))" "$((0x${tag:24:8} ^ 0x${s:24:8}))")"
+     else
+          return 7
+     fi
+
+     # XOR the plaintext with the keystream ($s). For efficiency, work in blocks
+     # of 16 bytes at a time (but with each XOR operation working on 32 bits.
+     s="${s:32}"
+     [[ $mod_check -ne 0 ]] && n=$((n-1))
+     for (( i=0; i < n; i++ )); do
+          i1=$((32*i)); i2=$((i1+8)); i3=$((i1+16)); i4=$((i1+24))
+          ciphertext+="$(printf "%08X%08X%08X%08X" "$((0x${plaintext:i1:8} ^ 0x${s:i1:8}))" "$((0x${plaintext:i2:8} ^ 0x${s:i2:8}))" "$((0x${plaintext:i3:8} ^ 0x${s:i3:8}))" "$((0x${plaintext:i4:8} ^ 0x${s:i4:8}))")"
+     done
+     # If the length of the plaintext is not an even multiple of 16 bytes, then handle the final incomplete block.
+     if [[ $mod_check -ne 0 ]]; then
+          i1=$((32*n))
+          for (( i=0; i < mod_check; i+=2 )); do
+               ciphertext+="$(printf "%02X" "$((0x${plaintext:i1:2} ^ 0x${s:i1:2}))")"
+               i1+=2
+          done
+     fi
+     tm_out "$ciphertext$encrypted_tag"
+     return 0
+}
+
+# This function is based on gcm_mult in https://github.com/mko-x/SharedAES-GCM
+# args 1-16:  HL from gcm_ctx
+# args 17-32: HH from gcm_ctx
+# args 33-48: x - the input vector
+gcm_mult() {
+     local -a gcm_ctx_hl=( "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" "${13}" "${14}" "${15}" "${16}" )
+     local -a gcm_ctx_hh=( "${17}" "${18}" "${19}" "${20}" "${21}" "${22}" "${23}" "${24}" "${25}" "${26}" "${27}" "${28}" "${29}" "${30}" "${31}" "${32}" )
+     local -a x=( "${33}" "${34}" "${35}" "${36}" "${37}" "${38}" "${39}" "${40}" "${41}" "${42}" "${43}" "${44}" "${45}" "${46}" "${47}" "${48}" )
+     local output
+     local -i i lo hi rem zh zl
+     local -r -a -i last4=(0x0000 0x1c20 0x3840 0x2460 0x7080 0x6ca0 0x48c0 0x54e0 0xe100 0xfd20 0xd940 0xc560 0x9180 0x8da0 0xa9c0 0xb5e0)
+
+     lo=$((0x${x[15]} & 0x0F))
+     hi=$((0x${x[15]} >> 4))
+     zh=0x${gcm_ctx_hh[$lo]}
+     zl=0x${gcm_ctx_hl[$lo]}
+
+     for (( i=15; i >=0; i=i-1 )); do
+          lo=$((0x${x[i]} & 0x0F))
+          hi=$((0x${x[i]} >> 4))
+          if [[ $i -ne 15 ]]; then
+               rem=$((zl & 0x0F))
+               zl=$(((zl >> 4) & 0x0fffffffffffffff))
+               zl=$(((zh << 60) | zl))
+               zh=$(((zh >> 4) & 0x0fffffffffffffff))
+               zh=$((zh^(last4[rem] << 48)))
+               zh=$((zh^0x${gcm_ctx_hh[$lo]}))
+               zl=$((zl^0x${gcm_ctx_hl[$lo]}))
+          fi
+          rem=$((zl & 0x0F))
+          zl=$(((zl >> 4) & 0x0fffffffffffffff))
+          zl=$(((zh << 60) | zl))
+          zh=$(((zh >> 4) & 0x0fffffffffffffff))
+          zh=$((zh^(last4[rem] << 48)))
+          zh=$((zh^0x${gcm_ctx_hh[$hi]}))
+          zl=$((zl^0x${gcm_ctx_hl[$hi]}))
+     done
+     output="$(printf "%016X" $zh)$(printf "%016X" $zl)"
+     tm_out "${output:0:2} ${output:2:2} ${output:4:2} ${output:6:2} ${output:8:2} ${output:10:2} ${output:12:2} ${output:14:2} ${output:16:2} ${output:18:2} ${output:20:2} ${output:22:2} ${output:24:2} ${output:26:2} ${output:28:2} ${output:30:2}"
+     return 0
+}
+
+# arg1: nonce (must be 96 bits)
+# arg2: number of blocks needed for plaintext/ciphertext
+# Generate the sequence of counter blocks, which are to be encrypted and then
+# XORed with either the plaintext or the ciphertext. The first block that is
+# encrypted is used in computing the authentication tag.
+generate_gcm_ctr() {
+     local -i nr_blocks="$1"
+     local nonce="$2"
+     local -i i
+     local ctr=""
+
+     for (( i=1; i <= nr_blocks; i++ )); do
+          ctr+="${nonce}$(printf "%08X" "$i")"
+     done
+     hex2binary "$ctr"
+     return 0
+}
+
+# arg1: an OpenSSL ecb cipher (e.g., -aes-128-ecb)
+# arg2: key
+# arg3: nonce (must be 96 bits in length)
+# arg4: ciphertext
+# arg5: aad
+# arg6: mode
+# arg7: true if authentication tag should be computed. false otherwise.
+# This function is based on gcm_setkey, gcm_start, gcm_update, and gcm_finish
+# in https://github.com/mko-x/SharedAES-GCM
+gcm() {
+     local cipher="$1" aes_key="$2" nonce="$3" input="$4" aad="$5" mode="$6"
+     local compute_tag="$7"
+     local -a -i gcm_ctx_hl=(0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+     local -a -i gcm_ctx_hh=(0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)
+     local -a -i tag
+     local -a gcm_ctx_buf=("00" "00" "00" "00" "00" "00" "00" "00" "00" "00" "00" "00" "00" "00" "00" "00" )
+     local -i i j hi lo vl vh t length
+     local h hl="" hh="" buf ectr base_ectr tmp
+     local -i input_len="$((${#input}/2))" aad_len="$((${#aad}/2))" use_len
+
+     if "$compute_tag"; then
+          # gcm_setkey - populate HL and HH from gcm_ctx
+          h+=$(printf "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"| \
+               $OPENSSL enc "$cipher" -K "$aes_key" -nopad 2>/dev/null | hexdump -v -e '16/1 "%02X"')
+          hi=0x${h:0:8}
+          lo=0x${h:8:8}
+          vh=$(((hi << 32) | lo))
+
+          hi=0x${h:16:8}
+          lo=0x${h:24:8}
+          vl=$(((hi << 32) | lo))
+
+          gcm_ctx_hl[8]=$vl
+          gcm_ctx_hh[8]=$vh
+          gcm_ctx_hh[0]=0
+          gcm_ctx_hl[0]=0
+
+          for (( i=4; i > 0; i=i>>1 )); do
+               t=$(((vl & 1) * 0xe1000000))
+               vl=$(((vl >> 1) & 0x7fffffffffffffff))
+               vl=$(((vh << 63) | vl))
+               vh=$(((vh >> 1) & 0x7fffffffffffffff))
+               vh=$((vh ^ (t << 32)))
+               gcm_ctx_hl[i]=$vl
+               gcm_ctx_hh[i]=$vh
+          done
+
+          for (( i=2; i < 16; i=i<<1 )); do
+               vh=${gcm_ctx_hh[i]}
+               vl=${gcm_ctx_hl[i]}
+               for (( j=1; j < i; j++ )); do
+                    gcm_ctx_hh[$((i+j))]=$((vh ^ gcm_ctx_hh[j]))
+                    gcm_ctx_hl[$((i+j))]=$((vl ^ gcm_ctx_hl[j]))
+               done
+          done
+
+          # place HL and HH in strings so that can be passed to gcm_mult
+          for (( i=0; i < 16; i++ )); do
+               hl+="$(printf "%016X" ${gcm_ctx_hl[i]}) "
+               hh+="$(printf "%016X" ${gcm_ctx_hh[i]}) "
+          done
+
+          # Feed any additional authenticated data into the computation for the authentication tag.
+          for (( i=0; i < aad_len; i+=use_len )); do
+               [[ $((aad_len-i)) -lt 16 ]] && use_len=$((aad_len-i)) || use_len=16
+               for (( j=0; j < use_len; j++ )); do
+                    gcm_ctx_buf[j]="$(printf "%02X" $((0x${gcm_ctx_buf[j]} ^ 0x${aad:$((2*i+2*j)):2})))"
+               done
+
+               buf="$(gcm_mult $hl $hh ${gcm_ctx_buf[0]} ${gcm_ctx_buf[1]} ${gcm_ctx_buf[2]} ${gcm_ctx_buf[3]} ${gcm_ctx_buf[4]} ${gcm_ctx_buf[5]} ${gcm_ctx_buf[6]} ${gcm_ctx_buf[7]} ${gcm_ctx_buf[8]} ${gcm_ctx_buf[9]} ${gcm_ctx_buf[10]} ${gcm_ctx_buf[11]} ${gcm_ctx_buf[12]} ${gcm_ctx_buf[13]} ${gcm_ctx_buf[14]} ${gcm_ctx_buf[15]})"
+               read -r gcm_ctx_buf[0] gcm_ctx_buf[1] gcm_ctx_buf[2] gcm_ctx_buf[3] gcm_ctx_buf[4] gcm_ctx_buf[5] gcm_ctx_buf[6] gcm_ctx_buf[7] gcm_ctx_buf[8] gcm_ctx_buf[9] gcm_ctx_buf[10] gcm_ctx_buf[11] gcm_ctx_buf[12] gcm_ctx_buf[13] gcm_ctx_buf[14] gcm_ctx_buf[15] <<< "$buf"
+          done
+     fi
+
+     j=$((1 + input_len/16))
+     [[ $((input_len%16)) -ne 0 ]] && j+=1
+     ectr="$(generate_gcm_ctr "$j" "$nonce" | $OPENSSL enc "$cipher" -K "$aes_key" -nopad 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
+     base_ectr="${ectr:0:32}"
+     ectr="${ectr:32}"
+
+     # gcm_update
+     # Encrypt or decrypt the input and feed the ciphertext into the computation for the authentication tag.
+     for (( length=input_len; length > 0; length=length-use_len )); do
+          [[ $length -lt 16 ]] && use_len=$length || use_len=16
+
+          if [[ $use_len -eq 16 ]]; then
+               tmp="$(printf "%08X%08X%08X%08X" "$((0x${ectr:0:8} ^ 0x${input:0:8}))" "$((0x${ectr:8:8} ^ 0x${input:8:8}))" "$((0x${ectr:16:8} ^ 0x${input:16:8}))" "$((0x${ectr:24:8} ^ 0x${input:24:8}))")"
+          else
+               tmp=""
+               for (( i=0; i < use_len; i++ )); do
+                    tmp+="$(printf "%02X" $((0x${ectr:$((2*i)):2} ^ 0x${input:$((2*i)):2})))"
+               done
+          fi
+          output+="$tmp"
+          if "$compute_tag"; then
+               [[ $mode == decrypt ]] && tmp="${input:0:32}"
+               for (( i=0; i < use_len; i++ )); do
+                    gcm_ctx_buf[i]="$(printf "%02X" $((0x${gcm_ctx_buf[i]} ^ 0x${tmp:$((2*i)):2})))"
+               done
+          fi
+          ectr="${ectr:32}"
+
+          if "$compute_tag"; then
+               tmp="$(gcm_mult $hl $hh ${gcm_ctx_buf[0]} ${gcm_ctx_buf[1]} ${gcm_ctx_buf[2]} ${gcm_ctx_buf[3]} ${gcm_ctx_buf[4]} ${gcm_ctx_buf[5]} ${gcm_ctx_buf[6]} ${gcm_ctx_buf[7]} ${gcm_ctx_buf[8]} ${gcm_ctx_buf[9]} ${gcm_ctx_buf[10]} ${gcm_ctx_buf[11]} ${gcm_ctx_buf[12]} ${gcm_ctx_buf[13]} ${gcm_ctx_buf[14]} ${gcm_ctx_buf[15]})"
+               read -r gcm_ctx_buf[0] gcm_ctx_buf[1] gcm_ctx_buf[2] gcm_ctx_buf[3] gcm_ctx_buf[4] gcm_ctx_buf[5] gcm_ctx_buf[6] gcm_ctx_buf[7] gcm_ctx_buf[8] gcm_ctx_buf[9] gcm_ctx_buf[10] gcm_ctx_buf[11] gcm_ctx_buf[12] gcm_ctx_buf[13] gcm_ctx_buf[14] gcm_ctx_buf[15] <<< "$tmp"
+          fi
+
+          input="${input:$((2*use_len))}"
+     done
+
+     if "$compute_tag"; then
+          # gcm_finish - feed the lengths of the ciphertext and additional authenticated data
+          # into the computation for the authentication tag.
+          input_len=$((8*input_len))
+          aad_len=$((8*aad_len))
+          output+=" "
+          for (( i=0; i < 16; i++ )); do
+               tag[i]=0x${base_ectr:$((2*i)):2}
+          done
+
+          if [[ $input_len -ne 0 ]] || [[ $aad_len -ne 0 ]]; then
+               buf="$(printf "%016X" $aad_len)$(printf "%016X" $input_len)"
+               for (( i=0; i < 16; i++ )); do
+                    gcm_ctx_buf[i]="$(printf "%02X" $((0x${gcm_ctx_buf[i]} ^ 0x${buf:$((2*i)):2})))"
+               done
+
+               buf="$(gcm_mult $hl $hh ${gcm_ctx_buf[0]} ${gcm_ctx_buf[1]} ${gcm_ctx_buf[2]} ${gcm_ctx_buf[3]} ${gcm_ctx_buf[4]} ${gcm_ctx_buf[5]} ${gcm_ctx_buf[6]} ${gcm_ctx_buf[7]} ${gcm_ctx_buf[8]} ${gcm_ctx_buf[9]} ${gcm_ctx_buf[10]} ${gcm_ctx_buf[11]} ${gcm_ctx_buf[12]} ${gcm_ctx_buf[13]} ${gcm_ctx_buf[14]} ${gcm_ctx_buf[15]})"
+               read -r gcm_ctx_buf[0] gcm_ctx_buf[1] gcm_ctx_buf[2] gcm_ctx_buf[3] gcm_ctx_buf[4] gcm_ctx_buf[5] gcm_ctx_buf[6] gcm_ctx_buf[7] gcm_ctx_buf[8] gcm_ctx_buf[9] gcm_ctx_buf[10] gcm_ctx_buf[11] gcm_ctx_buf[12] gcm_ctx_buf[13] gcm_ctx_buf[14] gcm_ctx_buf[15] <<< "$buf"
+               for (( i=0; i < 16; i++ )); do
+                    tag[i]=$((tag[i] ^ 0x${gcm_ctx_buf[i]}))
+               done
+          fi
+          for (( i=0; i < 16; i++ )); do
+               output+="$(printf "%02X" ${tag[i]})"
+          done
+     fi
+     tm_out "$output"
+     return 0
+}
+
+# arg1: AES-GCM TLS cipher
+# arg2: key
+# arg3: nonce (must be 96 bits in length)
+# arg4: ciphertext
+# arg5: aad
+# arg6: expected tag
+# arg7: true if authentication tag should be checked. false otherwise.
+gcm-decrypt() {
+     local cipher="$1" key="$2" nonce="$3" ciphertext="$4" aad="$5" expected_tag="$(toupper "$6")"
+     local compute_tag="$7"
+     local plaintext computed_tag tmp
+
+     [[ ${#nonce} -ne 24 ]] && return 7
+
+     if [[ "$cipher" == TLS_AES_128_GCM_SHA256 ]] && "$HAS_AES128_GCM" && ! "$compute_tag"; then
+          plaintext="$(hex2binary "$ciphertext" | \
+                       $OPENSSL enc -aes-128-gcm -K "$key" -iv "$nonce" 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
+          tm_out "$(strip_spaces "$plaintext")"
+          return 0
+     elif [[ "$cipher" == TLS_AES_256_GCM_SHA384 ]] && "$HAS_AES256_GCM" && ! "$compute_tag"; then
+          plaintext="$(hex2binary "$ciphertext" | \
+                       $OPENSSL enc -aes-256-gcm -K "$key" -iv "$nonce" 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
+          tm_out "$(strip_spaces "$plaintext")"
+          return 0
+     fi
+
+     case "$cipher" in
+          *AES_128*) cipher="-aes-128-ecb" ;;
+          *AES_256*) cipher="-aes-256-ecb" ;;
+          *) return 7
+     esac
+
+     tmp="$(gcm "$cipher" "$key" "$nonce" "$ciphertext" "$aad" "decrypt" "$compute_tag")"
+     [[ $? -ne 0 ]] && return 7
+     computed_tag="${tmp##* }"
+     plaintext="${tmp% $computed_tag}"
+
+     if ! "$compute_tag" || [[ "$computed_tag" == $expected_tag ]]; then
+          tm_out "$plaintext"
+          return 0
+     else
+          return 7
+     fi
+}
+
+# arg1: AES-GCM TLS cipher
+# arg2: key
+# arg3: nonce (must be 96 bits in length)
+# arg4: plaintext
+# arg5: aad
+# See Section 7.2 of SP 800-38D
+gcm-encrypt() {
+     local cipher
+
+     case "$1" in
+          *AES_128*) cipher="-aes-128-ecb" ;;
+          *AES_256*) cipher="-aes-256-ecb" ;;
+          *) return 7
+     esac
+     [[ ${#3} -ne 24 ]] && return 7
+
+     tm_out "$(gcm "$cipher" "$2" "$3" "$4" "$5" "encrypt" true)"
+     return $?
+}
+
 # arg1: TLS cipher
 # arg2: key
 # arg3: nonce (must be 96 bits in length)
 # arg4: ciphertext
+# arg5: additional authenticated data
 sym-decrypt() {
      local cipher="$1"
      local key="$2" nonce="$3"
      local ciphertext="$4"
-     local ossl_cipher
+     local additional_data="$5"
      local plaintext
      local -i ciphertext_len tag_len
+     local compute_tag=false
 
      case "$cipher" in
           *CCM_8*)
@@ -11121,41 +13272,50 @@ sym-decrypt() {
      # The final $tag_len characters of the ciphertext are the authentication tag
      ciphertext_len=${#ciphertext}
      [[ $ciphertext_len -lt $tag_len ]] && return 7
-     ciphertext_len=$ciphertext_len-$tag_len
+     ciphertext_len=$((ciphertext_len-tag_len))
+
+     # In general there is no need to verify that the authentication tag is correct
+     # when decrypting, and performing the check is time consuming when the
+     # computations are performed in Bash. If the ciphertext is very long (e.g.,
+     # some application data), then trying to compute the authentication tag is
+     # too time consuming even for debug mode.
+     [[ $DEBUG -ge 1 ]] && [[ $ciphertext_len -le 1024 ]] && compute_tag=true
 
      if [[ "$cipher" =~ CHACHA20_POLY1305 ]]; then
-          if "$HAS_CHACHA20"; then
-               plaintext="$(asciihex_to_binary_file "${ciphertext:0:ciphertext_len}" "/dev/stdout" | \
-                            $OPENSSL enc -chacha20 -K "$key" -iv "01000000$nonce" 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
-               plaintext="$(strip_spaces "$plaintext")"
-          else
-               plaintext="$(chacha20 "$key" "$nonce" "${ciphertext:0:ciphertext_len}")"
-          fi
-     elif [[ "$cipher" == TLS_AES_128_GCM_SHA256 ]] && "$HAS_AES128_GCM"; then
-          plaintext="$(asciihex_to_binary_file "${ciphertext:0:ciphertext_len}" "/dev/stdout" | \
-                       $OPENSSL enc -aes-128-gcm -K "$key" -iv "$nonce" 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
-          plaintext="$(strip_spaces "$plaintext")"
-     elif [[ "$cipher" == TLS_AES_256_GCM_SHA384 ]] && "$HAS_AES256_GCM"; then
-          plaintext="$(asciihex_to_binary_file "${ciphertext:0:ciphertext_len}" "/dev/stdout" | \
-                       $OPENSSL enc -aes-256-gcm -K "$key" -iv "$nonce" 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
-          plaintext="$(strip_spaces "$plaintext")"
-     else
-          if [[ "$cipher" =~ AES_128 ]]; then
-               ossl_cipher="-aes-128-ecb"
-          elif [[ "$cipher" =~ AES_256 ]]; then
-               ossl_cipher="-aes-256-ecb"
-          else
-               return 7
-          fi
-          if [[ "$cipher" =~ CCM ]]; then
-               plaintext="$(ccm-gcm-decrypt "$ossl_cipher" "$key" "02${nonce}000001" "${ciphertext:0:ciphertext_len}")"
-          else # GCM
-               plaintext="$(ccm-gcm-decrypt "$ossl_cipher" "$key" "${nonce}00000002" "${ciphertext:0:ciphertext_len}")"
-          fi
+          plaintext="$(chacha20_aead_decrypt "$key" "$nonce" "${ciphertext:0:ciphertext_len}" "$additional_data" "${ciphertext:ciphertext_len:tag_len}" "$compute_tag")"
+     elif [[ "$cipher" =~ CCM ]]; then
+          plaintext=$(ccm-decrypt "$cipher" "$key" "$nonce" "${ciphertext:0:ciphertext_len}" "$additional_data" "${ciphertext:ciphertext_len:tag_len}" "$compute_tag")
+     else # GCM
+          plaintext=$(gcm-decrypt "$cipher" "$key" "$nonce" "${ciphertext:0:ciphertext_len}" "$additional_data" "${ciphertext:ciphertext_len:tag_len}" "$compute_tag")
      fi
      [[ $? -ne 0 ]] && return 7
 
      tm_out "$plaintext"
+     return 0
+}
+
+# arg1: TLS cipher
+# arg2: key
+# arg3: nonce (must be 96 bits in length)
+# arg4: plaintext
+# arg5: additional authenticated data
+sym-encrypt() {
+     local cipher="$1" key="$2" nonce="$3" plaintext="$4" additional_data="$5"
+     local ciphertext=""
+
+
+     if [[ "$cipher" =~ CCM ]]; then
+          ciphertext=$(ccm-encrypt "$cipher" "$key" "$nonce" "$plaintext" "$additional_data")
+     elif [[ "$cipher" =~ GCM ]]; then
+          ciphertext=$(gcm-encrypt "$cipher" "$key" "$nonce" "$plaintext" "$additional_data")
+     elif [[ "$cipher" =~ CHACHA20_POLY1305 ]]; then
+          ciphertext="$(chacha20_aead_encrypt "$key" "$nonce" "$plaintext" "$additional_data")"
+     else
+          return 7
+     fi
+     [[ $? -ne 0 ]] && return 7
+
+     tm_out "$(strip_spaces "$ciphertext")"
      return 0
 }
 
@@ -11188,45 +13348,55 @@ get-nonce() {
 # arg1: ASCII-HEX encoded reply
 # arg2: whether to process the full request ("all") or just the basic request plus the ephemeral key if any ("ephemeralkey").
 # arg3: TLS cipher for decrypting TLSv1.3 response
-# arg4: key and IV for decrypting TLSv1.3 response
+# arg4: handshake secret
+# arg5: message transcript (up through ServerHello)
 check_tls_serverhellodone() {
      local tls_hello_ascii="$1"
      local process_full="$2"
      local cipher="$3"
-     local key_and_iv="$4"
+     local handshake_secret="$4"
+     local msg_transcript="$5"
      local tls_handshake_ascii="" tls_alert_ascii=""
      local -i i tls_hello_ascii_len tls_handshake_ascii_len tls_alert_ascii_len
      local -i msg_len remaining tls_serverhello_ascii_len sid_len
      local -i j offset tls_extensions_len extension_len
-     local tls_content_type tls_protocol tls_handshake_type tls_msg_type extension_type
+     local tls_content_type tls_protocol tls_msg_type extension_type
      local tls_err_level
-     local key iv
+     local hash_fn handshake_traffic_keys key="" iv="" finished_key=""
+     local post_finished_msg=""
      local -i seq_num=0 plaintext_len
-     local plaintext decrypted_response=""
+     local plaintext decrypted_response="" additional_data
+     local include_headers=true
 
      DETECTED_TLS_VERSION=""
 
-     [[ -n "$key_and_iv" ]] && read -r key iv <<< "$key_and_iv"
+     if [[ -n "$handshake_secret" ]]; then
+          handshake_traffic_keys="$(derive-handshake-traffic-keys "$cipher" "$handshake_secret" "$msg_transcript" "server")"
+          read -r key iv finished_key <<< "$handshake_traffic_keys"
+     fi
 
      if [[ -z "$tls_hello_ascii" ]]; then
           return 0              # no server hello received
      fi
 
      tls_hello_ascii_len=${#tls_hello_ascii}
-     for (( i=0; i<tls_hello_ascii_len; i=i+msg_len )); do
+     for (( i=0; i<tls_hello_ascii_len; i+=msg_len )); do
           remaining=$tls_hello_ascii_len-$i
           [[ $remaining -lt 10 ]] && return 1
 
           tls_content_type="${tls_hello_ascii:i:2}"
-          [[ "$tls_content_type" != 14 ]] && [[ "$tls_content_type" != 15 ]] && \
-               [[ "$tls_content_type" != 16 ]] && [[ "$tls_content_type" != 17 ]] && return 2
-          i=$i+2
+          case "$tls_content_type" in
+               14|15|16|17) ;;
+               *) return 2 ;;
+          esac
+          i+=2
           tls_protocol="${tls_hello_ascii:i:4}"
           [[ -z "$DETECTED_TLS_VERSION" ]] && DETECTED_TLS_VERSION="$tls_protocol"
           [[ "${tls_protocol:0:2}" != 03 ]] && return 2
-          i=$i+4
+          i+=4
+          additional_data="$tls_content_type$tls_protocol${tls_hello_ascii:i:4}"
           msg_len=2*$(hex2dec "${tls_hello_ascii:i:4}")
-          i=$i+4
+          i+=4
           remaining=$tls_hello_ascii_len-$i
           [[ $msg_len -gt $remaining ]] && return 1
 
@@ -11251,7 +13421,7 @@ check_tls_serverhellodone() {
                               offset=84+$sid_len
                               tls_extensions_len=2*$(hex2dec "${tls_handshake_ascii:offset:4}")
                               [[ $tls_extensions_len -ne $tls_serverhello_ascii_len-$sid_len-80 ]] && return 2
-                              for (( j=0; j<tls_extensions_len; j=j+8+extension_len )); do
+                              for (( j=0; j<tls_extensions_len; j+=8+extension_len )); do
                                    [[ $tls_extensions_len-$j -lt 8 ]] && return 2
                                    offset=88+$sid_len+$j
                                    extension_type="${tls_handshake_ascii:offset:4}"
@@ -11267,7 +13437,10 @@ check_tls_serverhellodone() {
                          fi
                     fi
                     # A version of {0x7F, xx} represents an implementation of a draft version of TLS 1.3
-                    [[ "${DETECTED_TLS_VERSION:0:2}" == 7F ]] && DETECTED_TLS_VERSION=0304
+                    if [[ "${DETECTED_TLS_VERSION:0:2}" == 7F ]]; then
+                         [[ 0x${DETECTED_TLS_VERSION:2:2} -lt 25 ]] && include_headers=false
+                         DETECTED_TLS_VERSION=0304
+                    fi
                     if [[ 0x$DETECTED_TLS_VERSION -ge 0x0304 ]] && [[ "$process_full" == ephemeralkey ]]; then
                          tls_serverhello_ascii_len=2*$(hex2dec "${tls_handshake_ascii:2:6}")
                          if [[ $tls_handshake_ascii_len -ge $tls_serverhello_ascii_len+8 ]]; then
@@ -11279,10 +13452,12 @@ check_tls_serverhellodone() {
           elif [[ "$tls_content_type" == 15 ]]; then   # TLS ALERT
                tls_alert_ascii+="${tls_hello_ascii:i:msg_len}"
                decrypted_response+="$tls_content_type$tls_protocol$(printf "%04X" $((msg_len/2)))${tls_hello_ascii:i:msg_len}"
-          elif [[ "$tls_content_type" == 17 ]] && [[ -n "$key_and_iv" ]]; then # encrypted data
+          elif [[ "$tls_content_type" == 17 ]] && [[ -n "$key" ]]; then # encrypted data
+               # The header information was added to additional data in TLSv1.3 draft 25.
+               "$include_headers" || additional_data=""
                nonce="$(get-nonce "$iv" "$seq_num")"
                [[ $? -ne 0 ]] && return 2
-               plaintext="$(sym-decrypt "$cipher" "$key" "$nonce" "${tls_hello_ascii:i:msg_len}")"
+               plaintext="$(sym-decrypt "$cipher" "$key" "$nonce" "${tls_hello_ascii:i:msg_len}" "$additional_data")"
                [[ $? -ne 0 ]] && return 2
                seq_num+=1
 
@@ -11293,19 +13468,23 @@ check_tls_serverhellodone() {
                done
                tls_content_type="${plaintext:plaintext_len:2}"
                decrypted_response+="${tls_content_type}0301$(printf "%04X" $((plaintext_len/2)))${plaintext:0:plaintext_len}"
-               if [[ "$tls_content_type" == 16 ]]; then
-                    tls_handshake_ascii+="${plaintext:0:plaintext_len}"
-               elif [[ "$tls_content_type" == 15 ]]; then
-                    tls_alert_ascii+="${plaintext:0:plaintext_len}"
-               else
-                    return 2
-               fi
+               case "$tls_content_type" in
+                    15) tls_alert_ascii+="${plaintext:0:plaintext_len}" ;;
+                    16) tls_handshake_ascii+="${plaintext:0:plaintext_len}"
+                        # Data after the Finished message is encrypted under a different key.
+                        if [[ "${plaintext:0:2}" == 14 ]]; then
+                             [[ "$process_full" == all+ ]] && post_finished_msg="${tls_hello_ascii:$((i+msg_len))}"
+                             break
+                        fi
+                        ;;
+                    *) return 2 ;;
+               esac
           fi
      done
 
      # If there is a fatal alert, then we are done.
      tls_alert_ascii_len=${#tls_alert_ascii}
-     for (( i=0; i<tls_alert_ascii_len; i=i+4 )); do
+     for (( i=0; i<tls_alert_ascii_len; i+=4 )); do
           remaining=$tls_alert_ascii_len-$i
           [[ $remaining -lt 4 ]] && return 1
           tls_err_level=${tls_alert_ascii:i:2}    # 1: warning, 2: fatal
@@ -11314,26 +13493,45 @@ check_tls_serverhellodone() {
 
      # If there is a serverHelloDone or Finished, then we are done.
      tls_handshake_ascii_len=${#tls_handshake_ascii}
-     for (( i=0; i<tls_handshake_ascii_len; i=i+msg_len )); do
+     for (( i=0; i<tls_handshake_ascii_len; i+=msg_len )); do
           remaining=$tls_handshake_ascii_len-$i
           [[ $remaining -lt 8 ]] && return 1
           tls_msg_type="${tls_handshake_ascii:i:2}"
-          i=$i+2
+          i+=2
           msg_len=2*$(hex2dec "${tls_handshake_ascii:i:6}")
-          i=$i+6
+          i+=6
           remaining=$tls_handshake_ascii_len-$i
           [[ $msg_len -gt $remaining ]] && return 1
 
+          # The ServerHello has already been added to $msg_transcript,
+          # but all other handshake messages need to be added.
+          if [[ -n "$key" ]] && [[ "$tls_msg_type" != 02 ]]; then
+               if [[ $DEBUG -ge 1 ]] && [[ "$tls_msg_type" == 14 ]]; then
+                    # Check the Finished message
+                    if [[ "$cipher" == *SHA256 ]]; then
+                         hash_fn="-sha256"
+                         [[ $msg_len -eq 64 ]] || return 2
+                    elif [[ "$cipher" == *SHA384 ]]; then
+                         hash_fn="-sha384"
+                         [[ $msg_len -eq 96 ]] || return 2
+                    else
+                         return 2
+                    fi
+                    [[ "${tls_handshake_ascii:i:msg_len}" != $(hmac-transcript "$hash_fn" "$finished_key" "$msg_transcript") ]] && \
+                         return 2
+               fi
+               msg_transcript+="$tls_msg_type${tls_handshake_ascii:$((i-6)):6}${tls_handshake_ascii:i:msg_len}"
+          fi
           # For SSLv3 - TLS1.2 look for a ServerHelloDone message.
           # For TLS 1.3 look for a Finished message.
           [[ $tls_msg_type == 0E ]] && tm_out "" && return 0
-          [[ $tls_msg_type == 14 ]] && tm_out "$decrypted_response" && return 0
+          [[ $tls_msg_type == 14 ]] && tm_out "$msg_transcript $decrypted_response $post_finished_msg" && return 0
      done
      # If the response is TLSv1.3 and the full response is to be processed, but the
      # key and IV have not been provided to decrypt the response, then return 3 if
      # the entire ServerHello has been received.
      if [[ "$DETECTED_TLS_VERSION" == 0304 ]] && [[ "$process_full" =~ all ]] && \
-        [[ -z "$key_and_iv" ]] && [[ $tls_handshake_ascii_len -gt 0 ]]; then
+        [[ -z "$handshake_secret" ]] && [[ $tls_handshake_ascii_len -gt 0 ]]; then
           return 3
      fi
      # If we haven't encountered a fatal alert or a server hello done,
@@ -11411,6 +13609,7 @@ parse_tls_serverhello() {
      local tls_msg_type tls_content_type tls_protocol tls_protocol2 tls_hello_time
      local tls_err_level tls_err_descr_no tls_cipher_suite rfc_cipher_suite tls_compression_method
      local tls_extensions="" extension_type named_curve_str="" named_curve_oid
+     local cert_compression_method="" cert_compression_method_str=""
      local -i i j extension_len extn_len tls_extensions_len ocsp_response_len=0 ocsp_response_list_len ocsp_resp_offset
      local -i certificate_list_len certificate_len cipherlist_len
      local -i curve_type named_curve
@@ -11419,6 +13618,7 @@ parse_tls_serverhello() {
      local len1 len2 len3 key_bitstring="" pem_certificate
      local dh_p dh_param ephemeral_param rfc7919_param
      local -i dh_p_len dh_param_len
+     local peering_signing_digest=0 peer_signature_type=0
 
      DETECTED_TLS_VERSION=""
      [[ $DEBUG -ge 1 ]] && echo > $TMPFILE
@@ -11427,7 +13627,7 @@ parse_tls_serverhello() {
 
      # Client messages, including handshake messages, are carried by the record layer.
      # First, extract the handshake and alert messages.
-     # see http://en.wikipedia.org/wiki/Transport_Layer_Security-SSL#TLS_record
+     # see https://en.wikipedia.org/wiki/Transport_Layer_Security#TLS_record
      # byte 0:      content type:                 0x14=CCS,    0x15=TLS alert  x16=Handshake,  0x17 Application, 0x18=HB
      # byte 1+2:    TLS version word, major is 03, minor 00=SSL3, 01=TLS1 02=TLS1.1 03=TLS 1.2
      # byte 3+4:    fragment length
@@ -11436,7 +13636,7 @@ parse_tls_serverhello() {
      if [[ $DEBUG -ge 3 ]] && [[ $tls_hello_ascii_len -gt 0 ]]; then
           echo "TLS message fragments:"
      fi
-     for (( i=0; i<tls_hello_ascii_len; i=i+msg_len )); do
+     for (( i=0; i<tls_hello_ascii_len; i+=msg_len )); do
           if [[ $tls_hello_ascii_len-$i -lt 10 ]]; then
                if [[ "$process_full" =~ all ]]; then
                     # The entire server response should have been retrieved.
@@ -11446,15 +13646,15 @@ parse_tls_serverhello() {
                else
                     # This could just be a result of the server's response being
                     # split across two or more packets.
-                    continue
+                    break
                fi
           fi
           tls_content_type="${tls_hello_ascii:i:2}"
-          i=$i+2
+          i+=2
           tls_protocol="${tls_hello_ascii:i:4}"
-          i=$i+4
+          i+=4
           msg_len=2*$(hex2dec "${tls_hello_ascii:i:4}")
-          i=$i+4
+          i+=4
 
           if [[ $DEBUG -ge 3 ]]; then
                echo  "     protocol (rec. layer):  0x$tls_protocol"
@@ -11481,11 +13681,12 @@ parse_tls_serverhello() {
                     [[ $DEBUG -ge 1 ]] && tmpfile_handle ${FUNCNAME[0]}.txt
                     return 3
                fi
-          elif [[ $tls_content_type != 14 ]] && [[ $tls_content_type != 15 ]] && \
+          fi
+          if [[ $tls_content_type != 14 ]] && [[ $tls_content_type != 15 ]] && \
                [[ $tls_content_type != 16 ]] && [[ $tls_content_type != 17 ]]; then
                debugme tmln_warning "Content type other than alert, handshake, change cipher spec, or application data detected."
                [[ $DEBUG -ge 1 ]] && tmpfile_handle ${FUNCNAME[0]}.txt
-               return 8
+               return 1
           elif [[ "${tls_protocol:0:2}" != 03 ]]; then
                debugme tmln_warning "Protocol record_version.major is not 03."
                [[ $DEBUG -ge 1 ]] && tmpfile_handle ${FUNCNAME[0]}.txt
@@ -11505,11 +13706,10 @@ parse_tls_serverhello() {
                fi
           fi
 
-          if [[ $tls_content_type == 16 ]]; then
-               tls_handshake_ascii="$tls_handshake_ascii${tls_hello_ascii:i:msg_len}"
-          elif [[ $tls_content_type == 15 ]]; then   # TLS ALERT
-               tls_alert_ascii="$tls_alert_ascii${tls_hello_ascii:i:msg_len}"
-          fi
+          case "$tls_content_type" in
+               15) tls_alert_ascii="$tls_alert_ascii${tls_hello_ascii:i:msg_len}" ;;
+               16) tls_handshake_ascii="$tls_handshake_ascii${tls_hello_ascii:i:msg_len}" ;;
+          esac
      done
 
      # Now check the alert messages.
@@ -11521,8 +13721,9 @@ parse_tls_serverhello() {
      fi
 
      if [[ $tls_alert_ascii_len -gt 0 ]]; then
+          echo "CONNECTED(00000003)" > $TMPFILE
           debugme echo "TLS alert messages:"
-          for (( i=0; i+3 < tls_alert_ascii_len; i=i+4 )); do
+          for (( i=0; i+3 < tls_alert_ascii_len; i+=4 )); do
                tls_err_level=${tls_alert_ascii:i:2}    # 1: warning, 2: fatal
                j=$i+2
                tls_err_descr_no=${tls_alert_ascii:j:2}
@@ -11561,7 +13762,7 @@ parse_tls_serverhello() {
      if [[ $DEBUG -ge 3 ]] && [[ $tls_handshake_ascii_len -gt 0 ]]; then
           echo "TLS handshake messages:"
      fi
-     for (( i=0; i<tls_handshake_ascii_len; i=i+msg_len )); do
+     for (( i=0; i<tls_handshake_ascii_len; i+=msg_len )); do
           if [[ $tls_handshake_ascii_len-$i -lt 8 ]]; then
                if [[ "$process_full" =~ all ]]; then
                     # The entire server response should have been retrieved.
@@ -11575,9 +13776,9 @@ parse_tls_serverhello() {
                fi
           fi
           tls_msg_type="${tls_handshake_ascii:i:2}"
-          i=$i+2
+          i+=2
           msg_len=2*$(hex2dec "${tls_handshake_ascii:i:6}")
-          i=$i+6
+          i+=6
           if [[ $DEBUG -ge 3 ]]; then
                tm_out  "     handshake type:         0x${tls_msg_type}"
                case $tls_msg_type in
@@ -11628,8 +13829,10 @@ parse_tls_serverhello() {
                fi
                tls_serverhello_ascii="${tls_handshake_ascii:i:msg_len}"
                tls_serverhello_ascii_len=$msg_len
+          elif [[ "$tls_msg_type" == 04 ]]; then
+               parse_tls13_new_session_ticket "${APP_TRAF_KEY_INFO%% *}" "${tls_handshake_ascii:$((i-8)):$((msg_len+8))}"
           elif [[ "$process_full" =~ all ]] && [[ "$tls_msg_type" == 08 ]]; then
-               # Add excrypted extensions (now decrypted) to end of extensions in SeverHello
+               # Add excrypted extensions (now decrypted) to end of extensions in ServerHello
                tls_encryptedextensions_ascii="${tls_handshake_ascii:i:msg_len}"
                tls_encryptedextensions_ascii_len=$msg_len
                if [[ $msg_len -lt 2 ]]; then
@@ -11652,6 +13855,14 @@ parse_tls_serverhello() {
                fi
                tls_serverkeyexchange_ascii="${tls_handshake_ascii:i:msg_len}"
                tls_serverkeyexchange_ascii_len=$msg_len
+          elif [[ "$tls_msg_type" == 0F ]]; then
+               if [[ $msg_len -lt 4 ]]; then
+                    debugme tmln_warning "Response contained malformed certificate_verify message."
+                    return 1
+               fi
+               # Extract just the SignatureAndHashAlgorithm from the CertificateVerify message.
+               peering_signing_digest="${tls_handshake_ascii:i:2}"
+               peer_signature_type="${tls_handshake_ascii:$((i+2)):2}"
           elif [[ "$process_full" =~ all ]] && [[ "$tls_msg_type" == 16 ]]; then
                if [[ -n "$tls_certificate_status_ascii" ]]; then
                     debugme tmln_warning "Response contained more than one certificate_status handshake message."
@@ -11666,24 +13877,26 @@ parse_tls_serverhello() {
                     [[ $DEBUG -ge 1 ]] && tmpfile_handle ${FUNCNAME[0]}.txt
                     return 1
                fi
+               cert_compression_method="${tls_handshake_ascii:i:4}"
+               case $cert_compression_method in
+                    0001) cert_compression_method_str="ZLIB" ;;
+                    0002) cert_compression_method_str="Brotli" ;;
+                    0003) cert_compression_method_str="Zstandard" ;;
+                    *)    cert_compression_method_str="unrecognized" ;;
+               esac
                if [[ $DEBUG -ge 3 ]]; then
-                    tm_out "          Certificate Compression Algorithm: ${tls_handshake_ascii:i:4}"
-                    case ${tls_handshake_ascii:i:4} in
-                         0001) tmln_out " (ZLIB)" ;;
-                         0002) tmln_out " (Brotli)" ;;
-                         0003) tmln_out " (Zstandard)" ;;
-                         *)    tmln_out ;;
-                    esac
+                    tmln_out "          Certificate Compression Algorithm: $cert_compression_method ($cert_compression_method_str)"
                     offset=$((i+4))
                     tmln_out "          Uncompressed certificate length:   $(printf "%d" 0x${tls_handshake_ascii:offset:6})"
                     tmln_out
                fi
+               tls_extensions+="TLS server extension \"compress_certificate\" (id=27), len=0\n"
                if [[ "$process_full" =~ all ]] && "$HAS_ZLIB" && [[ "${tls_handshake_ascii:i:4}" == 0001 ]]; then
                     offset=$((i+4))
                     tls_certificate_ascii_len=2*0x${tls_handshake_ascii:offset:6}
                     offset=$((i+16))
                     len1=$((msg_len-16))
-                    tls_certificate_ascii="$(asciihex_to_binary_file "${tls_handshake_ascii:offset:len1}" /dev/stdout | $OPENSSL zlib -d 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
+                    tls_certificate_ascii="$(hex2binary "${tls_handshake_ascii:offset:len1}" | $OPENSSL zlib -d 2>/dev/null | hexdump -v -e '16/1 "%02X"')"
                     tls_certificate_ascii="${tls_certificate_ascii%%[!0-9A-F]*}"
                     if [[ ${#tls_certificate_ascii} -ne $tls_certificate_ascii_len ]]; then
                          debugme tmln_warning "Length of uncompressed certificates did not match specified length."
@@ -11710,10 +13923,12 @@ parse_tls_serverhello() {
           [[ $DEBUG -ge 1 ]] && tmpfile_handle ${FUNCNAME[0]}.txt
           return 1
      fi
-     if [[ $DEBUG -eq 0 ]]; then
-          echo "CONNECTED(00000003)" > $TMPFILE
-     else
-          echo "CONNECTED(00000003)" >> $TMPFILE
+     if [[ $tls_alert_ascii_len -eq 0 ]]; then
+          if [[ $DEBUG -eq 0 ]]; then
+               echo "CONNECTED(00000003)" > $TMPFILE
+          else
+               echo "CONNECTED(00000003)" >> $TMPFILE
+          fi
      fi
 
      # First parse the server hello handshake message
@@ -11772,7 +13987,7 @@ parse_tls_serverhello() {
                [[ $DEBUG -ge 1 ]] && tmpfile_handle ${FUNCNAME[0]}.txt
                return 1
           fi
-          for (( i=0; i<tls_extensions_len; i=i+8+extension_len )); do
+          for (( i=0; i<tls_extensions_len; i+=8+extension_len )); do
                if [[  $tls_extensions_len-$i -lt 8 ]]; then
                     debugme echo "Malformed response"
                     [[ $DEBUG -ge 1 ]] && tmpfile_handle ${FUNCNAME[0]}.txt
@@ -11787,6 +14002,7 @@ parse_tls_serverhello() {
                     [[ $DEBUG -ge 1 ]] && tmpfile_handle ${FUNCNAME[0]}.txt
                     return 1
                fi
+               # https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
                case $extension_type in
                     0000) tls_extensions+="TLS server extension \"server name\" (id=0), len=$extension_len\n" ;;
                     0001) tls_extensions+="TLS server extension \"max fragment length\" (id=1), len=$extension_len\n" ;;
@@ -11822,7 +14038,7 @@ parse_tls_serverhello() {
                                     return 1
                                fi
                                offset=$((offset+4))
-                               for (( j=0; j < len1; j=j+4 )); do
+                               for (( j=0; j < len1; j+=4 )); do
                                     [[ $j -ne 0 ]] && echo -n ", " >> $TMPFILE
                                     case "${tls_serverhello_ascii:offset:4}" in
                                          "0017") echo -n "secp256r1" >> $TMPFILE ;;
@@ -11870,7 +14086,7 @@ parse_tls_serverhello() {
                                     return 1
                                fi
                                offset=$((offset+2))
-                               asciihex_to_binary_file "${tls_serverhello_ascii:offset:j}" "$TMPFILE"
+                               hex2binary "${tls_serverhello_ascii:offset:j}" >> "$TMPFILE"
                                echo "" >> $TMPFILE
                                echo "===============================================================================" >> $TMPFILE
                           fi
@@ -11966,7 +14182,7 @@ parse_tls_serverhello() {
                                     key_bitstring="3082${len1}$key_bitstring"
                                fi
                                if [[ -n "$key_bitstring" ]]; then
-                                    key_bitstring="$(asciihex_to_binary_file "$key_bitstring" "/dev/stdout" | $OPENSSL pkey -pubin -inform DER 2>$ERRFILE)"
+                                    key_bitstring="$(hex2binary "$key_bitstring" | $OPENSSL pkey -pubin -inform DER 2>$ERRFILE)"
                                     if [[ -z "$key_bitstring" ]] && [[ $DEBUG -ge 2 ]]; then
                                          if [[ -n "$named_curve_str" ]]; then
                                               prln_warning "Your $OPENSSL doesn't support $named_curve_str"
@@ -12000,7 +14216,7 @@ parse_tls_serverhello() {
                                local -i protocol_len
                                echo -n "Protocols advertised by server: " >> $TMPFILE
                                offset=$((extns_offset+12+i))
-                               for (( j=0; j<extension_len; j=j+protocol_len+2 )); do
+                               for (( j=0; j<extension_len; j+=protocol_len+2 )); do
                                     if [[ $extension_len -lt $j+2 ]]; then
                                          debugme echo "Malformed next protocol extension."
                                          [[ $DEBUG -ge 1 ]] && tmpfile_handle ${FUNCNAME[0]}.txt
@@ -12013,7 +14229,7 @@ parse_tls_serverhello() {
                                          return 1
                                     fi
                                     offset=$((offset+2))
-                                    asciihex_to_binary_file "${tls_serverhello_ascii:offset:protocol_len}" "$TMPFILE"
+                                    hex2binary "${tls_serverhello_ascii:offset:protocol_len}" >> "$TMPFILE"
                                     offset=$((offset+protocol_len))
                                     [[ $j+$protocol_len+2 -lt $extension_len ]] && echo -n ", " >> $TMPFILE
                                done
@@ -12039,7 +14255,7 @@ parse_tls_serverhello() {
                          tls_extensions_len+=$tls_encryptedextensions_ascii_len-4
                          tls_encryptedextensions_ascii_len=$tls_encryptedextensions_ascii_len/2-2
                          offset=$((extns_offset+4))
-                         tls_serverhello_ascii="${tls_serverhello_ascii:0:extns_offset}$(printf "%04X" $((0x${tls_serverhello_ascii:extns_offset:4}+$tls_encryptedextensions_ascii_len)))${tls_serverhello_ascii:offset}${tls_encryptedextensions_ascii:4}"
+                         tls_serverhello_ascii="${tls_serverhello_ascii:0:extns_offset}$(printf "%04X" $((0x${tls_serverhello_ascii:extns_offset:4}+tls_encryptedextensions_ascii_len)))${tls_serverhello_ascii:offset}${tls_encryptedextensions_ascii:4}"
                     fi
                     if [[ -n "$tls_certificate_ascii" ]]; then
                          # In TLS 1.3, the Certificate message begins with a zero length certificate_request_context.
@@ -12048,7 +14264,7 @@ parse_tls_serverhello() {
                          # create a new $tls_certificate_ascii that only contains a list of certificates.
                          if [[ -n "$tls_certificate_ascii" ]]; then
                               if [[ "${tls_certificate_ascii:0:2}" != "00" ]]; then
-                                  debugme tmln_warning "Malformed Certificate Handshake message in ServerHello."
+                                   debugme tmln_warning "Malformed Certificate Handshake message in ServerHello."
                                    tmpfile_handle ${FUNCNAME[0]}.txt
                                    return 1
                               fi
@@ -12063,7 +14279,7 @@ parse_tls_serverhello() {
                                    tmpfile_handle ${FUNCNAME[0]}.txt
                                    return 1
                               fi
-                              for (( j=8; j < tls_certificate_ascii_len; j=j+extn_len )); do
+                              for (( j=8; j < tls_certificate_ascii_len; j+=extn_len )); do
                                    if [[ $tls_certificate_ascii_len-$j -lt 6 ]]; then
                                         debugme tmln_warning "Malformed Certificate Handshake message in ServerHello."
                                         tmpfile_handle ${FUNCNAME[0]}.txt
@@ -12093,6 +14309,7 @@ parse_tls_serverhello() {
                fi
           done
      fi
+     [[ "0x${DETECTED_TLS_VERSION:2:2}" -le "0x03" ]] && [[ $tls_sid_len -gt 0 ]] && NO_SSL_SESSIONID=false
 
      if [[ "$DETECTED_TLS_VERSION" == "0300" ]]; then
           echo "Protocol  : SSLv3" >> $TMPFILE
@@ -12135,6 +14352,9 @@ parse_tls_serverhello() {
                 *) echo "Compression: unrecognized compression method" >> $TMPFILE ;;
           esac
           echo "===============================================================================" >> $TMPFILE
+     fi
+     if [[ -n "$cert_compression_method" ]]; then
+          echo "Certificate Compression Algorithm: $cert_compression_method ($cert_compression_method_str)" >> $TMPFILE
      fi
      [[ -n "$tls_extensions" ]] && echo -e "$tls_extensions" >> $TMPFILE
 
@@ -12199,7 +14419,7 @@ parse_tls_serverhello() {
           tls_cipher_suite="$(tolower "$tls_cipher_suite")"
           tls_cipher_suite="${tls_cipher_suite:0:2}\\x${tls_cipher_suite:2:2}"
           cipherlist_len=${#cipherlist}
-          for (( i=0; i < cipherlist_len; i=i+8 )); do
+          for (( i=0; i < cipherlist_len; i+=8 )); do
                # At the right hand side we need the quotes here!
                [[ "${cipherlist:i:6}" == "$tls_cipher_suite" ]] && break
           done
@@ -12213,7 +14433,7 @@ parse_tls_serverhello() {
 
      # If the ClientHello included a supported_versions extension, then check that the
      # $DETECTED_TLS_VERSION appeared in the list offered in the ClientHello.
-     if [[ "${TLS_CLIENT_HELLO:0:2}" == "01" ]]; then
+     if [[ "${TLS_CLIENT_HELLO:0:2}" == 01 ]]; then
           # get position of cipher lists (just after session id)
           offset=78+2*$(hex2dec "${TLS_CLIENT_HELLO:76:2}")
           # get position of compression methods
@@ -12221,15 +14441,15 @@ parse_tls_serverhello() {
           # get position of extensions
           extns_offset=$offset+6+2*$(hex2dec "${TLS_CLIENT_HELLO:offset:2}")
           len1=${#TLS_CLIENT_HELLO}
-          for (( i=extns_offset; i < len1; i=i+8+extension_len )); do
+          for (( i=extns_offset; i < len1; i+=8+extension_len )); do
                extension_type="${TLS_CLIENT_HELLO:i:4}"
                offset=4+$i
                extension_len=2*$(hex2dec "${TLS_CLIENT_HELLO:offset:4}")
                if [[ "$extension_type" == 002b ]]; then
                     offset+=6
                     tls_protocol2="$(tolower "$tls_protocol2")"
-                    for (( j=0; j < extension_len-2; j=j+4 )); do
-                         [[ "${TLS_CLIENT_HELLO:offset:4}" == "$tls_protocol2" ]] && break
+                    for (( j=0; j < extension_len-2; j+=4 )); do
+                         [[ "${TLS_CLIENT_HELLO:offset:4}" == $tls_protocol2 ]] && break
                          offset+=4
                     done
                     if [[ $j -eq $extension_len-2 ]]; then
@@ -12270,7 +14490,7 @@ parse_tls_serverhello() {
                tmpfile_handle ${FUNCNAME[0]}.txt
                return 1
           fi
-          asciihex_to_binary_file "${tls_certificate_ascii:12:certificate_len}" "/dev/stdout" | \
+          hex2binary "${tls_certificate_ascii:12:certificate_len}" | \
                $OPENSSL x509 -inform DER -outform PEM -out "$HOSTCERT" 2>$ERRFILE
           if [[ $? -ne 0 ]]; then
                debugme echo "Malformed certificate in Certificate Handshake message in ServerHello."
@@ -12291,7 +14511,7 @@ parse_tls_serverhello() {
           # Place any additional certificates in $TEMPDIR/intermediatecerts.pem
           CERTIFICATE_LIST_ORDERING_PROBLEM=false
           CAissuerDN="$issuerDN"
-          for (( i=12+certificate_len; i<tls_certificate_ascii_len; i=i+certificate_len )); do
+          for (( i=12+certificate_len; i<tls_certificate_ascii_len; i+=certificate_len )); do
                if [[ $tls_certificate_ascii_len-$i -lt 6 ]]; then
                     debugme echo "Malformed Certificate Handshake message in ServerHello."
                     tmpfile_handle ${FUNCNAME[0]}.txt
@@ -12304,7 +14524,7 @@ parse_tls_serverhello() {
                     tmpfile_handle ${FUNCNAME[0]}.txt
                     return 1
                fi
-               pem_certificate="$(asciihex_to_binary_file "${tls_certificate_ascii:i:certificate_len}" "/dev/stdout" | \
+               pem_certificate="$(hex2binary "${tls_certificate_ascii:i:certificate_len}" | \
                                   $OPENSSL x509 -inform DER -outform PEM 2>$ERRFILE)"
                if [[ $? -ne 0 ]]; then
                     debugme echo "Malformed certificate in Certificate Handshake message in ServerHello."
@@ -12372,10 +14592,10 @@ parse_tls_serverhello() {
           echo "OCSP response:" >> $TMPFILE
           echo "===============================================================================" >> $TMPFILE
           if [[ -n "$hostcert_issuer" ]]; then
-               asciihex_to_binary_file "$STAPLED_OCSP_RESPONSE" "/dev/stdout" | \
+               hex2binary "$STAPLED_OCSP_RESPONSE" | \
                     $OPENSSL ocsp -no_nonce -CAfile $TEMPDIR/intermediatecerts.pem -issuer $hostcert_issuer -cert $HOSTCERT -respin /dev/stdin -resp_text >> $TMPFILE 2>$ERRFILE
           else
-               asciihex_to_binary_file "$STAPLED_OCSP_RESPONSE" "/dev/stdout" | \
+               hex2binary "$STAPLED_OCSP_RESPONSE" | \
                     $OPENSSL ocsp -respin /dev/stdin -resp_text >> $TMPFILE 2>$ERRFILE
           fi
           echo "===============================================================================" >> $TMPFILE
@@ -12397,7 +14617,7 @@ parse_tls_serverhello() {
                if [[ $curve_type -eq 3 ]]; then
                     # named_curve - the curve is identified by a 2-byte number
                     named_curve=$(hex2dec "${tls_serverkeyexchange_ascii:2:4}")
-                    # http://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-8
+                    # https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-8
                     case $named_curve in
                          1) dh_bits=163 ; named_curve_str="K-163" ;;
                          2) dh_bits=162 ; named_curve_str="sect163r1" ;;
@@ -12430,12 +14650,24 @@ parse_tls_serverhello() {
                          29) dh_bits=253 ; named_curve_str="X25519" ;;
                          30) dh_bits=448 ; named_curve_str="X448" ;;
                     esac
+                    if [[ "$DETECTED_TLS_VERSION" == 0303 ]]; then
+                         # Skip over the public key to get to the SignatureAndHashAlgorithm
+                         # This is TLS 1.2-only, as this field does not appear in earlier versions.
+                         len1=2*$(hex2dec "${tls_serverkeyexchange_ascii:6:2}")
+                         offset=$((len1+8))
+                         if [[ $tls_serverkeyexchange_ascii_len -ge $((offset+4)) ]]; then
+                              # The SignatureAndHashAlgorithm won't be present in an anonymous
+                              # key exchange.
+                              peering_signing_digest="${tls_serverkeyexchange_ascii:offset:2}"
+                              peer_signature_type="${tls_serverkeyexchange_ascii:$((offset+2)):2}"
+                         fi
+                    fi
                fi
                if [[ $dh_bits -ne 0 ]] && [[ $named_curve -ne 29 ]] && [[ $named_curve -ne 30 ]]; then
-                    [[ $DEBUG -ge 3 ]] && echo -e "     dh_bits:                ECDH, $named_curve_str, $dh_bits bits\n"
+                    [[ $DEBUG -ge 3 ]] && echo -e "     dh_bits:                ECDH, $named_curve_str, $dh_bits bits"
                     echo "Server Temp Key: ECDH, $named_curve_str, $dh_bits bits" >> $TMPFILE
                elif [[ $dh_bits -ne 0 ]]; then
-                    [[ $DEBUG -ge 3 ]] && echo -e "     dh_bits:                $named_curve_str, $dh_bits bits\n"
+                    [[ $DEBUG -ge 3 ]] && echo -e "     dh_bits:                $named_curve_str, $dh_bits bits"
                     echo "Server Temp Key: $named_curve_str, $dh_bits bits" >> $TMPFILE
                fi
           elif [[ $rfc_cipher_suite =~ TLS_DHE_ ]] || [[ $rfc_cipher_suite =~ TLS_DH_anon ]] || \
@@ -12457,7 +14689,7 @@ parse_tls_serverhello() {
                fi
 
                # Subtract any leading 0 bytes
-               for (( i=4; i < offset; i=i+2 )); do
+               for (( i=4; i < offset; i+=2 )); do
                     [[ "${tls_serverkeyexchange_ascii:i:2}" != "00" ]] && break
                     dh_p_len=$dh_p_len-2
                done
@@ -12489,14 +14721,86 @@ parse_tls_serverhello() {
                esac
                [[ -z "$key_bitstring" ]] && named_curve=0 && named_curve_str=""
                if "$HAS_PKEY" && [[ $named_curve -ne 0 ]] && [[ "${TLS13_KEY_SHARES[named_curve]}" =~ BEGIN ]]; then
-                    ephemeral_param="$($OPENSSL pkey -pubin -text -noout 2>>$ERRFILE <<< "$key_bitstring" | grep -A 1000 "prime:")"
-                    rfc7919_param="$($OPENSSL pkey -text -noout 2>>$ERRFILE <<< "${TLS13_KEY_SHARES[named_curve]}" | grep -A 1000 "prime:")"
-                    [[ "$ephemeral_param" != "$rfc7919_param" ]] && named_curve_str=""
+                    ephemeral_param="$($OPENSSL pkey -pubin -text_pub -noout 2>>$ERRFILE <<< "$key_bitstring")"
+                    # OpenSSL 3.0.0 outputs the group name rather than the actual parameter values for some named groups.
+                    if [[ "$ephemeral_param" =~ GROUP: ]]; then
+                         ephemeral_param="${ephemeral_param#*GROUP: }"
+                         rfc7919_param="${named_curve_str# }"
+                         rfc7919_param="${rfc7919_param%,}"
+                         [[ "$ephemeral_param" =~ $rfc7919_param ]] || named_curve_str=""
+                    else
+                         ephemeral_param="$(grep -EA 1000 "prime:|P:" <<< "$ephemeral_param")"
+                         rfc7919_param="$($OPENSSL pkey -text_pub -noout 2>>$ERRFILE <<< "${TLS13_KEY_SHARES[named_curve]}" | grep -EA 1000 "prime:|P:")"
+                         [[ "$ephemeral_param" != "$rfc7919_param" ]] && named_curve_str=""
+                    fi
                fi
 
-               [[ $DEBUG -ge 3 ]] && [[ $dh_bits -ne 0 ]] && echo -e "     dh_bits:                DH,$named_curve_str $dh_bits bits\n"
+               [[ $DEBUG -ge 3 ]] && [[ $dh_bits -ne 0 ]] && echo -e "     dh_bits:                DH,$named_curve_str $dh_bits bits"
                [[ $dh_bits -ne 0 ]] && echo "Server Temp Key: DH,$named_curve_str $dh_bits bits" >> $TMPFILE
+               if [[ "$DETECTED_TLS_VERSION" == 0303 ]]; then
+                    # Skip over the public key (P, G, Y) to get to the SignatureAndHashAlgorithm
+                    # This is TLS 1.2-only, as this field does not appear in earlier versions.
+                    offset=$((dh_p_len+4))
+                    if [[ $tls_serverkeyexchange_ascii_len -lt $((offset+4)) ]]; then
+                         debugme echo "Malformed ServerKeyExchange Handshake message in ServerHello."
+                         tmpfile_handle ${FUNCNAME[0]}.txt
+                         return 1
+                    fi
+                    len1=2*$(hex2dec "${tls_serverkeyexchange_ascii:offset:4}")
+                    offset+=$((len1+4))
+                    if [[ $tls_serverkeyexchange_ascii_len -lt $((offset+4)) ]]; then
+                         debugme echo "Malformed ServerKeyExchange Handshake message in ServerHello."
+                         tmpfile_handle ${FUNCNAME[0]}.txt
+                         return 1
+                    fi
+                    len1=2*$(hex2dec "${tls_serverkeyexchange_ascii:offset:4}")
+                    offset+=$((len1+4))
+                    if [[ $tls_serverkeyexchange_ascii_len -ge $((offset+4)) ]]; then
+                         # The SignatureAndHashAlgorithm won't be present in an anonymous
+                         # key exchange.
+                         peering_signing_digest="${tls_serverkeyexchange_ascii:offset:2}"
+                         peer_signature_type="${tls_serverkeyexchange_ascii:$((offset+2)):2}"
+                    fi
+               fi
           fi
+     fi
+     if [[ 0x$peering_signing_digest -eq 8 ]] && \
+        [[ 0x$peer_signature_type -ge 4 ]] && [[ 0x$peer_signature_type -le 11 ]]; then
+          case $peer_signature_type in
+               04) peering_signing_digest="SHA256"; peer_signature_type="RSA-PSS" ;;
+               05) peering_signing_digest="SHA384"; peer_signature_type="RSA-PSS" ;;
+               06) peering_signing_digest="SHA512"; peer_signature_type="RSA-PSS" ;;
+               07) peering_signing_digest=""; peer_signature_type="Ed25519" ;;
+               08) peering_signing_digest=""; peer_signature_type="Ed448" ;;
+               09) peering_signing_digest="SHA256"; peer_signature_type="RSA-PSS" ;;
+               0A) peering_signing_digest="SHA384"; peer_signature_type="RSA-PSS" ;;
+               0B) peering_signing_digest="SHA512"; peer_signature_type="RSA-PSS" ;;
+          esac
+          if [[ -n "$peering_signing_digest" ]]; then
+               echo "Peer signing digest: $peering_signing_digest" >> $TMPFILE
+               [[ $DEBUG -ge 3 ]] && echo -e "     Peer signing digest:    $peering_signing_digest"
+          fi
+          echo "Peer signature type: $peer_signature_type" >> $TMPFILE
+          [[ $DEBUG -ge 3 ]] && echo -e "     Peer signature type:    $peer_signature_type\n"
+     elif [[ 0x$peering_signing_digest -ge 1 ]] && [[ 0x$peering_signing_digest -le 6 ]] && \
+          [[ 0x$peer_signature_type -ge 1 ]] && [[ 0x$peer_signature_type -le 3 ]]; then
+          case $peering_signing_digest in
+               01) peering_signing_digest="MD5" ;;
+               02) peering_signing_digest="SHA1" ;;
+               03) peering_signing_digest="SHA224" ;;
+               04) peering_signing_digest="SHA256" ;;
+               05) peering_signing_digest="SHA384" ;;
+               06) peering_signing_digest="SHA512" ;;
+          esac
+          case $peer_signature_type in
+               01) peer_signature_type="RSA" ;;
+               02) peer_signature_type="DSA" ;;
+               03) peer_signature_type="ECDSA" ;;
+          esac
+          echo "Peer signing digest: $peering_signing_digest" >> $TMPFILE
+          [[ $DEBUG -ge 3 ]] && echo -e "     Peer signing digest:    $peering_signing_digest"
+          echo "Peer signature type: $peer_signature_type" >> $TMPFILE
+          [[ $DEBUG -ge 3 ]] && echo -e "     Peer signature type:    $peer_signature_type\n"
      fi
      tmpfile_handle ${FUNCNAME[0]}.txt
 
@@ -12504,6 +14808,56 @@ parse_tls_serverhello() {
      return 0
 }
 
+# ASCII-HEX encoded session ticket
+parse_tls13_new_session_ticket() {
+     local tls_version="$1"
+     local new_session_ticket="$2"
+     local -i len ticket_lifetime ticket_age_add min_len remainder
+     local ticket_nonce ticket extensions
+     local has_nonce=true
+
+     [[ "${new_session_ticket:0:2}" == 04 ]] || return 7
+     # Prior to draft 21 the NewSessionTicket did not include a ticket_nonce.
+     [[ "${tls_version:0:2}" == 7F ]] && [[ 0x${tls_version:2:2} -le 20 ]] && has_nonce=false
+
+     # Set min_len to the minimum length that a session ticket can be.
+     min_len=28
+     "$has_nonce" || min_len=$((min_len-2))
+
+     remainder=$((2*0x${new_session_ticket:2:6}))
+     [[ $remainder -ge $min_len ]] || return 7
+     [[ ${#new_session_ticket} -ge $((remainder + 8)) ]] || return 7
+
+     ticket_lifetime=0x${new_session_ticket:8:8}
+     ticket_age_add=0x${new_session_ticket:16:8}
+     new_session_ticket="${new_session_ticket:24}"
+     remainder=$((remainder-16))
+
+     if "$has_nonce"; then
+          len=$((2*0x${new_session_ticket:0:2}))
+          new_session_ticket="${new_session_ticket:2}"
+          [[ $remainder -ge $((len + 12)) ]] || return 7
+          ticket_nonce="${new_session_ticket:0:len}"
+          new_session_ticket="${new_session_ticket:len}"
+          remainder=$((remainder-len-2))
+     fi
+
+     len=$((2*0x${new_session_ticket:0:4}))
+     new_session_ticket="${new_session_ticket:4}"
+     [[ $remainder -ge $((len + 8)) ]] || return 7
+     ticket="${new_session_ticket:0:len}"
+     new_session_ticket="${new_session_ticket:len}"
+     remainder=$((remainder-len-4))
+
+     len=$((2*0x${new_session_ticket:0:4}))
+     new_session_ticket="${new_session_ticket:4}"
+     [[ $remainder -eq $((len + 4)) ]] || return 7
+     extensions="${new_session_ticket:0:len}"
+
+     echo "    TLS session ticket lifetime hint: $ticket_lifetime (seconds)" > $TMPFILE
+     tmpfile_handle ${FUNCNAME[0]}.txt $TMPFILE
+     return 0
+}
 
 #arg1 (optional): list of ciphers suites or empty
 #arg2 (optional): "true" if full server response should be parsed.
@@ -12511,19 +14865,18 @@ parse_tls_serverhello() {
 #         1,4,6,7: see return value of parse_sslv2_serverhello()
 sslv2_sockets() {
      local ret
-     local client_hello cipher_suites len_client_hello
-     local len_ciph_suites_byte len_ciph_suites
-     local server_hello sock_reply_file2
-     local -i response_len server_hello_len
+     local cipher_suites="$1"
+     local client_hello len_client_hello
+     local len_ciph_suites
+     local server_hello sock_reply_file2 foo
+     local -i len_ciph_suites_byte response_len server_hello_len
      local parse_complete=false
 
-     # this could be empty so swe use '=='
+     # this could be empty so we use '=='
      if [[ "$2" == true ]]; then
           parse_complete=true
      fi
-     if [[ -n "$1" ]]; then
-          cipher_suites="$1"
-     else
+     if [[ -z "$cipher_suites" ]]; then
           cipher_suites="
           05,00,80, # 1st cipher   9 cipher specs, only classical V2 ciphers are used here, see  FIXME below
           03,00,80, # 2nd          there are v3 in v2!!! : https://tools.ietf.org/html/rfc6101#appendix-E
@@ -12538,14 +14891,15 @@ sslv2_sockets() {
           FF,80,00, # 11
           FF,80,10, # 12
           00,00,00" # 13
-          # FIXME: http://max.euston.net/d/tip_sslciphers.html <-- also SSLv3 ciphers
+          # FIXME: also SSLv3 ciphers, see
+          # https://web.archive.org/web/20170310142840/http://max.euston.net/d/tip_sslciphers.html
      fi
 
      code2network "$cipher_suites" # convert CIPHER_SUITES
      cipher_suites="$NW_STR"       # we don't have the leading \x here so string length is two byte less, see next
      len_ciph_suites_byte=${#cipher_suites}
 
-     let "len_ciph_suites_byte += 2"
+     len_ciph_suites_byte+=2
      len_ciph_suites=$(printf "%02x\n" $(( len_ciph_suites_byte / 4 )))
      len_client_hello=$(printf "%02x\n" $((0x$len_ciph_suites + 0x19)))
 
@@ -12564,25 +14918,30 @@ sslv2_sockets() {
      debugme echo -n "sending client hello... "
      socksend_clienthello "$client_hello"
 
-     sockread_serverhello 32768
+     sockread 32768
      if "$parse_complete"; then
-          server_hello=$(hexdump -v -e '16/1 "%02X"' "$SOCK_REPLY_FILE")
-          server_hello_len=2+$(hex2dec "${server_hello:1:3}")
-          response_len=$(wc -c "$SOCK_REPLY_FILE" | awk '{ print $1 }')
-          for (( 1; response_len < server_hello_len; 1 )); do
-               sock_reply_file2=${SOCK_REPLY_FILE}.2
-               mv "$SOCK_REPLY_FILE" "$sock_reply_file2"
+          if [[ -s "$SOCK_REPLY_FILE" ]]; then
+               server_hello=$(hexdump -v -e '16/1 "%02X"' "$SOCK_REPLY_FILE")
+               server_hello_len=$((2 + $(hex2dec "${server_hello:1:3}") ))
+               foo="$(wc -c "$SOCK_REPLY_FILE")"
+               response_len="${foo% *}"
+               for (( 1; response_len < server_hello_len; 1 )); do
+                    sock_reply_file2=${SOCK_REPLY_FILE}.2
+                    mv "$SOCK_REPLY_FILE" "$sock_reply_file2"
 
-               debugme echo -n "requesting more server hello data... "
-               socksend "" $USLEEP_SND
-               sockread_serverhello 32768
+                    debugme echo -n "requesting more server hello data... "
+                    socksend "" $USLEEP_SND
+                    sockread 32768
 
-               [[ ! -s "$SOCK_REPLY_FILE" ]] && break
-               cat "$SOCK_REPLY_FILE" >> "$sock_reply_file2"
-               mv "$sock_reply_file2" "$SOCK_REPLY_FILE"
-               response_len=$(wc -c "$SOCK_REPLY_FILE" | awk '{ print $1 }')
-          done
+                    [[ ! -s "$SOCK_REPLY_FILE" ]] && break
+                    cat "$SOCK_REPLY_FILE" >> "$sock_reply_file2"
+                    mv "$sock_reply_file2" "$SOCK_REPLY_FILE"
+                    foo="$(wc -c "$SOCK_REPLY_FILE")"
+                    response_len="${foo% *}"
+               done
+          fi
      fi
+
      debugme echo "reading server hello... "
      if [[ "$DEBUG" -ge 4 ]]; then
           hexdump -C "$SOCK_REPLY_FILE" | head -6
@@ -12592,10 +14951,11 @@ sslv2_sockets() {
      parse_sslv2_serverhello "$SOCK_REPLY_FILE" "$parse_complete"
      ret=$?
 
-     close_socket
+     close_socket 5
      tmpfile_handle ${FUNCNAME[0]}.dd $SOCK_REPLY_FILE
      return $ret
 }
+
 
 # arg1: supported groups extension
 # arg2: "all" - process full response (including Certificate and certificate_status handshake messages)
@@ -12621,7 +14981,7 @@ generate_key_share_extension() {
      len=2*$(hex2dec "${supported_groups:8:4}")
      [[ $len+12 -ne $supported_groups_len ]] && return 1
 
-     for (( i=12; i<supported_groups_len; i=i+4 )); do
+     for (( i=12; i<supported_groups_len; i+=4 )); do
           group=$(hex2dec "${supported_groups:i:4}")
           # If the Supported groups extensions lists more than one group,
           # then don't include the larger key shares in the extension.
@@ -12631,18 +14991,13 @@ generate_key_share_extension() {
           # with X25519 keys, so don't include the X25519 key share
           # if the server's response needs to be decrypted and an
           # older version of OpenSSL is being used.
-          [[ $i -gt 12 ]] && [[ $group -eq 29 ]] && [[ "$2" == "all" ]] && \
-               [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR != "1.1.0"* ]] && \
-               [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR != "1.1.1"* ]] && \
-               continue
+          [[ $i -gt 12 ]] && [[ $group -eq 29 ]] && [[ "$2" == all ]] && ! "$HAS_X25519" && continue
 
           # Versions of OpenSSL prior to 1.1.1 cannot perform operations
           # with X448 keys, so don't include the X448 key share
           # if the server's response needs to be decrypted and an
           # older version of OpenSSL is being used.
-          [[ $i -gt 12 ]] && [[ $group -eq 30 ]] && [[ "$2" == "all" ]] && \
-               [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR != "1.1.1"* ]] && \
-               continue
+          [[ $i -gt 12 ]] && [[ $group -eq 30 ]] && [[ "$2" == all ]] && ! "$HAS_X448" && continue
 
           # NOTE: The public keys could be extracted from the private keys
           # (TLS13_KEY_SHARES) using $OPENSSL, but only OpenSSL 1.1.0 and newer can
@@ -12685,13 +15040,13 @@ prepare_tls_clienthello() {
      local servername_hexstr len_servername len_servername_hex
      local hexdump_format_str part1 part2
      local all_extensions=""
-     local -i i j len_extension len_padding_extension len_all len_session_id
+     local -i i j len_ciph_suites_byte len_extension len_padding_extension len_all len_session_id
      local len_sni_listlen len_sni_ext len_extension_hex len_padding_extension_hex
-     local cipher_suites len_ciph_suites len_ciph_suites_byte len_ciph_suites_word
+     local cipher_suites len_ciph_suites len_ciph_suites_word
      local len_client_hello_word len_all_word
      local ecc_cipher_suite_found=false
      local extension_signature_algorithms extension_heartbeat session_id
-     local extension_session_ticket extension_next_protocol extension_padding
+     local extension_session_ticket extension_next_protocol
      local extension_supported_groups="" extension_supported_point_formats=""
      local extensions_key_share="" extn_type supported_groups_c2n="" extn_psk_mode=""
      local extra_extensions extra_extensions_list="" extension_supported_versions=""
@@ -12703,7 +15058,7 @@ prepare_tls_clienthello() {
 
      cipher_suites="$2"                      # we don't have the leading \x here so string length is two byte less, see next
      len_ciph_suites_byte=${#cipher_suites}
-     let "len_ciph_suites_byte += 2"
+     len_ciph_suites_byte+=2
 
      # we have additional 2 chars \x in each 2 byte string and 2 byte ciphers, so we need to divide by 4:
      len_ciph_suites=$(printf "%02x\n" $(( len_ciph_suites_byte / 4 )))
@@ -12717,7 +15072,7 @@ prepare_tls_clienthello() {
           # Check to see if any ECC cipher suites are included in cipher_suites
           # (not needed for TLSv1.3)
           if [[ "0x$tls_low_byte" -le "0x03" ]]; then
-               for (( i=0; i<len_ciph_suites_byte; i=i+8 )); do
+               for (( i=0; i<len_ciph_suites_byte; i+=8 )); do
                     j=$i+4
                     part1="0x${cipher_suites:$i:2}"
                     part2="0x${cipher_suites:$j:2}"
@@ -12757,9 +15112,10 @@ prepare_tls_clienthello() {
                #00       # server_name type (hostname)
                #00 15    # server_name length
                #66 66 66 66 66 66 2e 66 66 66 66 66 66 66 66 66 66 2e 66 66 66  target.mydomain1.tld # server_name target
-               len_servername=${#NODE}
+               servername=${XMPP_HOST:-${NODE}}
+               len_servername=${#servername}
                hexdump_format_str="$len_servername/1 \"%02x,\""
-               servername_hexstr=$(printf $NODE | hexdump -v -e "${hexdump_format_str}" | sed 's/,$//')
+               servername_hexstr=$(printf $servername | hexdump -v -e "${hexdump_format_str}" | sed 's/,$//')
                # convert lengths we need to fill in from dec to hex:
                len_servername_hex=$(printf "%02x\n" $len_servername)
                len_sni_listlen=$(printf "%02x\n" $((len_servername+3)))
@@ -12768,10 +15124,11 @@ prepare_tls_clienthello() {
 
           if [[ 0x$tls_low_byte -le 0x03 ]]; then
                extension_signature_algorithms="
-               00, 0d,                    # Type: signature_algorithms , see RFC 5246
-               00, 20, 00,1e,             # lengths
+               00, 0d,                    # Type: signature_algorithms , see RFC 5246 and RFC 8422
+               00, 30, 00,2e,             # lengths
                06,01, 06,02, 06,03, 05,01, 05,02, 05,03, 04,01, 04,02, 04,03,
-               03,01, 03,02, 03,03, 02,01, 02,02, 02,03"
+               03,01, 03,02, 03,03, 02,01, 02,02, 02,03,
+               08,04, 08,05, 08,06, 08,07, 08,08, 08,09, 08,0a, 08,0b"
           else
                extension_signature_algorithms="
                00, 0d,                    # Type: signature_algorithms , see RFC 8446
@@ -12797,15 +15154,14 @@ prepare_tls_clienthello() {
                # Supported Groups Extension
                extension_supported_groups="
                00, 0a,                    # Type: Supported Elliptic Curves , see RFC 4492
-               00, 3e, 00, 3c,            # lengths
+               00, 42, 00, 40,            # lengths
                00, 0e, 00, 0d, 00, 19, 00, 1c, 00, 1e, 00, 0b, 00, 0c, 00, 1b,
                00, 18, 00, 09, 00, 0a, 00, 1a, 00, 16, 00, 17, 00, 1d, 00, 08,
                00, 06, 00, 07, 00, 14, 00, 15, 00, 04, 00, 05, 00, 12, 00, 13,
-               00, 01, 00, 02, 00, 03, 00, 0f, 00, 10, 00, 11"
+               00, 01, 00, 02, 00, 03, 00, 0f, 00, 10, 00, 11, 01, 00, 01, 01"
           elif [[ 0x$tls_low_byte -gt 0x03 ]]; then
                # Supported Groups Extension
-               if [[ ! "$process_full" =~ all ]] || \
-                  [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == 1.1.1* ]]; then
+               if [[ ! "$process_full" =~ all ]] || ( "$HAS_X25519" && "$HAS_X448" ); then
                     extension_supported_groups="
                     00,0a,                      # Type: Supported Groups, see RFC 8446
                     00,10, 00,0e,               # lengths
@@ -12814,13 +15170,13 @@ prepare_tls_clienthello() {
                     # OpenSSL prior to 1.1.1 does not support X448, so list it as the least
                     # preferred option if the response needs to be decrypted, and do not
                     # list it at all if the response MUST be decrypted.
-               elif [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == 1.1.0* ]] && [[ "$process_full" == all+ ]]; then
+               elif "$HAS_X25519" && [[ "$process_full" == all+ ]]; then
                     extension_supported_groups="
                     00,0a,                      # Type: Supported Groups, see RFC 8446
                     00,0e, 00,0c,               # lengths
                     00,1d, 00,17, 00,18, 00,19,
                     01,00, 01,01"
-               elif [[ $OSSL_VER_MAJOR.$OSSL_VER_MINOR == "1.1.0"* ]]; then
+               elif "$HAS_X25519"; then
                     extension_supported_groups="
                     00,0a,                      # Type: Supported Groups, see RFC 8446
                     00,10, 00,0e,               # lengths
@@ -12862,7 +15218,7 @@ prepare_tls_clienthello() {
           extra_extensions="$(tolower "$4")"
           code2network "$extra_extensions"
           len_all=${#NW_STR}
-          for (( i=0; i < len_all; i=i+16+4*0x$len_extension_hex )); do
+          for (( i=0; i < len_all; i+=16+4*0x$len_extension_hex )); do
                part2=$i+4
                extn_type="${NW_STR:i:2}${NW_STR:part2:2}"
                extra_extensions_list+=" $extn_type "
@@ -12879,7 +15235,7 @@ prepare_tls_clienthello() {
                [[ $? -ne 0 ]] && return 1
           fi
 
-          if [[ -n "$SNI" ]] && [[ ! "$extra_extensions_list" =~ " 0000 " ]]; then
+          if [[ -n "$SNI" ]] && [[ ! "$extra_extensions_list" =~ \ 0000\  ]]; then
                all_extensions="
                 00, 00                  # extension server_name
                ,00, $len_sni_ext        # length SNI EXT
@@ -12888,13 +15244,13 @@ prepare_tls_clienthello() {
                ,00, $len_servername_hex # server_name length. We assume len(hostname) < FF - 9
                ,$servername_hexstr"     # server_name target
           fi
-          if [[ 0x$tls_low_byte -ge 0x04 ]] && [[ ! "$extra_extensions_list" =~ " 002b " ]]; then
+          if [[ 0x$tls_low_byte -ge 0x04 ]] && [[ ! "$extra_extensions_list" =~ \ 002b\  ]]; then
                # Add supported_versions extension listing all TLS/SSL versions
                # from the one specified in $tls_low_byte to SSLv3.
                for (( i=0x$tls_low_byte; i >=0; i=i-1 )); do
                     if [[ 0x$i -eq 4 ]]; then
                          # FIXME: The ClientHello currently advertises support for various
-                         # draft versions of TLSv1.3. Eventually it should only adversize
+                         # draft versions of TLSv1.3. Eventually it should only advertise
                          # support for the final version (0304).
                          if [[ "$KEY_SHARE_EXTN_NR" == 33 ]]; then
                               extension_supported_versions+=", 03, 04, 7f, 1c, 7f, 1b, 7f, 1a, 7f, 19, 7f, 18, 7f, 17"
@@ -12907,7 +15263,7 @@ prepare_tls_clienthello() {
                done
                [[ -n "$all_extensions" ]] && all_extensions+=","
                # FIXME: Adjust the lengths ("+15" and "+14") when the draft versions of TLSv1.3 are removed.
-               if [[ "$KEY_SHARE_EXTN_NR" == "33" ]]; then
+               if [[ "$KEY_SHARE_EXTN_NR" == 33 ]]; then
                     all_extensions+="00, 2b, 00, $(printf "%02x" $((2*0x$tls_low_byte+15))), $(printf "%02x" $((2*0x$tls_low_byte+14)))$extension_supported_versions"
                else
                     all_extensions+="00, 2b, 00, $(printf "%02x" $((2*0x$tls_low_byte+11))), $(printf "%02x" $((2*0x$tls_low_byte+10)))$extension_supported_versions"
@@ -12918,42 +15274,59 @@ prepare_tls_clienthello() {
           # OpenSSL, Firefox, and Chrome include it in TLS 1.3 ClientHello messages, and there is at
           # least one server that will fail the connection if it is absent
           # (see https://github.com/drwetter/testssl.sh/issues/990).
-          if [[ "0x$tls_low_byte" -ge 0x04 ]] && [[ ! "$extra_extensions_list" =~ " 002d " ]]; then
+          if [[ "0x$tls_low_byte" -ge 0x04 ]] && [[ ! "$extra_extensions_list" =~ \ 002d\  ]]; then
                [[ -n "$all_extensions" ]] && all_extensions+=","
                all_extensions+="$extn_psk_mode"
           fi
 
-          if [[ ! "$extra_extensions_list" =~ " 0023 " ]]; then
+          if [[ ! "$extra_extensions_list" =~ \ 0023\  ]]; then
                [[ -n "$all_extensions" ]] && all_extensions+=","
                all_extensions+="$extension_session_ticket"
           fi
 
           # If the ClientHello will include the ALPN extension, then don't include the NPN extension.
-          if [[ ! "$extra_extensions_list" =~ " 3374 " ]] && [[ ! "$extra_extensions_list" =~ " 0010 " ]]; then
+          if [[ ! "$extra_extensions_list" =~ \ 3374\  ]] && [[ ! "$extra_extensions_list" =~ \ 0010\  ]]; then
                [[ -n "$all_extensions" ]] && all_extensions+=","
                all_extensions+="$extension_next_protocol"
           fi
 
           # RFC 5246 says that clients MUST NOT offer the signature algorithms
           # extension if they are offering TLS versions prior to 1.2.
-          if [[ "0x$tls_low_byte" -ge 0x03 ]] && [[ ! "$extra_extensions_list" =~ " 000d " ]]; then
+          if [[ "0x$tls_low_byte" -ge 0x03 ]] && [[ ! "$extra_extensions_list" =~ \ 000d\  ]]; then
                [[ -n "$all_extensions" ]] && all_extensions+=","
                all_extensions+="$extension_signature_algorithms"
           fi
 
-          if [[ -n "$extension_supported_groups" ]] && [[ ! "$extra_extensions_list" =~ " 000a " ]]; then
+          if [[ -n "$extension_supported_groups" ]] && [[ ! "$extra_extensions_list" =~ \ 000a\  ]]; then
                [[ -n "$all_extensions" ]] && all_extensions+=","
                all_extensions+="$extension_supported_groups"
           fi
 
-          if [[ -n "$extensions_key_share" ]] && [[ ! "$extra_extensions_list" =~ " 00$KEY_SHARE_EXTN_NR " ]]; then
+          if [[ -n "$extensions_key_share" ]] && [[ ! "$extra_extensions_list" =~ \ 00$KEY_SHARE_EXTN_NR\  ]]; then
                [[ -n "$all_extensions" ]] && all_extensions+=","
                all_extensions+="$extensions_key_share"
           fi
 
-          if [[ -n "$extension_supported_point_formats" ]] && [[ ! "$extra_extensions_list" =~ " 000b " ]]; then
+          if [[ -n "$extension_supported_point_formats" ]] && [[ ! "$extra_extensions_list" =~ \ 000b\  ]]; then
                [[ -n "$all_extensions" ]] && all_extensions+=","
                all_extensions+="$extension_supported_point_formats"
+          fi
+
+          if [[ "0x$tls_low_byte" -ge 0x04 ]] && [[ ! "$extra_extensions_list" =~ \ 001b\  ]]; then
+               # If the response needs to be decrypted, then indicate support
+               # for ZLIB certificate compression if $OPENSSL can decompress
+               # the result. If the response does not need to be decrypted,
+               # then indicate support for all certificate compression methods,
+               # as the response does not need to be decompressed.
+               if [[ "$process_full" =~ all ]]; then
+                    if "$HAS_ZLIB"; then
+                         [[ -n "$all_extensions" ]] && all_extensions+=","
+                         all_extensions+="00,1b,00,03,02,00,01"
+                    fi
+               else
+                    [[ -n "$all_extensions" ]] && all_extensions+=","
+                    all_extensions+="00,1b,00,07,06,00,01,00,02,00,03"
+               fi
           fi
 
           if [[ -n "$extra_extensions" ]]; then
@@ -12963,7 +15336,7 @@ prepare_tls_clienthello() {
 
           # Make sure that a non-empty extension goes last (either heartbeat or padding).
           # See PR #792 and https://www.ietf.org/mail-archive/web/tls/current/msg19720.html.
-          if [[ ! "$extra_extensions_list" =~ " 000f " ]]; then
+          if [[ ! "$extra_extensions_list" =~ \ 000f\  ]]; then
                [[ -n "$all_extensions" ]] && all_extensions+=","
                all_extensions+="$extension_heartbeat"
           fi
@@ -12980,7 +15353,7 @@ prepare_tls_clienthello() {
           len_all=$((0x$len_ciph_suites + 0x2b + 0x$len_extension_hex + 0x2))
           "$offer_compression" && len_all+=2
           [[ 0x$tls_low_byte -gt 0x03 ]] && len_all+=32 # TLSv1.3 ClientHello includes a 32-byte session id
-          if [[ $len_all -ge 256 ]] && [[ $len_all -le 511 ]] && [[ ! "$extra_extensions_list" =~ " 0015 " ]]; then
+          if [[ $len_all -ge 256 ]] && [[ $len_all -le 511 ]] && [[ ! "$extra_extensions_list" =~ \ 0015\  ]]; then
                if [[ $len_all -ge 508 ]]; then
                     len_padding_extension=1 # Final extension cannot be empty: see PR #792
                else
@@ -12994,7 +15367,7 @@ prepare_tls_clienthello() {
                done
                len_extension=$len_extension+$len_padding_extension+0x4
                len_extension_hex=$(printf "%02x\n" $len_extension)
-          elif [[ ! "$extra_extensions_list" =~ " 0015 " ]] && ( [[ $((len_all%256)) -eq 10 ]] || [[ $((len_all%256)) -eq 14 ]] ); then
+          elif [[ ! "$extra_extensions_list" =~ \ 0015\  ]] && ( [[ $((len_all%256)) -eq 10 ]] || [[ $((len_all%256)) -eq 14 ]] ); then
                # Some servers fail if the length of the ClientHello is 522, 778, 1034, 1290, ... bytes.
                # A few servers also fail if the length is 526, 782, 1038, 1294, ... bytes.
                # So, if the ClientHello would be one of these length, add a 5-byte padding extension.
@@ -13018,7 +15391,7 @@ prepare_tls_clienthello() {
      fi
 
      # RFC 3546 doesn't specify SSLv3 to have SNI, openssl just ignores the switch if supplied
-     if [[ "$tls_low_byte" == "00" ]]; then
+     if [[ "$tls_low_byte" == 00 ]]; then
           len_all=$((0x$len_ciph_suites + len_session_id + 0x27))
      else
           len_all=$((0x$len_ciph_suites + len_session_id + 0x27 + 0x$len_extension_hex + 0x2))
@@ -13045,7 +15418,7 @@ prepare_tls_clienthello() {
      [[ 0x$tls_legacy_version -ge 0x04 ]] && tls_legacy_version="03"
 
      if "$offer_compression"; then
-          # See http://www.iana.org/assignments/comp-meth-ids/comp-meth-ids.xhtml#comp-meth-ids-2
+          # See https://www.iana.org/assignments/comp-meth-ids/comp-meth-ids.xhtml#comp-meth-ids-2
           compression_methods="03,01,40,00" # Offer NULL, DEFLATE, and LZS compression
      else
           compression_methods="01,00" # Only offer NULL compression (0x00)
@@ -13110,11 +15483,11 @@ prepare_tls_clienthello() {
 resend_if_hello_retry_request() {
      local original_clienthello="$1"
      local tls_hello_ascii="$2"
-     local msg_type tls_low_byte server_version cipher_suite rfc_cipher_suite
+     local msg_type server_version cipher_suite rfc_cipher_suite
      local key_share="" new_key_share="" cookie="" second_clienthello data=""
      local -i i j msg_len tls_hello_ascii_len sid_len
-     local -i extns_offset hrr_extns_len extra_extensions_len len_extn
-     local extra_extensions extn_type part2 new_extra_extns=""
+     local -i extns_offset hrr_extns_len len_extn
+     local extn_type
      local sha256_hrr="CF21AD74E59A6111BE1D8C021E65B891C2A211167ABB8C5E079E09E2C8A8339C"
 
      tls_hello_ascii_len=${#tls_hello_ascii}
@@ -13167,7 +15540,7 @@ resend_if_hello_retry_request() {
                cipher_suite="${tls_hello_ascii:22:2},${tls_hello_ascii:24:2}"
                extns_offset=26
           else
-              extns_offset=22
+               extns_offset=22
           fi
      else
           sid_len=2*$(hex2dec "${tls_hello_ascii:86:2}")
@@ -13185,7 +15558,7 @@ resend_if_hello_retry_request() {
      fi
 
      # Parse HelloRetryRequest extensions
-     for (( i=extns_offset+4; i < tls_hello_ascii_len; i=i+8+len_extn )); do
+     for (( i=extns_offset+4; i < tls_hello_ascii_len; i+=8+len_extn )); do
           extn_type="${tls_hello_ascii:i:4}"
           j=$i+4
           len_extn=2*$(hex2dec "${tls_hello_ascii:j:4}")
@@ -13266,19 +15639,20 @@ resend_if_hello_retry_request() {
      fi
 
      if [[ "$server_version" == 0304 ]] || [[ 0x$server_version -ge 0x7f16 ]]; then
-         # Send a dummy change cipher spec for middlebox compatibility.
-         debugme echo -en "\nsending dummy change cipher spec... "
-         socksend ", x14, x03, x03 ,x00, x01, x01" 0
+          # Send a dummy change cipher spec for middlebox compatibility.
+          debugme echo -en "\nsending dummy change cipher spec... "
+          socksend ", x14, x03, x03 ,x00, x01, x01" 0
      fi
      debugme echo -en "\nsending second client hello... "
      second_clienthello="$(modify_clienthello "$original_clienthello" "$new_key_share" "$cookie")"
+     TLS_CLIENT_HELLO="${second_clienthello:10}"
      msg_len=${#second_clienthello}
-     for (( i=0; i < msg_len; i=i+2 )); do
+     for (( i=0; i < msg_len; i+=2 )); do
           data+=", ${second_clienthello:i:2}"
      done
      debugme echo -n "sending client hello... "
      socksend_clienthello "$data" $USLEEP_SND
-     sockread_serverhello 32768
+     sockread 32768
      return 2
 }
 
@@ -13301,15 +15675,22 @@ tls_sockets() {
      local tls_low_byte
      local cipher_list_2send
      local sock_reply_file2 sock_reply_file3
-     local tls_hello_ascii next_packet
+     local tls_hello_ascii next_packet post_finished_msg=""
      local clienthello1 original_clienthello hrr=""
      local process_full="$3" offer_compression=false skip=false
-     local close_connection=true
-     local -i hello_done=0
-     local cipher="" key_and_iv="" decrypted_response
+     local close_connection=true include_headers=true
+     local -i i len msg_len tag_len hello_done=0 seq_num=0
+     local cipher="" tls_version handshake_secret="" res
+     local initial_msg_transcript msg_transcript finished_msg aad="" data="" plaintext
+     local handshake_traffic_keys key iv finished_key
+     local master_secret master_traffic_keys
 
+     APP_TRAF_KEY_INFO=""
      [[ "$5" == true ]] && offer_compression=true
      [[ "$6" == false ]] && close_connection=false
+     if [[ "$process_full" == all+ ]] && [[ -s "$TEMPDIR/$NODEIP.parse_tls13_new_session_ticket.txt" ]]; then
+          rm "$TEMPDIR/$NODEIP.parse_tls13_new_session_ticket.txt"
+     fi
      tls_low_byte="$1"
      if [[ -n "$2" ]]; then             # use supplied string in arg2 if there is one
           cipher_list_2send="$2"
@@ -13330,11 +15711,12 @@ tls_sockets() {
      # if sending didn't succeed we don't bother
      if [[ $ret -eq 0 ]]; then
           clienthello1="$TLS_CLIENT_HELLO"
-          sockread_serverhello 32768
+          sockread 32768
           "$TLS_DIFFTIME_SET" && TLS_NOW=$(LC_ALL=C date "+%s")
 
           tls_hello_ascii=$(hexdump -v -e '16/1 "%02X"' "$SOCK_REPLY_FILE")
           tls_hello_ascii="${tls_hello_ascii%%[!0-9A-F]*}"
+          tls_hello_ascii="${tls_hello_ascii%%140303000101}"
 
           # Check if the response is a HelloRetryRequest.
           original_clienthello="160301$(printf "%04x" "${#clienthello1}")$clienthello1"
@@ -13345,7 +15727,7 @@ tls_sockets() {
                tls_hello_ascii=$(hexdump -v -e '16/1 "%02X"' "$SOCK_REPLY_FILE")
                tls_hello_ascii="${tls_hello_ascii%%[!0-9A-F]*}"
           elif [[ $ret -eq 1 ]] || [[ $ret -eq 6 ]]; then
-               close_socket
+               close_socket 5
                TMPFILE=$SOCK_REPLY_FILE
                tmpfile_handle ${FUNCNAME[0]}.dd
                return $ret
@@ -13369,7 +15751,7 @@ tls_sockets() {
 
                     debugme echo -n "requesting more server hello data... "
                     socksend "" $USLEEP_SND
-                    sockread_serverhello 32768
+                    sockread 32768
 
                     next_packet=$(hexdump -v -e '16/1 "%02X"' "$SOCK_REPLY_FILE")
                     next_packet="${next_packet%%[!0-9A-F]*}"
@@ -13394,9 +15776,49 @@ tls_sockets() {
                fi
                skip=false
                if [[ $hello_done -eq 1 ]]; then
-                    decrypted_response="$(check_tls_serverhellodone "$tls_hello_ascii" "$process_full" "$cipher" "$key_and_iv")"
+                    res="$(check_tls_serverhellodone "$tls_hello_ascii" "$process_full" "$cipher" "$handshake_secret" "$initial_msg_transcript")"
                     hello_done=$?
-                    [[ "$hello_done" -eq 0 ]] && [[ -n "$decrypted_response" ]] && tls_hello_ascii="$(toupper "$decrypted_response")"
+                    if [[ "$hello_done" -eq 0 ]] && [[ -n "$res" ]]; then
+                         read -r msg_transcript tls_hello_ascii post_finished_msg <<< "$res"
+                         if [[ -n "$post_finished_msg" ]]; then
+                              # Determine TLS version
+                              tls_version="$DETECTED_TLS_VERSION"
+                              if [[ "${TLS_SERVER_HELLO:8:3}" == 7F1 ]]; then
+                                   tls_version="${TLS_SERVER_HELLO:8:4}"
+                              elif [[ "$TLS_SERVER_HELLO" =~ 002B00027F1[0-9A-F] ]]; then
+                                   tls_version="${BASH_REMATCH:8:4}"
+                              fi
+                              [[ "${tls_version:0:2}" == 7F ]] && [[ 0x${tls_version:2:2} -lt 25 ]] && include_headers=false
+
+                              # Compute application traffic keys and IVs.
+                              master_secret="$(derive-master-secret "$cipher" "$handshake_secret")"
+                              master_traffic_keys="$(derive-application-traffic-keys "$cipher" "$master_secret" "$msg_transcript" client)"
+                              APP_TRAF_KEY_INFO="$master_traffic_keys 0"
+                              master_traffic_keys="$(derive-application-traffic-keys "$cipher" "$master_secret" "$msg_transcript" server)"
+                              read -r key iv finished_key <<< "$master_traffic_keys"
+                              while true; do
+                                   len=${#post_finished_msg}
+                                   [[ $len -ge 10 ]] || break
+                                   [[ "${post_finished_msg:0:5}" == 17030 ]] || break
+                                   msg_len=$((2*0x${post_finished_msg:6:4}))
+                                   [[ $len -ge $((msg_len+10)) ]] || break
+                                   aad="${post_finished_msg:0:10}"
+                                   "$include_headers" || aad=""
+                                   plaintext="$(sym-decrypt "$cipher" "$key" "$(get-nonce "$iv" "$seq_num")" "${post_finished_msg:10:msg_len}" "$aad")"
+
+                                   # Remove zeros from end of plaintext, if any
+                                   len=${#plaintext}-2
+                                   while [[ "${plaintext:len:2}" == 00 ]]; do
+                                        len=$((len-2))
+                                   done
+                                   tls_hello_ascii+="${plaintext:len:2}0301$(printf "%04X" $((len/2)))${plaintext:0:len}"
+                                   post_finished_msg="${post_finished_msg:$((msg_len+10))}"
+                                   seq_num+=1
+                              done
+                              APP_TRAF_KEY_INFO="$tls_version $cipher $master_traffic_keys $seq_num $APP_TRAF_KEY_INFO"
+                         fi
+                         tls_hello_ascii="$(toupper "$tls_hello_ascii")"
+                    fi
                     if [[ "$hello_done" -eq 3 ]]; then
                          hello_done=1; skip=true
                          debugme echo "reading server hello..."
@@ -13405,10 +15827,11 @@ tls_sockets() {
                          if [[ "$ret" -eq 0 ]] || [[ "$ret" -eq 2 ]]; then
                               cipher=$(get_cipher "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")
                               if [[ -n "$hrr" ]]; then
-                                   key_and_iv="$(derive-handshake-traffic-keys "$cipher" "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" "$clienthello1" "$hrr" "$TLS_CLIENT_HELLO" "$TLS_SERVER_HELLO")"
+                                   initial_msg_transcript="$(create-initial-transcript "$cipher" "$clienthello1" "$hrr" "$TLS_CLIENT_HELLO" "$TLS_SERVER_HELLO")"
                               else
-                                   key_and_iv="$(derive-handshake-traffic-keys "$cipher" "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" "" "" "$TLS_CLIENT_HELLO" "$TLS_SERVER_HELLO")"
+                                   initial_msg_transcript="$(create-initial-transcript "$cipher" "" "" "$TLS_CLIENT_HELLO" "$TLS_SERVER_HELLO")"
                               fi
+                              handshake_secret="$(derive-handshake-secret "$cipher" "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")"
                               [[ $? -ne 0 ]] && hello_done=2
                          else
                               hello_done=2
@@ -13425,20 +15848,68 @@ tls_sockets() {
 
           parse_tls_serverhello "$tls_hello_ascii" "$process_full" "$cipher_list_2send"
           save=$?
-
           if "$close_connection" && [[ $save == 0 ]]; then
-               debugme echo "sending close_notify..."
-               if [[ "$DETECTED_TLS_VERSION" == "0300" ]]; then
-                    socksend ",x15, x03, x00, x00, x02, x02, x00" 0
-               else
-                    socksend ",x15, x03, x01, x00, x02, x02, x00" 0
-               fi
+               send_close_notify "$DETECTED_TLS_VERSION"
           fi
 
           if [[ $DEBUG -ge 2 ]]; then
                # see https://secure.wand.net.nz/trac/libprotoident/wiki/SSL
                lines=$(count_lines "$(hexdump -C "$SOCK_REPLY_FILE" 2>$ERRFILE)")
                tm_out "  ($lines lines returned)  "
+          fi
+
+          if ! "$close_connection" && [[ $save == 0 ]] && \
+             [[ -n "$handshake_secret" ]] && [[ "$process_full" == all+ ]]; then
+               tls_version="$DETECTED_TLS_VERSION"
+               if [[ "${TLS_SERVER_HELLO:8:3}" == 7F1 ]]; then
+                    tls_version="${TLS_SERVER_HELLO:8:4}"
+               elif [[ "$TLS_SERVER_HELLO" =~ 002B00027F1[0-9A-F] ]]; then
+                    tls_version="${BASH_REMATCH:8:4}"
+               fi
+               [[ "${tls_version:0:2}" == 7F ]] && [[ 0x${tls_version:2:2} -lt 25 ]] && include_headers=false
+
+               handshake_traffic_keys="$(derive-handshake-traffic-keys "$cipher" "$handshake_secret" "$initial_msg_transcript" "client")"
+               read -r key iv finished_key <<< "$handshake_traffic_keys"
+               if [[ "$cipher" == *SHA256 ]]; then
+                    finished_msg="14000020$(hmac-transcript "-sha256" "$finished_key" "$msg_transcript")"
+               else
+                    finished_msg="14000030$(hmac-transcript "-sha384" "$finished_key" "$msg_transcript")"
+               fi
+               [[ "$cipher" =~ CCM_8 ]] && tag_len=8 || tag_len=16
+               aad="170303$(printf "%04X" "$(( ${#finished_msg}/2 + tag_len + 1 ))")"
+               if "$include_headers"; then
+                    # The header information was added to additional data in TLSv1.3 draft 25.
+                    finished_msg="$(sym-encrypt "$cipher" "$key" "$(get-nonce "$iv" 0)" "${finished_msg}16" "$aad")"
+               else
+                    finished_msg="$(sym-encrypt "$cipher" "$key" "$(get-nonce "$iv" 0)" "${finished_msg}16" "")"
+               fi
+               finished_msg="$aad$finished_msg"
+
+               len=${#finished_msg}
+               for (( i=0; i < len; i+=2 )); do
+                    data+=", ${finished_msg:i:2}"
+               done
+               debugme echo -e "\nsending finished..."
+               socksend_clienthello "${data}"
+               sleep $USLEEP_SND
+
+               if [[ -z "$APP_TRAF_KEY_INFO" ]]; then
+                    # Compute application traffic keys and IVs.
+                    master_secret="$(derive-master-secret "$cipher" "$handshake_secret")"
+                    master_traffic_keys="$(derive-application-traffic-keys "$cipher" "$master_secret" "$msg_transcript" server)"
+                    APP_TRAF_KEY_INFO="$tls_version $cipher $master_traffic_keys 0 "
+                    master_traffic_keys="$(derive-application-traffic-keys "$cipher" "$master_secret" "$msg_transcript" client)"
+                    APP_TRAF_KEY_INFO+="$master_traffic_keys 0"
+               fi
+
+               # Some servers send new session tickets as soon as the handshake is complete.
+               receive_app_data
+               if [[ $? -eq 0 ]] && [[ $DEBUG -ge 2 ]]; then
+                    [[ -s $TMPFILE ]] && echo -n "Unexpected response: " && cat "$TMPFILE"
+               fi
+          fi
+          if [[ $DEBUG -ge 2 ]] &&[[ "$process_full" == all+ ]] && [[ -s "$TEMPDIR/$NODEIP.parse_tls13_new_session_ticket.txt" ]]; then
+               echo -en "\nTicket: " && cat "$TEMPDIR/$NODEIP.parse_tls13_new_session_ticket.txt"
           fi
 
           # determine the return value for higher level, so that they can tell what the result is
@@ -13466,15 +15937,111 @@ tls_sockets() {
           debugme echo "stuck on sending: $ret"
      fi
 
-     "$close_connection" && close_socket
+     "$close_connection" && close_socket 5
      tmpfile_handle ${FUNCNAME[0]}.dd $SOCK_REPLY_FILE
      return $ret
+}
+
+# Send application data over a TLS 1.3 channel that has already been created.
+send_app_data() {
+     local plaintext="$1"
+     local tls_version cipher client_key client_iv server_key server_iv
+     local aad res data
+     local -i i client_seq server_seq tag_len len
+     local include_headers=true
+
+     read -r tls_version cipher server_key server_iv server_seq client_key client_iv client_seq <<< "$APP_TRAF_KEY_INFO"
+     [[ "${tls_version:0:2}" == 7F ]] && [[ 0x${tls_version:2:2} -lt 25 ]] && include_headers=false
+     [[ "$cipher" =~ CCM_8 ]] && tag_len=8 || tag_len=16
+
+     aad="170303$(printf "%04X" "$(( ${#plaintext}/2 + tag_len + 1 ))")"
+     if "$include_headers"; then
+          res="$(sym-encrypt "$cipher" "$client_key" "$(get-nonce "$client_iv" $client_seq)" "${plaintext}17" "$aad")"
+     else
+          res="$(sym-encrypt "$cipher" "$client_key" "$(get-nonce "$client_iv" $client_seq)" "${plaintext}17" "")"
+     fi
+     [[ $? -eq 0 ]] || return 1
+     client_seq+=1
+     APP_TRAF_KEY_INFO="$tls_version $cipher $server_key $server_iv $server_seq $client_key $client_iv $client_seq"
+
+     res="$aad$res"
+     len=${#res}
+     data=""
+     for (( i=0; i < len; i+=2 )); do
+          data+=",x${res:i:2}"
+     done
+     socksend "$data" $USLEEP_SND
+}
+
+# Receive application data from a TLS 1.3 channel that has already been created.
+# arg1: true if only the first block of application data should be decrypted.
+#       This can save a lot of time if the server sends a lot a data (e.g., a
+#       big home page), but only the first part of the data is needed. However,
+#       no further data may be received over this connection as the message
+#       sequence number will not be correct.
+receive_app_data() {
+     local plaintext=""
+     local tls_version cipher client_key client_iv server_key server_iv
+     local aad ciphertext="" res="" data
+     local -i client_seq server_seq len msg_len
+     local include_headers=true
+     local first_block_only=false
+
+     [[ "$1" == true ]] && first_block_only=true
+
+     read -r tls_version cipher server_key server_iv server_seq client_key client_iv client_seq <<< "$APP_TRAF_KEY_INFO"
+     [[ "${tls_version:0:2}" == 7F ]] && [[ 0x${tls_version:2:2} -lt 25 ]] && include_headers=false
+
+     sleep $USLEEP_REC
+     while true; do
+          len=${#ciphertext}
+          if [[ $len -ge 10 ]]; then
+               [[ "${ciphertext:0:5}" == 17030 ]] || break
+               msg_len=$((2*0x${ciphertext:6:4}))
+          fi
+          if [[ $len -lt 10 ]] || [[ $len -lt $((msg_len+10)) ]]; then
+               if "$FAST_SOCKET"; then
+                    res="$(sockread_fast 32768)"
+               else
+                    sockread 32768
+                    res="$(hexdump -v -e '16/1 "%02X"' "$SOCK_REPLY_FILE")"
+               fi
+               res="${res%%[!0-9A-F]*}"
+               [[ -z "$res" ]] && break
+               ciphertext+="$res"
+               continue
+          fi
+          "$include_headers" && aad="${ciphertext:0:10}" || aad=""
+          data="$(sym-decrypt "$cipher" "$server_key" "$(get-nonce "$server_iv" "$server_seq")" "${ciphertext:10:msg_len}" "$aad")"
+          [[ $? -eq 0 ]] || return 1
+
+          len=${#data}-2
+          while [[ "${data:len:2}" == 00 ]]; do
+               len=$((len-2))
+          done
+          content_type="${data:len:2}"
+
+          if [[ "$content_type" == 16 ]] && [[ "${data:0:2}" == 04 ]]; then
+               # This is a new_session_ticket
+               parse_tls13_new_session_ticket "$tls_version" "${data:0:len}"
+          elif [[ "$content_type" == 17 ]]; then
+               # This really is application data.
+               plaintext+="${data:0:len}"
+               "$first_block_only" && break
+          fi
+          ciphertext=${ciphertext:$((msg_len+10))}
+          server_seq+=1
+          [[ -z "$ciphertext" ]] && break
+     done
+     APP_TRAF_KEY_INFO="$tls_version $cipher $server_key $server_iv $server_seq $client_key $client_iv $client_seq"
+     hex2binary "$plaintext" > "$TMPFILE"
+     return 0
 }
 
 
 ####### Vulnerabilities follow #######
 # General overview which browser "supports" which vulnerability:
-# http://en.wikipedia.org/wiki/Transport_Layer_Security-SSL#Web_browsers
+# https://en.wikipedia.org/wiki/Transport_Layer_Security#Web_browsers
 
 # mainly adapted from https://gist.github.com/takeshixx/10107280
 #
@@ -13492,7 +16059,7 @@ run_heartbleed(){
      [[ $VULN_COUNT -le $VULN_THRESHLD ]] && outln && pr_headlineln " Testing for heartbleed vulnerability " && outln
      pr_bold " Heartbleed"; out " ($cve)                "
 
-     if ( [[ "$STARTTLS_PROTOCOL" =~ ldap ]] || [[ "$STARTTLS_PROTOCOL" =~ irc ]] ); then
+     if [[ "$STARTTLS_PROTOCOL" =~ irc ]]; then
           prln_local_problem "STARTTLS/$STARTTLS_PROTOCOL and --ssl-native collide here"
           return 1
      fi
@@ -13516,10 +16083,10 @@ run_heartbleed(){
      else # no protocol for some reason defined, determine TLS versions offered with a new handshake
           $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY") >$TMPFILE 2>$ERRFILE </dev/null
           case "$(get_protocol $TMPFILE)" in
-               *1.2)  tls_hexcode="x03, x03" ; add_tls_offered tls1_2 yes ;;
-               *1.1)  tls_hexcode="x03, x02" ; add_tls_offered tls1_1 yes ;;
-               TLSv1) tls_hexcode="x03, x01" ; add_tls_offered tls1 yes ;;
-               SSLv3) tls_hexcode="x03, x00" ; add_tls_offered ssl3 yes ;;
+               *1.2)  tls_hexcode="x03, x03" ; add_proto_offered tls1_2 yes ;;
+               *1.1)  tls_hexcode="x03, x02" ; add_proto_offered tls1_1 yes ;;
+               TLSv1) tls_hexcode="x03, x01" ; add_proto_offered tls1 yes ;;
+               SSLv3) tls_hexcode="x03, x00" ; add_proto_offered ssl3 yes ;;
           esac
      fi
      debugme echo "using protocol $tls_hexcode"
@@ -13529,7 +16096,7 @@ run_heartbleed(){
 
      [[ $DEBUG -ge 4 ]] && tmln_out "\nsending payload with TLS version $tls_hexcode:"
      socksend "$heartbleed_payload" 1
-     sockread_serverhello 16384 $HEARTBLEED_MAX_WAITSOCK
+     sockread 16384 $HEARTBLEED_MAX_WAITSOCK
      if [[ $? -eq 3 ]]; then
           append=", timed out"
           pr_svrty_best "not vulnerable (OK)"; out "$append"
@@ -13562,20 +16129,21 @@ run_heartbleed(){
                          out "likely "
                          pr_svrty_critical "VULNERABLE (NOT ok)"
                          [[ $DEBUG -lt 3 ]] && tm_out ", use debug >=3 to confirm"
-                         fileout "$jsonID" "CRITICAL" "VULNERABLE $cve" "$cwe" "$hint"
+                         fileout "$jsonID" "CRITICAL" "VULNERABLE" "$cve" "$cwe" "$hint"
                     fi
                else
                     pr_svrty_critical "VULNERABLE (NOT ok)"
-                    fileout "$jsonID" "CRITICAL" "VULNERABLE $cve" "$cwe" "$hint"
+                    fileout "$jsonID" "CRITICAL" "VULNERABLE" "$cve" "$cwe" "$hint"
+                    set_grade_cap "F" "Vulnerable to Heartbleed"
                fi
           else
                pr_svrty_best "not vulnerable (OK)"
-               fileout "$jsonID" "OK" "not vulnerable $cve" "$cwe"
+               fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
           fi
      fi
      outln
      tmpfile_handle ${FUNCNAME[0]}.dd $SOCK_REPLY_FILE
-     close_socket
+     close_socket 5
      return 0
 }
 
@@ -13601,7 +16169,7 @@ run_ccs_injection(){
      [[ $VULN_COUNT -le $VULN_THRESHLD ]] && outln && pr_headlineln " Testing for CCS injection vulnerability " && outln
      pr_bold " CCS"; out " ($cve)                       "
 
-     if ( [[ "$STARTTLS_PROTOCOL" =~ ldap ]] || [[ "$STARTTLS_PROTOCOL" =~ irc ]] ); then
+     if [[ "$STARTTLS_PROTOCOL" =~ irc ]]; then
           prln_local_problem "STARTTLS/$STARTTLS_PROTOCOL and --ssl-native collide here"
           return 1
      fi
@@ -13617,10 +16185,10 @@ run_ccs_injection(){
      else # no protocol for some reason defined, determine TLS versions offered with a new handshake
           $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY") >$TMPFILE 2>$ERRFILE </dev/null
           case "$(get_protocol $TMPFILE)" in
-               *1.2)  tls_hexcode="x03, x03" ; add_tls_offered tls1_2 yes ;;
-               *1.1)  tls_hexcode="x03, x02" ; add_tls_offered tls1_1 yes ;;
-               TLSv1) tls_hexcode="x03, x01" ; add_tls_offered tls1 yes ;;
-               SSLv3) tls_hexcode="x03, x00" ; add_tls_offered ssl3 yes ;;
+               *1.2)  tls_hexcode="x03, x03" ; add_proto_offered tls1_2 yes ;;
+               *1.1)  tls_hexcode="x03, x02" ; add_proto_offered tls1_1 yes ;;
+               TLSv1) tls_hexcode="x03, x01" ; add_proto_offered tls1 yes ;;
+               SSLv3) tls_hexcode="x03, x00" ; add_proto_offered ssl3 yes ;;
           esac
      fi
      debugme echo "using protocol $tls_hexcode"
@@ -13665,16 +16233,16 @@ run_ccs_injection(){
      socksend "$client_hello" 1
 
      debugme echo "reading server hello... "
-     sockread_serverhello 32768
+     sockread 32768
      if [[ $DEBUG -ge 4 ]]; then
           hexdump -C "$SOCK_REPLY_FILE" | head -20
           tmln_out "[...]"
           tm_out "\nsending payload #1 with TLS version $tls_hexcode:  "
      fi
      rm "$SOCK_REPLY_FILE"
-# ... and then send the a change cipher spec message
+# ... and then send the change cipher spec message
      socksend "$ccs_message" 1 || ok_ids
-     sockread_serverhello 4096 $CCS_MAX_WAITSOCK
+     sockread 4096 $CCS_MAX_WAITSOCK
      if [[ $DEBUG -ge 3 ]]; then
           tmln_out "\n1st reply: "
           hexdump -C "$SOCK_REPLY_FILE" | head -20
@@ -13684,7 +16252,7 @@ run_ccs_injection(){
      rm "$SOCK_REPLY_FILE"
 
      socksend "$ccs_message" 2 || ok_ids
-     sockread_serverhello 4096 $CCS_MAX_WAITSOCK
+     sockread 4096 $CCS_MAX_WAITSOCK
      retval=$?
 
      tls_hello_ascii=$(hexdump -v -e '16/1 "%02X"' "$SOCK_REPLY_FILE")
@@ -13718,13 +16286,14 @@ run_ccs_injection(){
      elif [[ "${tls_hello_ascii:0:4}" == "1503" ]]; then
           if [[ ! "${tls_hello_ascii:5:2}" =~ [03|02|01|00] ]]; then
                pr_warning "test failed "
-               out "no proper TLS repy (debug info: protocol sent: 1503${tls_hexcode#x03, x}, reply: ${tls_hello_ascii:0:14}"
+               out "no proper TLS reply (debug info: protocol sent: 1503${tls_hexcode#x03, x}, reply: ${tls_hello_ascii:0:14}"
                fileout "$jsonID" "DEBUG" "test failed, around line $LINENO, debug info (${tls_hello_ascii:0:14})" "$cve" "$cwe" "$hint"
                ret=1
           elif [[ "$byte6" == "15" ]]; then
                # decryption failed received
                pr_svrty_critical "VULNERABLE (NOT ok)"
                fileout "$jsonID" "CRITICAL" "VULNERABLE" "$cve" "$cwe" "$hint"
+               set_grade_cap "F" "Vulnerable to CCS injection"
           elif [[ "$byte6" == "0A" ]] || [[ "$byte6" == "28" ]]; then
                # Unexpected message / Handshake failure  received
                pr_warning "likely "
@@ -13764,29 +16333,31 @@ run_ccs_injection(){
      outln
 
      tmpfile_handle ${FUNCNAME[0]}.dd $SOCK_REPLY_FILE
-     close_socket
+     close_socket 5
      return $ret
 }
 
 sub_session_ticket_tls() {
+     local tls_proto="$1"
      local sessticket_tls=""
      #FIXME: we likely have done this already before (either @ run_server_defaults() or at least the output
      #       from a previous handshake) --> would save 1x connect. We have TLS_TICKET but not yet the ticket itself #FIXME
      #ATTENTION: we DO NOT use SNI here as we assume ticketbleed is a vulnerability of the TLS stack. If we'd do SNI here, we'd also need
      #           it in the ClientHello of run_ticketbleed() otherwise the ticket will be different and the whole thing won't work!
      #
-     sessticket_tls="$($OPENSSL s_client $(s_client_options "$BUGS $OPTIMAL_PROTO $PROXY -connect $NODEIP:$PORT") </dev/null 2>$ERRFILE | awk '/TLS session ticket:/,/^$/' | awk '!/TLS session ticket/')"
+     sessticket_tls="$($OPENSSL s_client $(s_client_options "$BUGS $tls_proto $PROXY -connect $NODEIP:$PORT") </dev/null 2>$ERRFILE | awk '/TLS session ticket:/,/^$/' | awk '!/TLS session ticket/')"
      sessticket_tls="$(sed -e 's/^.* - /x/g' -e 's/  .*$//g' <<< "$sessticket_tls" | tr '\n' ',')"
      sed -e 's/ /,x/g' -e 's/-/,x/g' <<< "$sessticket_tls"
 
 }
 
 
-# see https://blog.filippo.io/finding-ticketbleed/ |  http://ticketbleed.com/
+# see https://blog.filippo.io/finding-ticketbleed/ |  https://filippo.io/ticketbleed/
 run_ticketbleed() {
+     local tls_hexcode tls_proto=""
      local session_tckt_tls=""
      local -i len_ch=300                            # fixed len of prepared clienthello below
-     local sid="x00,x0B,xAD,xC0,xDE,x00,"           # some abitratry bytes
+     local sid="x00,x0B,xAD,xC0,xDE,x00,"           # some arbitrary bytes
      local len_sid="$(( ${#sid} / 4))"
      local xlen_sid="$(dec02hex $len_sid)"
      local -i len_tckt_tls=0 nr_sid_detected=0
@@ -13805,7 +16376,7 @@ run_ticketbleed() {
      [[ $VULN_COUNT -le $VULN_THRESHLD ]] && outln && pr_headlineln " Testing for Ticketbleed vulnerability " && outln
      pr_bold " Ticketbleed"; out " ($cve), experiment.  "
 
-     if [[ "$SERVICE" != HTTP ]] && ! "$CLIENT_AUTH"; then
+     if [[ "$SERVICE" != HTTP ]] && [[ "$CLIENT_AUTH" != required ]]; then
           outln "--   (applicable only for HTTPS)"
           fileout "$jsonID" "INFO" "not applicable, not HTTP" "$cve" "$cwe"
           return 0
@@ -13821,25 +16392,26 @@ run_ticketbleed() {
      fi
 
      if [[ 0 -eq $(has_server_protocol tls1) ]]; then
-          tls_hexcode="x03, x01"
+          tls_hexcode="x03, x01"; tls_proto="-tls1"
      elif [[ 0 -eq $(has_server_protocol tls1_1) ]]; then
-          tls_hexcode="x03, x02"
+          tls_hexcode="x03, x02"; tls_proto="-tls1_1"
      elif [[ 0 -eq $(has_server_protocol tls1_2) ]]; then
-          tls_hexcode="x03, x03"
+          tls_hexcode="x03, x03"; tls_proto="-tls1_2"
      elif [[ 0 -eq $(has_server_protocol ssl3) ]]; then
-          tls_hexcode="x03, x00"
+          tls_hexcode="x03, x00"; tls_proto="-ssl3"
      else # no protocol for some reason defined, determine TLS versions offered with a new handshake
-          $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY") >$TMPFILE 2>$ERRFILE </dev/null
+          "$HAS_TLS13" && tls_proto="-no_tls1_3"
+          $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS $tls_proto -connect $NODEIP:$PORT $PROXY") >$TMPFILE 2>$ERRFILE </dev/null
           case "$(get_protocol $TMPFILE)" in
-               *1.2)  tls_hexcode="x03, x03" ; add_tls_offered tls1_2 yes ;;
-               *1.1)  tls_hexcode="x03, x02" ; add_tls_offered tls1_1 yes ;;
-               TLSv1) tls_hexcode="x03, x01" ; add_tls_offered tls1 yes ;;
-               SSLv3) tls_hexcode="x03, x00" ; add_tls_offered ssl3 yes ;;
+               *1.2)  tls_hexcode="x03, x03"; tls_proto="-tls1_2" ; add_proto_offered tls1_2 yes ;;
+               *1.1)  tls_hexcode="x03, x02"; tls_proto="-tls1_1" ; add_proto_offered tls1_1 yes ;;
+               TLSv1) tls_hexcode="x03, x01"; tls_proto="-tls1" ; add_proto_offered tls1 yes ;;
+               SSLv3) tls_hexcode="x03, x00"; tls_proto="-ssl3" ; add_proto_offered ssl3 yes ;;
           esac
      fi
      debugme echo "using protocol $tls_hexcode"
 
-     session_tckt_tls="$(sub_session_ticket_tls)"
+     session_tckt_tls="$(sub_session_ticket_tls "$tls_proto")"
      if [[ "$session_tckt_tls" == "," ]]; then
           pr_svrty_best "not vulnerable (OK)"
           outln ", no session tickets"
@@ -13953,7 +16525,7 @@ run_ticketbleed() {
           if "$FAST_SOCKET"; then
                tls_hello_ascii=$(sockread_fast 32768)
           else
-               sockread_serverhello 32768 $CCS_MAX_WAITSOCK
+               sockread 32768 $CCS_MAX_WAITSOCK
                tls_hello_ascii=$(hexdump -v -e '16/1 "%02X"' "$SOCK_REPLY_FILE")
           fi
           [[ "$DEBUG" -ge 5 ]] && echo "$tls_hello_ascii"
@@ -13963,17 +16535,21 @@ run_ticketbleed() {
                echo "============================="
           fi
 
-          if [[ "${tls_hello_ascii:0:2}" == "15" ]]; then
+          if [[ "${tls_hello_ascii:0:2}" == 15 ]]; then
                debugme echo -n "TLS Alert ${tls_hello_ascii:10:4} (TLS version: ${tls_hello_ascii:2:4}) -- "
                pr_svrty_best "not vulnerable (OK)"
                fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
+               send_close_notify "${tls_hello_ascii:18:4}"
+               close_socket 5
                break
           elif [[ -z "${tls_hello_ascii:0:2}" ]]; then
                pr_svrty_best "not vulnerable (OK)"
                out ", reply empty"
                fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
+               send_close_notify "${tls_hello_ascii:18:4}"
+               close_socket 5
                break
-          elif [[ "${tls_hello_ascii:0:2}" == "16" ]]; then
+          elif [[ "${tls_hello_ascii:0:2}" == 16 ]]; then
                early_exit=false
                debugme echo -n "Handshake (TLS version: ${tls_hello_ascii:2:4}), "
                if [[ "${tls_hello_ascii:10:6}" == 020000 ]]; then
@@ -13998,15 +16574,12 @@ run_ticketbleed() {
                pr_warning "test failed"
                out " around line $LINENO (debug info: ${tls_hello_ascii:0:2}, ${tls_hello_ascii:2:10})"
                fileout "$jsonID" "DEBUG" "test failed, around $LINENO (debug info: ${tls_hello_ascii:0:2}, ${tls_hello_ascii:2:10})" "$cve" "$cwe"
+               send_close_notify "${tls_hello_ascii:18:4}"
+               close_socket 5
                break
           fi
-          debugme echo "sending close_notify..."
-          if [[ ${tls_hello_ascii:18:4} == "0300" ]]; then
-               socksend ",x15, x03, x00, x00, x02, x02, x00" 0
-          else
-               socksend ",x15, x03, x01, x00, x02, x02, x00" 0
-          fi
-          close_socket
+          send_close_notify "${tls_hello_ascii:18:4}"
+          close_socket 5
      done
 
      if ! "$early_exit"; then
@@ -14021,6 +16594,7 @@ run_ticketbleed() {
                if [[ ${memory[1]} != ${memory[2]} ]] && [[ ${memory[2]} != ${memory[3]} ]]; then
                     pr_svrty_critical "VULNERABLE (NOT ok)"
                     fileout "$jsonID" "CRITICAL" "VULNERABLE" "$cve" "$cwe" "$hint"
+                    set_grade_cap "F" "Vulnerable to Ticketbleed"
                else
                     pr_svrty_best "not vulnerable (OK)"
                     out ", session IDs were returned but potential memory fragments do not differ"
@@ -14042,49 +16616,72 @@ run_ticketbleed() {
      return $ret
 }
 
-
+# Overview @ http://www.exploresecurity.com/wp-content/uploads/custom/SSL_manual_cheatsheet.html
+#
 run_renego() {
-# no SNI here. Not needed as there won't be two different SSL stacks for one IP
      local legacycmd="" proto="$OPTIMAL_PROTO"
-     local insecure_renogo_str="Secure Renegotiation IS NOT"
      local sec_renego sec_client_renego
      local -i ret=0
-     local cve="CVE-2009-3555"
+     local cve=""
      local cwe="CWE-310"
      local hint=""
      local jsonID=""
+     local ssl_reneg_attempts=$SSL_RENEG_ATTEMPTS
+     # No SNI needed here as there won't be two different SSL stacks for one IP
 
      "$HAS_TLS13" && [[ -z "$proto" ]] && proto="-no_tls1_3"
 
      [[ $VULN_COUNT -le $VULN_THRESHLD ]] && outln && pr_headlineln " Testing for Renegotiation vulnerabilities " && outln
 
-     pr_bold " Secure Renegotiation "; out "($cve)      "    # and RFC 5746, OSVDB 59968-59974
-     jsonID="secure_renego"                                  # community.qualys.com/blogs/securitylabs/2009/11/05/ssl-and-tls-authentication-gap-vulnerability-discovered
-     $OPENSSL s_client $(s_client_options "$proto $STARTTLS $BUGS -connect $NODEIP:$PORT $SNI $PROXY") 2>&1 </dev/null >$TMPFILE 2>$ERRFILE
-     if sclient_connect_successful $? $TMPFILE; then
-          grep -iaq "$insecure_renogo_str" $TMPFILE
-          sec_renego=$?                                                    # 0= Secure Renegotiation IS NOT supported
-#FIXME: didn't occur to me yet but why not also to check on "Secure Renegotiation IS supported"
-          case $sec_renego in
-               0)   prln_svrty_critical "VULNERABLE (NOT ok)"
-                    fileout "$jsonID" "CRITICAL" "VULNERABLE" "$cve" "$cwe" "$hint"
-                    ;;
-               1)   prln_svrty_best "not vulnerable (OK)"
-                    fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
-                    ;;
-               *)   prln_warning "FIXME (bug): $sec_renego"
-                    fileout "$jsonID" "WARN" "FIXME (bug) $sec_renego" "$cve" "$cwe"
-                    ;;
-          esac
+     pr_bold " Secure Renegotiation (RFC 5746)           "
+     jsonID="secure_renego"
+
+     if "$TLS13_ONLY"; then
+          # https://www.openssl.org/blog/blog/2018/02/08/tlsv1.3/
+          pr_svrty_best "not vulnerable (OK)"
+          [[ $DEBUG -ge 1 ]] && out ", no renegotiation support in TLS 1.3 only servers"
+          outln
+          fileout "$jsonID" "OK" "TLS 1.3 only server" "$cve" "$cwe"
      else
-          prln_warning "OpenSSL handshake didn't succeed"
-          fileout "$jsonID" "WARN" "OpenSSL handshake didn't succeed" "$cve" "$cwe"
+          # first fingerprint for the Line "Secure Renegotiation IS NOT" or "Secure Renegotiation IS "
+          $OPENSSL s_client $(s_client_options "$proto $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY") 2>&1 </dev/null >$TMPFILE 2>$ERRFILE
+          if sclient_connect_successful $? $TMPFILE; then
+               grep -iaq "Secure Renegotiation IS NOT" $TMPFILE
+               sec_renego=$?                                                    # 0= Secure Renegotiation IS NOT supported
+               # grep -iaq "Secure Renegotiation IS supported"
+               #FIXME: didn't occur to me yet but why not also to check on "Secure Renegotiation IS supported"
+               case $sec_renego in
+                    0)   prln_svrty_critical "Not supported / VULNERABLE (NOT ok)"
+                         fileout "$jsonID" "CRITICAL" "VULNERABLE" "$cve" "$cwe" "$hint"
+                         set_grade_warning "Secure renegotiation is not supported"
+                         ;;
+                    1)   prln_svrty_best "supported (OK)"
+                         fileout "$jsonID" "OK" "supported" "$cve" "$cwe"
+                         ;;
+                    *)   prln_warning "FIXME (bug): $sec_renego"
+                         fileout "$jsonID" "WARN" "FIXME (bug) $sec_renego" "$cve" "$cwe"
+                         ;;
+               esac
+          else
+               prln_warning "OpenSSL handshake didn't succeed"
+               fileout "$jsonID" "WARN" "OpenSSL handshake didn't succeed" "$cve" "$cwe"
+          fi
      fi
 
-     # see: https://community.qualys.com/blogs/securitylabs/2011/10/31/tls-renegotiation-and-denial-of-service-attacks
-     #      http://blog.ivanristic.com/2009/12/testing-for-ssl-renegotiation.html -- head/get doesn't seem to be needed though
-     pr_bold " Secure Client-Initiated Renegotiation     "  # RFC 5746
+     # FIXME: Basically this can be done with sockets and we might have that information already
+     # see https://tools.ietf.org/html/rfc5746#section-3.4: 'The client MUST include either an empty "renegotiation_info"
+     # extension, or the TLS_EMPTY_RENEGOTIATION_INFO_SCSV signaling cipher suite value in the ClientHello. [..]
+     # When a ServerHello is received, the client MUST check if it includes the "renegotiation_info" extension:
+     # If the extension is not present, the server does not support secure renegotiation'
+
+
+     pr_bold " Secure Client-Initiated Renegotiation     "
      jsonID="secure_client_renego"
+     cve="CVE-2011-1473"
+     # see: https://blog.qualys.com/ssllabs/2011/10/31/tls-renegotiation-and-denial-of-service-attacks
+     #      https://blog.ivanristic.com/2009/12/testing-for-ssl-renegotiation.html -- head/get doesn't seem to be needed though
+     #      https://archive.fo/20130415224936/http://www.thc.org/thc-ssl-dos/
+     #      https://vincent.bernat.ch/en/blog/2011-ssl-dos-mitigation
      case "$OSSL_VER" in
           0.9.8*)             # we need this for Mac OSX unfortunately
                case "$OSSL_VER_APPENDIX" in
@@ -14104,14 +16701,19 @@ run_renego() {
                ;;   # all ok
      esac
 
-     if "$CLIENT_AUTH"; then
+     if "$TLS13_ONLY"; then
+          pr_svrty_best "not vulnerable (OK)"
+          [[ $DEBUG -ge 1 ]] && out ", no renegotiation support in TLS 1.3 only servers"
+          outln
+          fileout "$jsonID" "OK" "not vulnerable, TLS 1.3 only" "$cve" "$cwe"
+     elif [[ "$CLIENT_AUTH" == required ]]; then
           prln_warning "client x509-based authentication prevents this from being tested"
           fileout "$jsonID" "WARN" "client x509-based authentication prevents this from being tested"
           sec_client_renego=1
      else
           # We need up to two tries here, as some LiteSpeed servers don't answer on "R" and block. Thus first try in the background
           # msg enables us to look deeper into it while debugging
-          echo R | $OPENSSL s_client $(s_client_options "$proto $BUGS $legacycmd $STARTTLS -msg -connect $NODEIP:$PORT $SNI $PROXY") >$TMPFILE 2>>$ERRFILE &
+          echo R | $OPENSSL s_client $(s_client_options "$proto $BUGS $legacycmd $STARTTLS -connect $NODEIP:$PORT $PROXY") >$TMPFILE 2>>$ERRFILE &
           wait_kill $! $HEADER_MAXSLEEP
           if [[ $? -eq 3 ]]; then
                pr_svrty_good "likely not vulnerable (OK)"; outln ", timed out"        # it hung
@@ -14119,15 +16721,40 @@ run_renego() {
                sec_client_renego=1
           else
                # second try in the foreground as we are sure now it won't hang
-               echo R | $OPENSSL s_client $(s_client_options "$proto $legacycmd $STARTTLS $BUGS -msg -connect $NODEIP:$PORT $SNI $PROXY") >$TMPFILE 2>>$ERRFILE
-               sec_client_renego=$?                                                  # 0=client is renegotiating & doesn't return an error --> vuln!
+               echo R | $OPENSSL s_client $(s_client_options "$proto $legacycmd $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY") >$TMPFILE 2>>$ERRFILE
+               sec_client_renego=$?
+               # 0 means client is renegotiating & doesn't return an error --> vuln!
+               # 1 means client tried to renegotiating but the server side errored then. You still see RENEGOTIATING in the output
+               if tail -5 $TMPFILE| grep -qa '^closed'; then
+                    # Exemption from above: server closed the connection but return value was zero
+                    # See https://github.com/drwetter/testssl.sh/issues/1725 and referenced issue @haproxy
+                    sec_client_renego=1
+               fi
                case "$sec_client_renego" in
-                    0)   if [[ $SERVICE == "HTTP" ]]; then
-                              pr_svrty_high "VULNERABLE (NOT ok)"; outln ", DoS threat"
-                              fileout "$jsonID" "HIGH" "VULNERABLE, DoS threat" "$cve" "$cwe" "$hint"
-                         else
+                    0)   # We try again if server is HTTP. This could be either a node.js server or something else.
+                         # Mitigations (default values) for:
+                         # - node.js allows 3x R and then blocks. So then 4x should be tested.
+                         # - F5 BIG-IP ADS allows 5x R and then blocks. So then 6x should be tested.
+                         # This way we save a couple seconds as we weeded out the ones which are more robust
+                         # Amount of times tested before breaking is set in SSL_RENEG_ATTEMPTS.
+                         if [[ $SERVICE != HTTP ]]; then
                               pr_svrty_medium "VULNERABLE (NOT ok)"; outln ", potential DoS threat"
                               fileout "$jsonID" "MEDIUM" "VULNERABLE, potential DoS threat" "$cve" "$cwe" "$hint"
+                         else
+                              (for ((i=0; i < ssl_reneg_attempts; i++ )); do echo R; sleep 1; done) | \
+                                   $OPENSSL s_client $(s_client_options "$proto $legacycmd $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY") >$TMPFILE 2>>$ERRFILE
+                              case $? in
+                                   0) pr_svrty_high "VULNERABLE (NOT ok)"; outln ", DoS threat ($ssl_reneg_attempts attempts)"
+                                      fileout "$jsonID" "HIGH" "VULNERABLE, DoS threat" "$cve" "$cwe" "$hint"
+                                      ;;
+                                   1) pr_svrty_good "not vulnerable (OK)"; outln " -- mitigated (disconnect within $ssl_reneg_attempts)"
+                                      fileout "$jsonID" "OK" "not vulnerable, mitigated" "$cve" "$cwe"
+                                      ;;
+                                   *) prln_warning "FIXME (bug): $sec_client_renego ($ssl_reneg_attempts tries)"
+                                      fileout "$jsonID" "DEBUG" "FIXME (bug $ssl_reneg_attempts tries) $sec_client_renego" "$cve" "$cwe"
+                                      ret=1
+                                      ;;
+                              esac
                          fi
                          ;;
                     1)
@@ -14143,7 +16770,11 @@ run_renego() {
           fi
      fi
 
-     #FIXME Insecure Client-Initiated Renegotiation is missing ==> sockets
+     #pr_bold " Insecure Client-Initiated Renegotiation  "  # pre-RFC 5746, CVE-2009-3555
+     #jsonID="insecure_client_renego"
+     #
+     # https://www.openssl.org/news/vulnerabilities.html#y2009. It can only be tested with OpenSSL <=0.9.8k
+     # Insecure Client-Initiated Renegotiation is missing ==> sockets. When we complete the handshake ;-)
 
      tmpfile_handle ${FUNCNAME[0]}.txt
      return $ret
@@ -14156,19 +16787,28 @@ run_crime() {
      local cwe="CWE-310"
      local hint=""
 
-     # in a nutshell: don't offer TLS/SPDY compression on the server side
-     # This tests for CRIME Vulnerability (www.ekoparty.org/2012/juliano-rizzo.php) on HTTPS, not SPDY (yet)
-     # Please note that it is an attack where you need client side control, so in regular situations this
-     # means anyway "game over", w/wo CRIME
-     # www.h-online.com/security/news/item/Vulnerability-in-SSL-encryption-is-barely-exploitable-1708604.html
+     # In a nutshell: don't offer TLS/SPDY compression. This tests for CRIME Vulnerability on HTTPS only,
+     # not SPDY or ALPN (yet). Please note that it is an attack where you need client side control, so in
+     # regular situations this # means anyway "game over", with or without CRIME.
+     #
+     # https://blog.qualys.com/ssllabs/2012/09/14/crime-information-leakage-attack-against-ssltls
 
      [[ $VULN_COUNT -le $VULN_THRESHLD ]] && outln && pr_headlineln " Testing for CRIME vulnerability " && outln
      pr_bold " CRIME, TLS " ; out "($cve)                "
+     jsonID="CRIME_TLS"
+
+     if "$TLS13_ONLY"; then
+          pr_svrty_best "not vulnerable (OK)"
+          [[ $DEBUG -ge 1 ]] && out ", no compression in TLS 1.3 only servers"
+          outln
+          fileout "$jsonID" "OK" "TLS 1.3 only server" "$cve" "$cwe"
+          return 0
+     fi
 
      if ! "$HAS_ZLIB"; then
           if "$SSL_NATIVE"; then
                prln_local_problem "$OPENSSL lacks zlib support"
-               fileout "CRIME_TLS" "WARN" "CRIME, TLS: Not tested. $OPENSSL lacks zlib support" "$cve" "$cwe"
+               fileout "$jsonID" "WARN" "CRIME, TLS: Not tested. $OPENSSL lacks zlib support" "$cve" "$cwe"
                return 1
           else
                tls_sockets "03" "$TLS12_CIPHER" "" "" "true"
@@ -14183,28 +16823,30 @@ run_crime() {
           sclient_connect_successful $? $TMPFILE
           sclient_success=$?
      fi
+
      if [[ $sclient_success -ne 0 ]]; then
           pr_warning "test failed (couldn't connect)"
-          fileout "CRIME_TLS" "WARN" "Check failed, couldn't connect" "$cve" "$cwe"
+          fileout "$jsonID" "WARN" "Check failed, couldn't connect" "$cve" "$cwe"
           ret=1
      elif grep -a Compression $TMPFILE | grep -aq NONE >/dev/null; then
           pr_svrty_good "not vulnerable (OK)"
-          if [[ $SERVICE != "HTTP" ]] && ! "$CLIENT_AUTH";  then
+          if [[ $SERVICE != HTTP ]] && [[ "$CLIENT_AUTH" != required ]];  then
                out " (not using HTTP anyway)"
-               fileout "CRIME_TLS" "OK" "not vulnerable (not using HTTP anyway)" "$cve" "$cwe"
+               fileout "$jsonID" "OK" "not vulnerable (not using HTTP anyway)" "$cve" "$cwe"
           else
-               fileout "CRIME_TLS" "OK" "not vulnerable" "$cve" "$cwe"
+               fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
           fi
      else
-          if [[ $SERVICE == "HTTP" ]] || "$CLIENT_AUTH"; then
+          if [[ $SERVICE == HTTP ]] || [[ "$CLIENT_AUTH" == required ]]; then
                pr_svrty_high "VULNERABLE (NOT ok)"
-               fileout "CRIME_TLS" "HIGH" "VULNERABLE" "$cve" "$cwe" "$hint"
+               fileout "$jsonID" "HIGH" "VULNERABLE" "$cve" "$cwe" "$hint"
           else
                pr_svrty_medium "VULNERABLE but not using HTTP: probably no exploit known"
-               fileout "CRIME_TLS" "MEDIUM" "VULNERABLE, but not using HTTP. Probably no exploit known" "$cve" "$cwe" "$hint"
+               fileout "$jsonID" "MEDIUM" "VULNERABLE, but not using HTTP. Probably no exploit known" "$cve" "$cwe" "$hint"
                # not clear whether a protocol != HTTP offers the ability to repeatedly modify the input
                # which is done e.g. via javascript in the context of HTTP
           fi
+          set_grade_cap "C" "Vulnerable to CRIME"
      fi
      outln
 
@@ -14245,14 +16887,48 @@ run_crime() {
 }
 
 
-# BREACH is a HTTP-level compression & an attack which works against any cipher suite and is agnostic
-# to the version of TLS/SSL, more: http://www.breachattack.com/ . Foreign referrers are the important thing here!
+
+# As the name says. It expects as arg1 a GET command string. It returns 1
+# when GET command was stalled or killed (which is no not always used)
+# and echos "warn_*". It return 0 when everything went ok and echos the
+# compression if any.
+sub_breach_helper() {
+     local get_command="$1"
+     local detected_compression=""
+     local -i was_killed=0
+
+     safe_echo "$get_command" | $OPENSSL s_client $(s_client_options "$OPTIMAL_PROTO $BUGS -quiet -ign_eof -connect $NODEIP:$PORT $PROXY $SNI") 1>$TMPFILE 2>$ERRFILE &
+     wait_kill $! $HEADER_MAXSLEEP
+     was_killed=$?                 # !=0 when it was killed
+     detected_compression=$(grep -ia ^Content-Encoding: $TMPFILE)
+     detected_compression="$(strip_lf "$detected_compression")"
+     detected_compression="${detected_compression#*:}"
+     detected_compression="$(strip_spaces "$detected_compression")"
+     if [[ ! -s $TMPFILE ]]; then
+          if [[ $was_killed -eq 0 ]]; then
+               echo "warn_stalled"
+          else
+               echo "warn_killed"
+          fi
+          return 1
+     elif [[ -z $detected_compression ]]; then
+          echo "no_compression"
+     else
+          echo "$detected_compression"
+     fi
+     return 0
+}
+
+
+
+# BREACH is a HTTP-level compression & an attack which works against any cipher suite and is agnostic to the
+# version of TLS/SSL, more: http://www.breachattack.com/ . External referrers are the important thing here!
 # Mitigation: see https://community.qualys.com/message/20360
+# Any URL can be vulnerable. Here only the given URL is tested. See also $when_makesense
 #
 run_breach() {
      local header
      local -i ret=0
-     local -i was_killed=0
      local referer useragent
      local url="$1"
      local spaces="                                          "
@@ -14260,24 +16936,22 @@ run_breach() {
      local when_makesense=" Can be ignored for static pages or if no secrets in the page"
      local cve="CVE-2013-3587"
      local cwe="CWE-310"
-     local hint=""
+     local hint="" c=""
      local jsonID="BREACH"
+     local compressions="gzip deflate compress br"
+     local has_compression=()
+     local detected_compression=""
+     local get_command=""
 
-     [[ $SERVICE != HTTP ]] && ! "$CLIENT_AUTH" && return 7
+     [[ $SERVICE != HTTP ]] && [[ "$CLIENT_AUTH" != required ]] && return 7
 
      [[ $VULN_COUNT -le $VULN_THRESHLD ]] && outln && pr_headlineln " Testing for BREACH (HTTP compression) vulnerability " && outln
      pr_bold " BREACH"; out " ($cve)                    "
-     if "$CLIENT_AUTH"; then
-          outln "cannot be tested (server side requires x509 authentication)"
-          fileout "$jsonID" "INFO" "was not tested, server side requires x509 authentication" "$cve" "$cwe"
+     if [[ "$CLIENT_AUTH" == required ]]; then
+          prln_warning "client x509-based authentication prevents this from being tested"
+          fileout "$jsonID" "WARN" "client x509-based authentication prevents this from being tested" "$cve" "$cwe"
+          return 7
      fi
-
-     # if [[ $NR_HEADER_FAIL -ge $MAX_HEADER_FAIL ]]; then
-     #      pr_warning "Retrieving HTTP header failed before. Skipping."
-     #      fileout "$jsonID" "WARN" "HTTP response was wampty before" "$cve" "$cwe"
-     #      outln
-     #      return 1
-     # fi
 
      [[ -z "$url" ]] && url="/"
      disclaimer=" - only supplied \"$url\" tested"
@@ -14286,33 +16960,80 @@ run_breach() {
      [[ "$NODE" =~ google ]] && referer="https://yandex.ru/"     # otherwise we have a false positive for google.com
      useragent="$UA_STD"
      $SNEAKY && useragent="$UA_SNEAKY"
-     printf "GET $url HTTP/1.1\r\nHost: $NODE\r\nUser-Agent: $useragent\r\nReferer: $referer\r\nConnection: Close\r\nAccept-encoding: gzip,deflate,compress\r\nAccept: text/*\r\n\r\n" | $OPENSSL s_client $(s_client_options "$OPTIMAL_PROTO $BUGS -quiet -ign_eof -connect $NODEIP:$PORT $PROXY $SNI") 1>$TMPFILE 2>$ERRFILE &
-     wait_kill $! $HEADER_MAXSLEEP
-     was_killed=$?                           # !=0 was killed
-     result=$(awk '/^Content-Encoding/ { print $2 }' $TMPFILE)
-     result=$(strip_lf "$result")
-     debugme grep '^Content-Encoding' $TMPFILE
-     if [[ ! -s $TMPFILE ]]; then
-          pr_warning "failed (HTTP header request stalled or empty return"
-          if [[ $was_killed -ne 0 ]]; then
-               pr_warning " and was terminated"
-               fileout "$jsonID" "WARN" "Test failed as HTTP request stalled and was terminated" "$cve" "$cwe"
-          else
-               fileout "$jsonID" "WARN" "Test failed as HTTP response was empty" "$cve" "$cwe"
-          fi
-          prln_warning ") "
-          ret=1
-     elif [[ -z $result ]]; then
-          pr_svrty_best "no HTTP compression (OK) "
-          outln "$disclaimer"
-          fileout "$jsonID" "OK" "not vulnerable, no HTTP compression $disclaimer" "$cve" "$cwe"
-     else
-          pr_svrty_high "potentially NOT ok, uses $result HTTP compression."
-          outln "$disclaimer"
-          outln "$spaces$when_makesense"
-          fileout "$jsonID" "HIGH" "potentially VULNERABLE, uses $result HTTP compression $disclaimer" "$cve" "$cwe" "$hint"
-     fi
-     # Any URL can be vulnerable. I am testing now only the given URL!
+
+     # Assemble the GET command with all available compressions and send them all, initially.
+     # If the result is negative: we can just tell the finding and return. If it's
+     # positive: We already have identified 1x compression
+     get_command="GET $url HTTP/1.1\r\nHost: $NODE\r\nUser-Agent: $useragent\r\nReferer: $referer\r\nConnection: Close\r\nAccept-encoding: ${compressions// /,}\r\nAccept: text/*\r\n\r\n"
+     detected_compression=$(sub_breach_helper "$get_command")
+     case "$detected_compression" in
+          warn_stalled)
+               pr_warning "First request failed (HTTP header request stalled and was terminated)"
+               fileout "$jsonID" "WARN" "Test failed as first HTTP request stalled and was terminated" "$cve" "$cwe"
+               ret=1
+               ;;
+          warn_failed)
+               pr_warning "First request failed (HTTP header request was empty)"
+               fileout "$jsonID" "WARN" "Test failed as first HTTP response was empty" "$cve" "$cwe"
+               ret=1
+               ;;
+          no_compression)
+               pr_svrty_good "no gzip/deflate/compress/br HTTP compression (OK) "
+               outln "$disclaimer"
+               fileout "$jsonID" "OK" "not vulnerable, no gzip/deflate/compress/br HTTP compression $disclaimer" "$cve" "$cwe"
+               ret=0
+               ;;
+          *)   # Now assemble the remaining compressions in $compressions and loop through them
+               has_compression+=("$detected_compression:yes")
+               compressions="${compressions//$detected_compression/}"
+               for c in $compressions; do
+                    get_command="GET $url HTTP/1.1\r\nHost: $NODE\r\nUser-Agent: $useragent\r\nReferer: $referer\r\nConnection: Close\r\nAccept-encoding: ${c}\r\nAccept: text/*\r\n\r\n"
+                    detected_compression=$(sub_breach_helper "$get_command")
+                    if [[ $? -ne 0 ]]; then
+                         # This failure unlikely here. The initial request must have succeeded and this one then
+                         # failed but we'd rather treat this correctly (e.d. IDS which triggers later). Not also
+                         # we exit on the first stalled request. So if the first one with all compressions failed,
+                         # we don't get here. It seems very unlikely the first failed and subsequent will succeed.
+                         has_compression+=("$c:$compressions")
+                    elif [[ "$detected_compression" =~ no_compression ]]; then
+                         has_compression+=("$c:no")
+                         debugme echo "has_compression: $c: no"
+                    elif [[ -n "$detected_compression" ]]; then
+                         has_compression+=("$c:yes")
+                         debugme echo "has_compression: $c: yes"
+                    else
+                         prln_fixme "strange reply around line $((LINENO)) from sub_breach_helper()"
+                    fi
+               done
+
+               # Final verdict (if not happened preemptively before). We reuse $detected_compression here
+               detected_compression=""
+               if [[ ${has_compression[@]} =~ warn ]]; then
+                    # warn_empty / warn_stalled
+                    if [[ ${has_compression[@]} =~ warn_empty ]]; then
+                         pr_warning "At least 1/4 checks failed (HTTP header request was empty, debug: ${has_compression[@]}"
+                         out ", debug: ${has_compression[@]})"
+                         fileout "$jsonID" "WARN" "Test failed as HTTP response was empty, debug: ${has_compression[@]}" "$cve" "$cwe"
+                    else # warn_stalled
+                         pr_warning "At least 1/4 checks failed (HTTP header request stalled and was terminated"
+                         out ", debug: ${has_compression[@]})"
+                         fileout "$jsonID" "WARN" "Test failed as HTTP request stalled and was terminated" "$cve" "$cwe"
+                    fi
+               else
+                    for c in ${has_compression[@]}; do
+                         if [[ $c =~ yes ]]; then
+                              detected_compression+="${c%:*} "
+                         fi
+                    done
+                    detected_compression="$(strip_trailing_space "$detected_compression")"
+                    pr_svrty_medium "potentially NOT ok, \"$detected_compression\" HTTP compression detected."
+                    outln "$disclaimer"
+                    outln "${spaces}${when_makesense}"
+                    fileout "$jsonID" "MEDIUM" "potentially VULNERABLE, $detected_compression HTTP compression detected $disclaimer" "$cve" "$cwe" "$hint"
+               fi
+               debugme outln "${spaces}has_compression: ${has_compression[@]}"
+               ;;
+     esac
 
      tmpfile_handle ${FUNCNAME[0]}.txt
      return $ret
@@ -14337,17 +17058,26 @@ run_sweet32() {
      local -i nr_sweet32_ciphers=0 nr_supported_ciphers=0 nr_ssl2_sweet32_ciphers=0 nr_ssl2_supported_ciphers=0
      local ssl2_sweet=false
      local using_sockets=true
+     local tls1_1_vulnerable=false
 
      [[ $VULN_COUNT -le $VULN_THRESHLD ]] && outln && pr_headlineln " Testing for SWEET32 (Birthday Attacks on 64-bit Block Ciphers)       " && outln
      pr_bold " SWEET32"; out " (${cve// /, })    "
 
+     if "$TLS13_ONLY"; then
+          # Unfortunately there's no restriction using TLS 1.2 with $sweet32_ciphers
+          pr_svrty_best "not vulnerable (OK)"
+          [[ $DEBUG -ge 1 ]] && out ", TLS 1.3 doesn't offer such ciphers"
+          outln
+          fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
+          return 0
+     fi
+
      "$SSL_NATIVE" && using_sockets=false
      # The openssl binary distributed has almost everything we need (PSK, KRB5 ciphers and feff, ffe0 are typically missing).
-     # Measurements show that there's little impact whether we use sockets or TLS here, so the default is sockets here
+     # Measurements show that there's little impact whether we use sockets or TLS here, so the default is sockets here.
      if "$using_sockets"; then
           for proto in 03 02 01 00; do
-               "$FAST" && [[ "$proto" != 03 ]] && break
-               ! "$FAST" && [[ $(has_server_protocol "$proto") -eq 1 ]] && continue
+               [[ $(has_server_protocol "$proto") -eq 1 ]] && continue
                tls_sockets "$proto" "${sweet32_ciphers_hex}, 00,ff"
                sclient_success=$?
                [[ $sclient_success -eq 2 ]] && sclient_success=0
@@ -14357,7 +17087,7 @@ run_sweet32() {
                sslv2_sockets "$ssl2_sweet32_ciphers_hex"
                case $? in
                     3)   ssl2_sweet=true
-                         add_tls_offered ssl2 yes ;;
+                         add_proto_offered ssl2 yes ;;
                     0)   ;; # ssl2_sweet=false
                     1|4|6|7)  debugme "${FUNCNAME[0]}: test problem we don't handle here"
                          ;;
@@ -14365,11 +17095,11 @@ run_sweet32() {
           fi
      else
           nr_sweet32_ciphers=$(count_ciphers $sweet32_ciphers)
-          nr_supported_ciphers=$(count_ciphers $(actually_supported_ciphers $sweet32_ciphers))
+          nr_supported_ciphers=$(count_ciphers $(actually_supported_osslciphers $sweet32_ciphers))
           debugme echo "$nr_sweet32_ciphers / $nr_supported_ciphers"
 
           nr_ssl2_sweet32_ciphers=$(count_ciphers $ssl2_sweet32_ciphers)
-          nr_ssl2_supported_ciphers=$(count_ciphers $(actually_supported_ciphers $ssl2_sweet32_ciphers))
+          nr_ssl2_supported_ciphers=$(count_ciphers $(actually_supported_osslciphers $ssl2_sweet32_ciphers))
           debugme echo "$nr_ssl2_sweet32_ciphers / $nr_ssl2_supported_ciphers"
 
           if [[ $(( nr_supported_ciphers + nr_ssl2_supported_ciphers )) -le $nr_cipher_minimal ]]; then
@@ -14389,6 +17119,7 @@ run_sweet32() {
                sclient_connect_successful $? $TMPFILE
                sclient_success=$?
                [[ $DEBUG -ge 2 ]] && grep -Eq "error|failure" $ERRFILE | grep -Eav "unable to get local|verify error"
+               [[ $proto == -tls1_1 && $sclient_success -eq 0 ]] && tls1_1_vulnerable=true
                [[ $sclient_success -eq 0 ]] && break
           done
           if "$HAS_SSL2"; then
@@ -14397,7 +17128,7 @@ run_sweet32() {
                     sclient_connect_successful $? $TMPFILE
                     if [[ $? -eq 0 ]]; then
                          ssl2_sweet=true
-                         add_tls_offered ssl2 yes
+                         add_proto_offered ssl2 yes
                     fi
                fi
           else
@@ -14408,11 +17139,13 @@ run_sweet32() {
      if [[ $sclient_success -eq 0 ]] && "$ssl2_sweet" ; then
           pr_svrty_low "VULNERABLE"; out ", uses 64 bit block ciphers for SSLv2 and above"
           fileout "SWEET32" "LOW" "uses 64 bit block ciphers for SSLv2 and above" "$cve" "$cwe" "$hint"
+          "$tls1_1_vulnerable" && set_grade_cap "C" "Uses 64 bit block ciphers with TLS 1.1 (vulnerable to SWEET32)"
      elif [[ $sclient_success -eq 0 ]]; then
           pr_svrty_low "VULNERABLE"; out ", uses 64 bit block ciphers"
           fileout "SWEET32" "LOW" "uses 64 bit block ciphers" "$cve" "$cwe" "$hint"
+          "$tls1_1_vulnerable" && set_grade_cap "C" "Uses 64 bit block ciphers with TLS 1.1 (vulnerable to SWEET32)"
      elif "$ssl2_sweet"; then
-          pr_svrty_low "VULNERABLE"; out ", uses 64 bit block ciphers wth SSLv2 only"
+          pr_svrty_low "VULNERABLE"; out ", uses 64 bit block ciphers with SSLv2 only"
           fileout "SWEET32" "LOW" "uses 64 bit block ciphers with SSLv2 only" "$cve" "$cwe" "$hint"
      else
           pr_svrty_best "not vulnerable (OK)";
@@ -14461,6 +17194,14 @@ run_ssl_poodle() {
      [[ $VULN_COUNT -le $VULN_THRESHLD ]] && outln && pr_headlineln " Testing for SSLv3 POODLE (Padding Oracle On Downgraded Legacy Encryption) " && outln
      pr_bold " POODLE, SSL"; out " ($cve)               "
 
+     if "$TLS13_ONLY" || [[ $(has_server_protocol ssl3) -eq 1 ]]; then
+          # one condition should normally suffice but we don't know when run_poddle() was called
+          pr_svrty_best "not vulnerable (OK)"
+          outln ", no SSLv3 support"
+          fileout "$jsonID" "OK" "not vulnerable, no SSLv3" "$cve" "$cwe"
+          return 0
+     fi
+
      "$SSL_NATIVE" && using_sockets=false
      # The openssl binary distributed has almost everything we need (PSK and KRB5 ciphers are typically missing).
      # Measurements show that there's little impact whether we use sockets or TLS here, so the default is sockets here
@@ -14473,9 +17214,9 @@ run_ssl_poodle() {
                return 1
           fi
           nr_cbc_ciphers=$(count_ciphers $cbc_ciphers)
-          nr_supported_ciphers=$(count_ciphers $(actually_supported_ciphers $cbc_ciphers))
+          nr_supported_ciphers=$(count_ciphers $(actually_supported_osslciphers $cbc_ciphers))
           # SNI not needed as SSLv3 has none:
-          $OPENSSL s_client -ssl3 $STARTTLS $BUGS -cipher $cbc_ciphers -connect $NODEIP:$PORT $PROXY >$TMPFILE 2>$ERRFILE </dev/null
+          $OPENSSL s_client $(s_client_options "-ssl3 $STARTTLS $BUGS -cipher $cbc_ciphers -connect $NODEIP:$PORT $PROXY") >$TMPFILE 2>$ERRFILE </dev/null
           sclient_connect_successful $? $TMPFILE
           sclient_success=$?
           [[ "$DEBUG" -eq 2 ]] && grep -Eq "error|failure" $ERRFILE | grep -Eav "unable to get local|verify error"
@@ -14484,6 +17225,7 @@ run_ssl_poodle() {
           POODLE=0
           pr_svrty_high "VULNERABLE (NOT ok)"; out ", uses SSLv3+CBC (check TLS_FALLBACK_SCSV mitigation below)"
           fileout "$jsonID" "HIGH" "VULNERABLE, uses SSLv3+CBC" "$cve" "$cwe" "$hint"
+          set_grade_cap "C" "Vulnerable to POODLE"
      else
           POODLE=1
           pr_svrty_best "not vulnerable (OK)";
@@ -14514,6 +17256,8 @@ run_tls_poodle() {
      #FIXME
      prln_warning "#FIXME"
      fileout "$jsonID" "WARN" "Not yet implemented #FIXME" "$cve" "$cwe"
+     # set_grade_cap "F" "Vulnerable to POODLE TLS"
+
      return 0
 }
 
@@ -14523,16 +17267,19 @@ run_tls_poodle() {
 # the countermeasure to protect against protocol downgrade attacks.
 #
 run_tls_fallback_scsv() {
-     local -i ret=0
+     local -i ret=0 debug_level
      local high_proto="" low_proto=""
      local p high_proto_str protos_to_try
+     local using_sockets=true
      local jsonID="fallback_SCSV"
+
+     "$SSL_NATIVE" && using_sockets=false
 
      [[ $VULN_COUNT -le $VULN_THRESHLD ]] && outln && pr_headlineln " Testing for TLS_FALLBACK_SCSV Protection " && outln
      pr_bold " TLS_FALLBACK_SCSV"; out " (RFC 7507)              "
 
      # First check we have support for TLS_FALLBACK_SCSV in our local OpenSSL
-     if ! "$HAS_FALLBACK_SCSV"; then
+     if ! "$HAS_FALLBACK_SCSV" && ! "$using_sockets"; then
           prln_local_problem "$OPENSSL lacks TLS_FALLBACK_SCSV support"
           fileout "$jsonID" "WARN" "$OPENSSL lacks TLS_FALLBACK_SCSV support"
           return 1
@@ -14547,13 +17294,26 @@ run_tls_fallback_scsv() {
      for p in tls1_2 tls1_1 tls1 ssl3; do
           [[ $(has_server_protocol "$p") -eq 1 ]] && continue
           if [[ $(has_server_protocol "$p") -eq 0 ]]; then
-                high_proto="$p"
-                break
-          fi
-          $OPENSSL s_client $(s_client_options "-$p $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE </dev/null
-          if sclient_connect_successful $? $TMPFILE; then
                high_proto="$p"
                break
+          fi
+
+          if [[ "$p" == ssl3 ]] && ! "$HAS_SSL3"; then
+               "$using_sockets" || continue
+               tls_sockets "00" "$TLS_CIPHER" "" "" "true"
+               if [[ $? -eq 0 ]]; then
+                    high_proto="$p"
+                    add_proto_offered ssl3 yes
+                    break
+               else
+                    add_proto_offered ssl3 no
+               fi
+          else
+               $OPENSSL s_client $(s_client_options "-$p $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE </dev/null
+               if sclient_connect_successful $? $TMPFILE; then
+                    high_proto="$p"
+                    break
+               fi
           fi
      done
      case "$high_proto" in
@@ -14571,8 +17331,32 @@ run_tls_fallback_scsv() {
                fileout "$jsonID" "HIGH" "only SSLv3 supported"
                return 0
                ;;
-          *)   prln_svrty_good "No fallback possible, TLS 1.3 is the only protocol (OK)"
-               fileout "$jsonID" "OK" "only TLS 1.3 supported"
+          *)   if [[ $(has_server_protocol tls1_3) -eq 0 ]]; then
+                    # If the server supports TLS 1.3, and does not support TLS 1.2, TLS 1.1, or TLS 1,
+                    # then assume it does not support SSLv3, even if SSLv3 cannot be tested.
+                    pr_svrty_good "No fallback possible (OK)"; outln ", TLS 1.3 is the only protocol"
+                    fileout "$jsonID" "OK" "only TLS 1.3 supported"
+               elif [[ $(has_server_protocol tls1_3) -eq 1 ]] && \
+                    ( [[ $(has_server_protocol ssl3) -eq 1 ]] || "$HAS_SSL3" ); then
+                    # TLS 1.3, TLS 1.2, TLS 1.1, TLS 1, and SSLv3 are all not supported.
+                    # This may be an SSLv2-only server, if $OPENSSL does not support SSLv2.
+                    prln_warning "test failed (couldn't connect)"
+                    fileout "$jsonID" "WARN" "Check failed. (couldn't connect)"
+                    return 1
+               elif [[ $(has_server_protocol tls1_3) -eq 1 ]]; then
+                    # If the server does not support TLS 1.3, TLS 1.2, TLS 1.1, or TLS 1, and
+                    # support for SSLv3 cannot be tested, then treat it as HIGH severity, since
+                    # it is very likely that SSLv3 is the only supported protocol.
+                    pr_svrty_high "NOT ok, no fallback possible"; outln ", TLS 1.3, 1.2, 1.1 and 1.0 not supported"
+                    fileout "$jsonID" "HIGH" "TLS 1.3, 1.2, 1.1, 1.0 not supported"
+               else
+                    # TLS 1.2, TLS 1.1, and TLS 1 are not supported, but can't tell whether TLS 1.3 is supported.
+                    # This could be a TLS 1.3 only server, an SSLv3 only server (if SSLv3 support cannot be tested),
+                    # or a server that does not support SSLv3 or any TLS protocol. So, don't report a severity,
+                    # since this could either be good or bad.
+                    outln "No fallback possible, TLS 1.2, TLS 1.1, and TLS 1 not supported"
+                    fileout "$jsonID" "INFO" "TLS 1.2, TLS 1.1, and TLS 1 not supported"
+               fi
                return 0
      esac
 
@@ -14583,17 +17367,45 @@ run_tls_fallback_scsv() {
                low_proto="$p"
                break
           fi
-          $OPENSSL s_client $(s_client_options "-$p $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE </dev/null
-          if sclient_connect_successful $? $TMPFILE; then
-               low_proto="$p"
-               break
+          if [[ "$p" == ssl3 ]] && ! "$HAS_SSL3"; then
+               "$using_sockets" || continue
+               tls_sockets "00" "$TLS_CIPHER" "" "" "true"
+               if [[ $? -eq 0 ]]; then
+                    low_proto="$p"
+                    add_proto_offered ssl3 yes
+                    break
+               else
+                    add_proto_offered ssl3 no
+               fi
+          else
+               $OPENSSL s_client $(s_client_options "-$p $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE </dev/null
+               if sclient_connect_successful $? $TMPFILE; then
+                    low_proto="$p"
+                    break
+               fi
           fi
      done
 
+     if ! "$HAS_SSL3" && ! "$using_sockets" && \
+         ( [[ "$low_proto" == ssl3 ]] || \
+           ( [[ "$high_proto" == tls1 ]] && [[ $(has_server_protocol ssl3) -eq 2 ]] ) ); then
+          # If the protocol that the server would fall back to is SSLv3, but $OPENSSL does
+          # not support SSLv3, then the test cannot be performed. So, if $OPENSSL does not
+          # support SSLv3 and it is known that SSLv3 is the fallback protocol ($low_proto), then
+          # the test cannot be performed. Similarly, if SSLv3 could be the fallback protocol, but
+          # support for SSLv3 is unknown, then the test cannot be performed.
+          # NOTE: This check assumes that any server that supports SSLv3 and either TLS 1.2 or
+          # TLS 1.1 would also support TLS 1. So, if $high_proto is not TLS 1, then it is assumed
+          # that either (1) $low_proto has already been set (to TLS1.1 or TLS 1) or (2) no protocol
+          # lower than $high_proto is offered.
+          prln_local_problem "Can't test: $OPENSSL does not support SSLv3"
+          fileout "$jsonID" "WARN" "Can't test: $OPENSSL does not support SSLv3"
+          return 1
+     fi
      if [[ -z "$low_proto" ]]; then
           case "$high_proto" in
                "tls1_2")
-                    prln_svrty_good "No fallback possible, no protocol below $high_proto_str offered (OK)"
+                    pr_svrty_good "No fallback possible (OK)"; outln ", no protocol below $high_proto_str offered"
                     ;;
                *)   outln "No fallback possible, no protocol below $high_proto_str offered (OK)"
                     ;;
@@ -14613,21 +17425,50 @@ run_tls_fallback_scsv() {
      debugme echo "Simulating fallback from $high_proto to $low_proto"
 
      # ...and do the test (we need to parse the error here!)
-     $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI $p -fallback_scsv") &>$TMPFILE </dev/null
+     if "$HAS_FALLBACK_SCSV" && sclient_supported "-$low_proto"; then
+          $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI $p -fallback_scsv") &>$TMPFILE </dev/null
+     else
+          # Need to ensure that $TEMPDIR/$NODEIP.parse_tls_serverhello.txt contains the results of the
+          # most recent calls to tls_sockets even if tls_sockets is not successful. Setting $DEBUG to
+          # a non-zero value ensures this. Setting it to 1 prevents any extra information from being
+          # displayed.
+          debug_level="$DEBUG"
+          [[ $DEBUG -eq 0 ]] && DEBUG=1
+          > "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt"
+
+          # tls_sockets() needs to parse the full response since the following code is
+          # looking for "BEGIN CERTIFICATE" when the TLS connection is successful. It
+          # may be possible to speed up this code by having the following code check
+          # the return value from tls_sockets() to determine whether the connection was
+          # successful rather than looking for "BEGIN CERTIFICATE".
+          case "$low_proto" in
+               "tls1_1")
+                    tls_sockets "02" "56,00, $TLS_CIPHER" "all" "" "true" ;;
+               "tls1")
+                    tls_sockets "01" "56,00, $TLS_CIPHER" "all" "" "true" ;;
+               "ssl3")
+                    tls_sockets "00" "56,00, $TLS_CIPHER" "all" "" "true" ;;
+          esac
+          mv "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" "$TMPFILE"
+          DEBUG=$debug_level
+     fi
      if grep -q "CONNECTED(00" "$TMPFILE"; then
-          if grep -qa "BEGIN CERTIFICATE" "$TMPFILE"; then
+          if grep -qa 'BEGIN CERTIFICATE' "$TMPFILE"; then
                if [[ -z "$POODLE" ]]; then
                     pr_warning "Rerun including POODLE SSL check. "
                     pr_svrty_medium "Downgrade attack prevention NOT supported"
-                    fileout "$jsonID" "WARN" "NOT supported. Pls rerun wity POODLE SSL check"
+                    fileout "$jsonID" "WARN" "NOT supported. Pls rerun with POODLE SSL check"
                     ret=1
                elif [[ "$POODLE" -eq 0 ]]; then
                     pr_svrty_high "Downgrade attack prevention NOT supported and vulnerable to POODLE SSL"
                     fileout "$jsonID" "HIGH" "NOT supported and vulnerable to POODLE SSL"
+                    set_grade_cap "C" "Vulnerable to POODLE"
                else
                     pr_svrty_medium "Downgrade attack prevention NOT supported"
                     fileout "$jsonID" "MEDIUM" "NOT supported"
                fi
+               set_grade_cap "A" "Does not support TLS_FALLBACK_SCSV"
+
           elif grep -qa "alert inappropriate fallback" "$TMPFILE"; then
                pr_svrty_good "Downgrade attack prevention supported (OK)"
                fileout "$jsonID" "OK" "supported"
@@ -14678,13 +17519,20 @@ run_freak() {
      [[ $VULN_COUNT -le $VULN_THRESHLD ]] && outln && pr_headlineln " Testing for FREAK attack " && outln
      pr_bold " FREAK"; out " ($cve)                     "
 
+     if "$TLS13_ONLY"; then
+          pr_svrty_best "not vulnerable (OK)"
+          [[ $DEBUG -ge 1 ]] && out ", TLS 1.3 only server"
+          outln
+          fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
+          return 0
+     fi
+
      "$SSL_NATIVE" && using_sockets=false
      if "$using_sockets"; then
           nr_supported_ciphers=$(count_words "$exportrsa_tls_cipher_list_hex")+$(count_words "$exportrsa_ssl2_cipher_list_hex")
      else
-          nr_supported_ciphers=$(count_ciphers $(actually_supported_ciphers $exportrsa_cipher_list))
+          nr_supported_ciphers=$(count_ciphers $(actually_supported_osslciphers $exportrsa_cipher_list))
      fi
-     #echo "========= ${PIPESTATUS[*]}
 
      case $nr_supported_ciphers in
           0)   prln_local_problem "$OPENSSL doesn't have any EXPORT RSA ciphers configured"
@@ -14702,13 +17550,15 @@ run_freak() {
           tls_sockets "03" "$exportrsa_tls_cipher_list_hex, 00,ff"
           sclient_success=$?
           [[ $sclient_success -eq 2 ]] && sclient_success=0
-          if [[ $sclient_success -ne 0 ]]; then
+
+          # TLS handshake failed with ciphers above. Now we check SSLv2 -- unless we know it's not available
+          if [[ $sclient_success -ne 0 ]] && [[ $(has_server_protocol ssl2) -ne 1 ]]; then
                sslv2_sockets "$exportrsa_ssl2_cipher_list_hex" "true"
                if [[ $? -eq 3 ]] && [[ "$V2_HELLO_CIPHERSPEC_LENGTH" -ne 0 ]]; then
                     exportrsa_ssl2_cipher_list_hex="$(strip_spaces "${exportrsa_ssl2_cipher_list_hex//,/}")"
                     len=${#exportrsa_ssl2_cipher_list_hex}
                     detected_ssl2_ciphers="$(grep "Supported cipher: " "$TEMPDIR/$NODEIP.parse_sslv2_serverhello.txt")"
-                    for (( i=0; i<len; i=i+6 )); do
+                    for (( i=0; i<len; i+=6 )); do
                          [[ "$detected_ssl2_ciphers" =~ x${exportrsa_ssl2_cipher_list_hex:i:6} ]] && sclient_success=0 && break
                     done
                fi
@@ -14735,20 +17585,20 @@ run_freak() {
 
      if [[ $DEBUG -ge 2 ]]; then
           if "$using_sockets"; then
-               for hexc in $(sed 's/, / /g' <<< "$exportrsa_tls_cipher_list_hex, $exportrsa_ssl2_cipher_list_hex"); do
+               for hexc in ${exportrsa_tls_cipher_list_hex//, / } ${exportrsa_ssl2_cipher_list_hex//, / }; do
                     if [[ ${#hexc} -eq 5 ]]; then
                          hexc="0x${hexc:0:2},0x${hexc:3:2}"
                     else
                          hexc="0x${hexc:0:2},0x${hexc:3:2},0x${hexc:6:2}"
                     fi
                     for (( i=0; i < TLS_NR_CIPHERS; i++ )); do
-                         [[ "$hexc" == "${TLS_CIPHER_HEXCODE[i]}" ]] && break
+                         [[ "$hexc" == ${TLS_CIPHER_HEXCODE[i]} ]] && break
                     done
                     [[ $i -eq $TLS_NR_CIPHERS ]] && tm_out "$hexc " || tm_out "${TLS_CIPHER_OSSL_NAME[i]} "
                done
                tmln_out
           else
-               actually_supported_ciphers $exportrsa_cipher_list
+               actually_supported_osslciphers $exportrsa_cipher_list
           fi
      fi
      debugme echo $nr_supported_ciphers
@@ -14761,17 +17611,36 @@ run_freak() {
 # Sets the global DH_GROUP_OFFERED, start value: "", after this function:
 #    DH_GROUP_OFFERED=""
 #    DH_GROUP_OFFERED="<name of group>"
-#    return:  1: common primes file problem, 0: went w/o error
+#    return:  1: common primes file problem, 2: no pkey support, 0: went w/o error
 get_common_prime() {
      local jsonID2="$1"
      local key_bitstring="$2"
      local spaces="$3"
-     local dh_p=""
+     local pubkey dh_p=""
      local -i subret=0
      local common_primes_file="$TESTSSL_INSTALL_DIR/etc/common-primes.txt"
      local -i lineno_matched=0
 
-     dh_p="$($OPENSSL pkey -pubin -text -noout 2>>$ERRFILE <<< "$key_bitstring" | awk '/prime:/,/generator:/' | grep -Ev "prime|generator")"
+     "$HAS_PKEY" || return 2
+     pubkey="$($OPENSSL pkey -pubin -text_pub -noout 2>>$ERRFILE <<< "$key_bitstring")"
+     if [[ "$pubkey" =~ GROUP: ]]; then
+          DH_GROUP_OFFERED="${pubkey#*GROUP: }"
+          case "$DH_GROUP_OFFERED" in
+               modp_1536)   DH_GROUP_OFFERED="RFC3526/Oakley Group 5" ;;
+               modp_2048)   DH_GROUP_OFFERED="RFC3526/Oakley Group 14" ;;
+               modp_3072)   DH_GROUP_OFFERED="RFC3526/Oakley Group 15" ;;
+               modp_4096)   DH_GROUP_OFFERED="RFC3526/Oakley Group 16" ;;
+               modp_6144)   DH_GROUP_OFFERED="RFC3526/Oakley Group 17" ;;
+               modp_8192)   DH_GROUP_OFFERED="RFC3526/Oakley Group 18" ;;
+               dh_1024_160) DH_GROUP_OFFERED="RFC5114/1024-bit DSA group with 160-bit prime order subgroup" ;;
+               dh_2048_224) DH_GROUP_OFFERED="RFC5114/2048-bit DSA group with 224-bit prime order subgroup" ;;
+               dh_2048_256) DH_GROUP_OFFERED="RFC5114/2048-bit DSA group with 256-bit prime order subgroup" ;;
+          esac
+          pubkey="$(awk -F'(' '/Public-Key/ { print $2 }' <<< "$pubkey")"
+          DH_GROUP_LEN_P="${pubkey%% bit*}"
+          return 0
+     fi
+     dh_p="$(awk '/prime:|P:/,/generator:|G:/' <<< "$pubkey" | grep -Ev "prime|P:|generator|G:")"
      dh_p="$(strip_spaces "$(colon_to_spaces "$(newline_to_spaces "$dh_p")")")"
      [[ "${dh_p:0:2}" == "00" ]] && dh_p="${dh_p:2}"
      DH_GROUP_LEN_P="$((4*${#dh_p}))"
@@ -14784,7 +17653,7 @@ get_common_prime() {
           return 1
      else
           dh_p="$(toupper "$dh_p")"
-          # In the previous line of the match is bascially the hint we want to echo
+          # In the previous line of the match is basically the hint we want to echo
           # the most elegant thing to get the previous line [ awk '/regex/ { print x }; { x=$0 }' ] doesn't work with gawk
           lineno_matched=$(grep -n "$dh_p" "$common_primes_file" 2>/dev/null | awk -F':' '{ print $1 }')
           if [[ "$lineno_matched" -ne 0 ]]; then
@@ -14812,7 +17681,7 @@ out_common_prime() {
           out "common primes detected: "; pr_italic "$DH_GROUP_OFFERED"
           fileout "$jsonID2" "INFO" "$DH_GROUP_OFFERED" "$cve" "$cwe"
      # Now (below) size matters -- i.e. the bit size. As this is about a known prime we label it more strict.
-     # This needs maybe needs another thought as it could appear inconsistent with run_pfs and elsewhere.
+     # This needs maybe needs another thought as it could appear inconsistent with run_fs and elsewhere.
      # for now we label the bit size similar in the screen, but distinguish the leading text for logjam before
      elif [[ $DH_GROUP_LEN_P -le 800 ]]; then
           pr_svrty_critical "VULNERABLE (NOT ok):"; out " common prime: "
@@ -14864,7 +17733,7 @@ run_logjam() {
      # Also as the openssl binary distributed has everything we need measurements show that
      # there's no impact whether we use sockets or TLS here, so the default is sockets here
      if ! "$using_sockets"; then
-          nr_supported_ciphers=$(count_ciphers $(actually_supported_ciphers $exportdh_cipher_list))
+          nr_supported_ciphers=$(count_ciphers $(actually_supported_osslciphers $exportdh_cipher_list))
           debugme echo $nr_supported_ciphers
           case $nr_supported_ciphers in
                0)   prln_local_problem "$OPENSSL doesn't have any DH EXPORT ciphers configured"
@@ -14882,28 +17751,26 @@ run_logjam() {
           tls_sockets "03" "$exportdh_cipher_list_hex, 00,ff"
           sclient_success=$?
           [[ $sclient_success -eq 2 ]] && sclient_success=0
+          [[ $sclient_success -eq 0 ]] && vuln_exportdh_ciphers=true
      elif [[ $nr_supported_ciphers -ne 0 ]]; then
           $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -cipher $exportdh_cipher_list -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE </dev/null
           sclient_connect_successful $? $TMPFILE
-          sclient_success=$?
+          [[ $? -eq 0 ]] && vuln_exportdh_ciphers=true
           debugme grep -Ea "error|failure" $ERRFILE | grep -Eav "unable to get local|verify error"
      fi
-     [[ $sclient_success -eq 0 ]] && \
-          vuln_exportdh_ciphers=true || \
-          vuln_exportdh_ciphers=false
 
      if [[ $DEBUG -ge 2 ]]; then
           if "$using_sockets"; then
-               for hexc in $(sed 's/, / /g' <<< "$exportdh_cipher_list_hex"); do
+               for hexc in ${exportdh_cipher_list_hex//, / }; do
                     hexc="0x${hexc:0:2},0x${hexc:3:2}"
                     for (( i=0; i < TLS_NR_CIPHERS; i++ )); do
-                         [[ "$hexc" == "${TLS_CIPHER_HEXCODE[i]}" ]] && break
+                         [[ "$hexc" == ${TLS_CIPHER_HEXCODE[i]} ]] && break
                     done
                     [[ $i -eq $TLS_NR_CIPHERS ]] && tm_out "$hexc " || tm_out "${TLS_CIPHER_OSSL_NAME[i]} "
                done
                tmln_out
           else
-               echo $(actually_supported_ciphers $exportdh_cipher_list)
+               echo $(actually_supported_osslciphers $exportdh_cipher_list)
           fi
      fi
 
@@ -15010,6 +17877,8 @@ run_logjam() {
           fi
      fi
 
+     [[ $DH_GROUP_LEN_P -gt 0 ]] && set_key_str_score "DHE" $DH_GROUP_LEN_P
+
      outln
      tmpfile_handle ${FUNCNAME[0]}.txt
      return $ret
@@ -15024,6 +17893,7 @@ run_drown() {
      local cwe="CWE-310"
      local hint=""
      local jsonID="DROWN"
+     local censys_host_url="https://search.censys.io/search?resource=hosts&virtual_hosts=INCLUDE"
 
      if [[ $VULN_COUNT -le $VULN_THRESHLD ]]; then
           outln
@@ -15044,15 +17914,16 @@ run_drown() {
           cert_fingerprint_sha2=${cert_fingerprint_sha2/SHA256 /}
      fi
 
-     if ( [[ "$STARTTLS_PROTOCOL" =~ ldap ]] || [[ "$STARTTLS_PROTOCOL" =~ irc ]] ); then
+     if [[ "$STARTTLS_PROTOCOL" =~ irc ]]; then
           prln_local_problem "STARTTLS/$STARTTLS_PROTOCOL and --ssl-native collide here"
           return 1
      fi
 
+     censys_host_url="$censys_host_url&q=$cert_fingerprint_sha2"
      if [[ $(has_server_protocol ssl2) -ne 1 ]]; then
           sslv2_sockets
      else
-          [[ aaa == bbb ]]    # provoke retrurn code=1
+          [[ aaa == bbb ]]    # provoke return code=1
      fi
 
      case $? in
@@ -15066,33 +17937,34 @@ run_drown() {
           3)   # vulnerable, [[ -n "$cert_fingerprint_sha2" ]] test is not needed as we should have RSA certificate here
                lines=$(count_lines "$(hexdump -C "$TEMPDIR/$NODEIP.sslv2_sockets.dd" 2>/dev/null)")
                debugme tm_out "  ($lines lines)  "
-               add_tls_offered ssl2 yes
+               add_proto_offered ssl2 yes
                if [[ "$lines" -gt 1 ]]; then
                     nr_ciphers_detected=$((V2_HELLO_CIPHERSPEC_LENGTH / 3))
                     if [[ 0 -eq "$nr_ciphers_detected" ]]; then
                          prln_svrty_high "CVE-2015-3197: SSLv2 supported but couldn't detect a cipher (NOT ok)";
-                         fileout "$jsonID" "HIGH" "SSLv2 offered, but could not detect a cipher. Make sure you don't use this certificate elsewhere, see https://censys.io/ipv4?q=$cert_fingerprint_sha2" "$cve CVE-2015-3197" "$cwe" "$hint"
+                         fileout "$jsonID" "HIGH" "SSLv2 offered, but could not detect a cipher. Make sure you don't use this certificate elsewhere, see $censys_host_url" "$cve CVE-2015-3197" "$cwe" "$hint"
                     else
                          prln_svrty_critical  "VULNERABLE (NOT ok), SSLv2 offered with $nr_ciphers_detected ciphers";
-                         fileout "$jsonID" "CRITICAL" "VULNERABLE, SSLv2 offered with $nr_ciphers_detected ciphers. Make sure you don't use this certificate elsewhere, see https://censys.io/ipv4?q=$cert_fingerprint_sha2" "$cve" "$cwe" "$hint"
+                         fileout "$jsonID" "CRITICAL" "VULNERABLE, SSLv2 offered with $nr_ciphers_detected ciphers. Make sure you don't use this certificate elsewhere, see $censys_host_url" "$cve" "$cwe" "$hint"
+                         set_grade_cap "F" "Vulnerable to DROWN"
                     fi
                     outln "$spaces Make sure you don't use this certificate elsewhere, see:"
                     out "$spaces "
-                    pr_url "https://censys.io/ipv4?q=$cert_fingerprint_sha2"
+                    pr_url "$censys_host_url"
                     outln
                fi
                ;;
           *)   prln_svrty_best "not vulnerable on this host and port (OK)"
-               fileout "DROWN" "OK" "not vulnerable to DROWN on this host and port" "$cve" "$cwe"
+               fileout "$jsonID" "OK" "not vulnerable on this host and port" "$cve" "$cwe"
                if [[ -n "$cert_fingerprint_sha2" ]]; then
-                    outln "$spaces make sure you don't use this certificate elsewhere with SSLv2 enabled services"
+                    outln "$spaces make sure you don't use this certificate elsewhere with SSLv2 enabled services, see"
                     out "$spaces "
-                    pr_url "https://censys.io/ipv4?q=$cert_fingerprint_sha2"
-                    outln " could help you to find out"
-                    fileout "$jsonID" "INFO" "Make sure you don't use this certificate elsewhere with SSLv2 enabled services, see https://censys.io/ipv4?q=$cert_fingerprint_sha2" "$cve" "$cwe"
+                    pr_url "$censys_host_url"
+                    outln
+                    fileout "${jsonID}_hint" "INFO" "Make sure you don't use this certificate elsewhere with SSLv2 enabled services, see $censys_host_url" "$cve" "$cwe"
                else
                     outln "$spaces no RSA certificate, thus certificate can't be used with SSLv2 elsewhere"
-                    fileout "$jsonID" "INFO" "no RSA certificate, can't be used with SSLv2 elsewhere" "$cve" "$cwe"
+                    fileout "${jsonID}_hint" "INFO" "no RSA certificate, can't be used with SSLv2 elsewhere" "$cve" "$cwe"
                fi
                ;;
      esac
@@ -15104,7 +17976,7 @@ run_drown() {
 
 # Browser Exploit Against SSL/TLS: don't use CBC Ciphers in SSLv3 TLSv1.0
 run_beast(){
-     local hexc dash cbc_cipher sslvers auth mac export
+     local hexc dash cbc_cipher sslvers auth mac
      local -a ciph hexcode normalized_hexcode kx enc export2
      local proto proto_hex
      local -i i subret nr_ciphers=0 sclient_success=0
@@ -15124,7 +17996,6 @@ run_beast(){
      local hint=""
      local jsonID="BEAST"
 
-     "$SSL_NATIVE" && using_sockets=false
      if [[ $VULN_COUNT -le $VULN_THRESHLD ]]; then
           outln
           pr_headlineln " Testing for BEAST vulnerability "
@@ -15132,9 +18003,17 @@ run_beast(){
      fi
      pr_bold " BEAST"; out " ($cve)                     "
 
+     if "$TLS13_ONLY" || ( [[ $(has_server_protocol ssl3) -eq 1 ]] && [[ $(has_server_protocol tls1) -eq 1 ]] ); then
+          pr_svrty_good "not vulnerable (OK)"
+          outln ", no SSL3 or TLS1"
+          fileout "$jsonID" "OK" "not vulnerable, no SSL3 or TLS1" "$cve" "$cwe"
+          return 0
+     fi
+
+     "$SSL_NATIVE" && using_sockets=false
      # $cbc_ciphers_hex has 126 ciphers, we omitted SRP-AES-256-CBC-SHA bc the trailing 00,ff below will pose
-     # a problem for ACE loadbalancers otherwise. So in case we know this is  not true, we'll re-add it
-     ! "$SERVER_SIZE_LIMIT_BUG" & "$using_sockets" && cbc_ciphers_hex="$cbc_ciphers_hex, C0,20"
+     # a problem for ACE loadbalancers otherwise. So in case we know this is not true, we'll re-add it
+     ! "$SERVER_SIZE_LIMIT_BUG" && "$using_sockets" && cbc_ciphers_hex="$cbc_ciphers_hex, C0,20"
 
      [[ $TLS_NR_CIPHERS == 0 ]] && using_sockets=false
      if "$using_sockets" || [[ $OSSL_VER_MAJOR -lt 1 ]]; then
@@ -15162,6 +18041,7 @@ run_beast(){
                fi
           done
      else
+          # no sockets, openssl
           while read hexc dash ciph[nr_ciphers] sslvers kx[nr_ciphers] auth enc[nr_ciphers] mac export2[nr_ciphers]; do
                if [[ ":${cbc_cipher_list}:" =~ :${ciph[nr_ciphers]}: ]]; then
                     ossl_supported[nr_ciphers]=true
@@ -15172,7 +18052,7 @@ run_beast(){
                     fi
                     nr_ciphers+=1
                fi
-          done  < <(actually_supported_ciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-tls1 -V")
+          done  < <(actually_supported_osslciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-tls1 -V")
      fi
 
      # first determine whether it's mitigated by higher protocols
@@ -15187,7 +18067,7 @@ run_beast(){
                $OPENSSL s_client $(s_client_options "-state -"${proto}" $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY $SNI") 2>>$ERRFILE >$TMPFILE </dev/null
                if sclient_connect_successful $? $TMPFILE; then
                     higher_proto_supported+=" $(get_protocol $TMPFILE)"
-                    add_tls_offered "$proto" yes
+                    add_proto_offered "$proto" yes
                fi
           fi
      done
@@ -15214,7 +18094,7 @@ run_beast(){
           if [[ $sclient_success -ne 0 ]]; then                  # protocol supported?
                if "$continued"; then                             # second round: we hit TLS1
                     if "$HAS_SSL3" || "$using_sockets"; then
-                         prln_svrty_good "no SSL3 or TLS1 (OK)"
+                         pr_svrty_good "not vulnerable (OK)" ; outln ", no SSL3 or TLS1"
                          fileout "$jsonID" "OK" "not vulnerable, no SSL3 or TLS1" "$cve" "$cwe"
                     else
                          prln_svrty_good "no TLS1 (OK)"
@@ -15226,7 +18106,7 @@ run_beast(){
                     continue       # protocol not supported, so we do not need to check each cipher with that protocol
                fi
           fi # protocol succeeded
-          add_tls_offered "$proto" yes
+          add_proto_offered "$proto" yes
 
           # now we test in one shot with the precompiled ciphers
           if "$using_sockets"; then
@@ -15247,7 +18127,7 @@ run_beast(){
                sigalg[nr_ciphers]=""
           done
           while true; do
-               [[ "$proto" == "ssl3" ]] && ! "$HAS_SSL3" && break
+               [[ "$proto" == ssl3 ]] && ! "$HAS_SSL3" && break
                ciphers_to_test=""
                for (( i=0; i < nr_ciphers; i++ )); do
                     ! "${ciphers_found[i]}" && "${ossl_supported[i]}" && ciphers_to_test+=":${ciph[i]}"
@@ -15271,7 +18151,7 @@ run_beast(){
                     dhlen=$(read_dhbits_from_file "$TMPFILE" quiet)
                     kx[i]="${kx[i]} $dhlen"
                fi
-               "$WIDE" && "$SHOW_SIGALGO" && grep -q "\-\-\-\-\-BEGIN CERTIFICATE\-\-\-\-\-" $TMPFILE && \
+               "$WIDE" && "$SHOW_SIGALGO" && grep -qe '-----BEGIN CERTIFICATE-----' $TMPFILE && \
                     sigalg[i]="$(read_sigalg_from_file "$TMPFILE")"
           done
           if "$using_sockets"; then
@@ -15281,7 +18161,7 @@ run_beast(){
                          ! "${ciphers_found[i]}" && ciphers_to_test+=", ${hexcode[i]}"
                     done
                     [[ -z "$ciphers_to_test" ]] && break
-                    if "$SHOW_SIGALGO"; then
+                    if "$WIDE" && "$SHOW_SIGALGO"; then
                          tls_sockets "$proto_hex" "${ciphers_to_test:2}, 00,ff" "all"
                     else
                          tls_sockets "$proto_hex" "${ciphers_to_test:2}, 00,ff" "ephemeralkey"
@@ -15291,6 +18171,7 @@ run_beast(){
                     for (( i=0; i < nr_ciphers; i++ )); do
                          [[ "$cbc_cipher" == "${rfc_ciph[i]}" ]] && break
                     done
+                    [[ $i -eq $nr_ciphers ]] && break
                     ciphers_found[i]=true
                     if ( [[ "$DISPLAY_CIPHERNAMES" =~ openssl ]] && [[ "${ciph[i]}" != - ]] ) || [[ "${rfc_ciph[i]}" == - ]]; then
                          detected_cbc_ciphers+="${ciph[i]} "
@@ -15315,8 +18196,7 @@ run_beast(){
                first=false
                for (( i=0; i < nr_ciphers; i++ )); do
                     if "${ciphers_found[i]}" || "$SHOW_EACH_C"; then
-                         export="${export2[i]}"
-                         neat_list "$(tolower "${normalized_hexcode[i]}")" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${ciphers_found[i]}"
+                         neat_list "$(tolower "${normalized_hexcode[i]}")" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${export2[i]}" "${ciphers_found[i]}"
                          if "$SHOW_EACH_C"; then
                               if "${ciphers_found[i]}"; then
                                    if [[ -n "$higher_proto_supported" ]]; then
@@ -15345,7 +18225,7 @@ run_beast(){
                     detected_cbc_ciphers=""  # empty for next round
                     first=false
                else
-                    [[ $proto == "tls1" ]] && ! $first && echo -n "$spaces "
+                    [[ $proto == tls1 ]] && ! $first && echo -n "$spaces "
                     prln_svrty_good "no CBC ciphers for $(toupper $proto) (OK)"
                     first=false
                fi
@@ -15380,6 +18260,7 @@ run_beast(){
                pr_svrty_medium "VULNERABLE"
                outln " -- and no higher protocols as mitigation supported"
                fileout "$jsonID" "MEDIUM" "VULNERABLE -- and no higher protocols as mitigation supported" "$cve" "$cwe" "$hint"
+               set_grade_cap "B" "Vulnerable to BEAST"
           fi
      fi
      "$first" && ! "$vuln_beast" && prln_svrty_good "no CBC ciphers found for any protocol (OK)"
@@ -15389,8 +18270,214 @@ run_beast(){
      return 0
 }
 
+# This is a quick test for Winshock, MS14-066, a vulnerability in the TLS stack of Microsoft which leads to RCE.
+# This vulnerability affected all SChannel services -- most notably RDP (port 3398 normally). See
+# https://support.microsoft.com/en-us/help/2992611/ms14-066-vulnerability-in-schannel-could-allow-remote-code-execution-n
+# and http://www.securitysift.com/exploiting-ms14-066-cve-2014-6321-aka-winshock for "exploiting"/crashing lsass.exe.
+# What we do here is giving a strong hint.
+#
+# First we check whether TLS 1.3 is available. Then with the fix MS introduced came additional ciphers
+# TLS_DHE_RSA_WITH_AES_256_GCM_SHA384 TLS_DHE_RSA_WITH_AES_128_GCM_SHA256 TLS_RSA_WITH_AES_256_GCM_SHA384 TLS_RSA_WITH_AES_128_GCM_SHA256
+# = DHE-RSA-AES256-GCM-SHA384 DHE-RSA-AES128-GCM-SHA256 AES256-GCM-SHA384 AES128-GCM-SHA256.
+# We also check for the absence of ciphers which came in way later (ECDHE-RSA-AES128-GCM-SHA256 / ECDHE-RSA-AES256-GCM-SHA384), or
+# more ciphers like ARIA, CCM, CAMELLIA and CHACHAPOLY. (Those ciphers could also be retrieved from our array TLS_CIPHER_RFC_NAME[i]
+# and using TLS_CIPHER_HEXCODE[i]. We may want to # do that later. We check for all this in sockets only to avoid overhead.)
+# Then we check for absence of elliptical curves and TLS extensions.
+#    That all should minimize false # positives because of middle boxes, proxies and later Windows versions.
+# The last straw then is to check for webserver banners (http.sys, IIS/8.0 and IIS/8.5).
+#
+run_winshock() {
+     local wsfixed_ciphers='00,9F, 00,9D, 00,9E, 00,9C'
+     local aria_ciphers='C0,3D,C0,3F,C0,41,C0,43,C0,45,C0,47,C0,49,C0,4B,C0,4D,C0,4F,C0,51,C0,53,C0,55,C0,57,C0,59,C0,5B,C0,5D,C0,5F,C0,61,C0,63,C0,65,C0,67,C0,69,C0,6B,C0,6D,C0,6F,C0,71,C0,3C,C0,3E,C0,40,C0,42,C0,44,C0,46,C0,48,C0,4A,C0,4C,C0,4E,C0,50,C0,52,C0,54,C0,56,C0,58,C0,5A,C0,5C,C0,5E,C0,60,C0,62,C0,64,C0,66,C0,68,C0,6A,C0,6C,C0,6E,C0,70'
+     local camellia_ciphers='C0,9B,C0,99,C0,97,C0,95,C0,77,C0,73,00,C4,00,C3,00,C2,00,C1,00,88,00,87,00,86,00,85,00,C5,00,89,C0,79,C0,75,00,C0,00,84,C0,7B,C0,7D,C0,7F,C0,81,C0,83,C0,85,C0,87,C0,89,C0,8B,C0,8D,C0,8F,C0,91,C0,93,C0,76,C0,72,00,BE,00,BD,00,BC,00,BB,00,45,00,44,00,43,00,42,00,BF,00,46,C0,78,C0,74,00,BA,00,41,C0,9A,C0,98,C0,96,C0,94,C0,7A,C0,7C,C0,7E,C0,80,C0,82,C0,84,C0,86,C0,88,C0,8A,C0,8C,C0,8E,C0,90,C0,92'
+     local chacha_ccm_ciphers='CC,14,CC,13,CC,15,CC,A9,CC,A8,CC,AA,C0,AF,C0,AD,C0,A3,C0,9F,CC,AE,CC,AD,CC,AC,C0,AB,C0,A7,C0,A1,C0,9D,CC,AB,C0,A9,C0,A5,16,B7,16,B8,13,04,13,05,C0,AE,C0,AC,C0,A2,C0,9E,C0,AA,C0,A6,C0,A0,C0,9C,C0,A8,C0,A4'
+     # TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 / TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 = ECDHE-RSA-AES128-GCM-SHA256 / ECDHE-RSA-AES256-GCM-SHA384
+     # came in Server 2016, see https://notsomany.com/2016/08/26/achieve-a-on-sslabs-iis-8-5-windows-2012-r2/
+     #                          https://docs.microsoft.com/en-us/windows/win32/secauthn/cipher-suites-in-schannel
+     local more_excluded_ciphers='C0,2F, C0,30'
+     # These are the three NIST curves allowed only. Keep in mind prime256v1=secp256r1 and MS labels them as P256, P384 and P521
+     local allowed_curves="prime256v1 secp384r1 secp521r1"
+     local curve="" tls_ext=""
+     local -i sclient_success=0
+     local server_banner=""
+     local check_patches=" - check patches locally to confirm"
+     local cve="CVE-2014-6321"
+     local cwe="CWE-94"
+     local jsonID="winshock"
 
-# http://www.isg.rhul.ac.uk/tls/Lucky13.html
+     if [[ $VULN_COUNT -le $VULN_THRESHLD ]]; then
+          outln
+          pr_headlineln " Testing for winshock vulnerability "
+          outln
+     fi
+     pr_bold " Winshock"; out " ($cve), experimental    "
+
+     if [[ "$(has_server_protocol "tls1_3")" -eq 0 ]] ; then
+          # There's no MS server supporting TLS 1.3. Winshock was way back in time
+          pr_svrty_best "not vulnerable (OK)"
+          debugme echo " - TLS 1.3 found"
+          fileout "$jsonID" "OK" "not vulnerable " "$cve" "$cwe"
+          outln
+          return 0
+     fi
+     if [[ "$STARTTLS_PROTOCOL" =~ irc ]]; then
+          prln_local_problem "STARTTLS/$STARTTLS_PROTOCOL and --ssl-native collide here"
+          return 1
+     fi
+
+     # Now we check whether any CAMELLIA, ARIA, CCM or CHACHA cipher is available.
+     # We do this in two shots in order to stay below the 128 cipher limit
+     tls_sockets "03" "${aria_ciphers},${chacha_ccm_ciphers}, 00,ff"
+     sclient_success=$?
+     if [[ $sclient_success -eq 0 ]] || [[ "$sclient_success" -eq 2 ]]; then
+          pr_svrty_best "not vulnerable (OK)" ; outln " - ARIA, CHACHA or CCM ciphers found"
+          fileout "$jsonID" "OK" "not vulnerable " "$cve" "$cwe"
+          return 0
+     fi
+     tls_sockets "03" "${camellia_ciphers},${more_excluded_ciphers}, 00,ff"
+     sclient_success=$?
+     if [[ $sclient_success -eq 0 ]] || [[ "$sclient_success" -eq 2 ]]; then
+          pr_svrty_best "not vulnerable (OK)"; outln " - CAMELLIA or ECDHE_RSA GCM ciphers found"
+          fileout "$jsonID" "OK" "not vulnerable " "$cve" "$cwe"
+          return 0
+     fi
+
+     # Now we need to check the fixed ciphers
+     tls_sockets "03" "${wsfixed_ciphers}, 00,ff"
+     sclient_success=$?
+     if [[ $sclient_success -eq 0 ]] || [[ "$sclient_success" -eq 2 ]]; then
+          # has rollup ciphers
+          pr_svrty_best "not vulnerable (OK)";  outln " - GCM rollup ciphers found"
+          fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
+          return 0
+     elif [[ $sclient_success -ne 1 ]]; then
+          prln_warning "check failed, connect problem"
+          fileout "$jsonID" "WARN" "check failed, connect problem" "$cve" "$cwe"
+          return 1
+     fi
+
+     # Basic idea: https://en.wikipedia.org/wiki/Comparison_of_TLS_implementations#Supported_elliptic_curves
+     # [[ -z "$CURVES_OFFERED" ]] && sub_check_curves
+     if [[ -n "$CURVES_OFFERED" ]]; then
+          # Check whether there are any additional curves besides $allowed_curves
+          for curve in $CURVES_OFFERED; do
+               if ! [[  $allowed_curves =~ $curve ]]; then
+                    pr_svrty_best "not vulnerable (OK)"; outln " - curve $curve detected"
+                    fileout "$jsonID" "OK" "not vulnerable  - curve $curve detected" "$cve" "$cwe"
+                    return 0
+               fi
+          done
+     fi
+     #FIXME: The catch is that when a user didn't invoke run_fs() before, this wasn't processed + CURVES_OFFERED
+     # is empty. So we could call it like above but need to move curves detection into a separate function
+     # (~ sub_check_curves) which is some work. But also for the sake of clean code this needs to be done.
+
+
+     [[ -z "$TLS_EXTENSIONS" ]] && determine_tls_extensions
+     # Basis of the following https://en.wikipedia.org/wiki/Comparison_of_TLS_implementations#Extensions
+     # Our standard: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml
+
+     # According to Wikipedia above these are the ones which can be detected unders version of  Windows
+     # Secure Renegotiation, Server Name Indication, Certificate Status Request, Supplemental Data, Extended Master Secret, ALPN
+     # supplemental_data(23) (RFC 4680) seems to have been overwritten by extended master secret(23) RFC 7627
+     # local -a allowed_tls_ext=("server name" "status_request" "extended master secret" "application layer protocol negotiation")
+     # Instead we rather focus on the ones which according to that source weren't available
+     # Encrypt-then-MAC, Maximum Fragment Length,  Keying Material Exporter, TLS Fallback SCSV, ClientHello Padding
+     # Padding is client side. Don't know what they mean by the fallback SCSV. That is not an extension
+     local -a forbidden_tls_ext=("encrypt-then-mac" "max fragment length")
+     # Open whether ec_point_formats, supported_groups(=elliptic_curves), heartbeat are supported under windows <=2012
+     # key_share and supported_versions are extensions which came with TLS 1.3. We checked the protocol before.
+     if [[ -n "$TLS_EXTENSIONS" ]]; then
+          # Check whether there are any TLS extension which should not be available under <= Windows 2012 R2
+          for tls_ext in $TLS_EXTENSIONS; do
+               # We use the whole array, got to be careful when the array becomes bigger (unintended match)
+               if [[ ${forbidden_tls_ext[@]} =~ $tls_ext ]]; then
+                    pr_svrty_best "not vulnerable (OK)"; outln " - TLS extension $tls_ext detected"
+                    fileout "$jsonID" "OK" "not vulnerable  - TLS extension $tls_ext detected" "$cve" "$cwe"
+                    return 0
+               fi
+          done
+     fi
+
+     # More would be possible if we look @ the following:
+     # See also https://github.com/cisco/joy/blob/master/fingerprinting/resources/fingerprint_db.json.gz
+     # https://resources.sei.cmu.edu/asset_files/Presentation/2019_017_001_539902.pdf
+     # https://raw.githubusercontent.com/cisco/joy/master/doc/using-joy-fingerprinting-00.pdf
+
+
+
+     # Now the solid determination more or less done. What's left now is to detect the service
+     # and perform an educated guess.
+
+     # Next we weed out is whether we run HTTP or RDP (on standard port).
+     # Using the experimental flag we can test it also on other ports / services
+     if [[ $SERVICE != HTTP ]] && [[ $PORT != 3389 ]] && ! "$EXPERIMENTAL"; then
+          pr_svrty_best "not vulnerable (OK)"; outln " - no HTTP or RDP"
+          fileout "$jsonID" "OK" "not vulnerable - no HTTP or RDP" "$cve" "$cwe"
+          return 0
+     fi
+
+     if [[ $SERVICE != HTTP ]] && [[ $PORT == 3389 ]]; then
+          # We take a security guess here (better safe than sorry) for RDP as we don't have a banner
+          out "probably "; pr_svrty_critical "vulnerable (NOT ok)"; outln "$check_patches"
+          fileout "${jsonID}" "CRITICAL" "probably vulnerable (NOT OK) $check_patches"
+          return 0
+     fi
+
+     # Now we have potentially vulnerable HTTP servers left where we grab the server banner.
+     # First choice for that is the HTTP header # file which we retrieved in a default run.
+     # From the service detection we also should have a header though as a fall back.
+     if [[ -s $HEADERFILE ]]; then
+          server_banner="$(grep -Eai '^Server:' $HEADERFILE)"
+     elif [[ -s "$TEMPDIR/$NODEIP.service_detection.txt" ]]; then
+          server_banner="$(grep -Eai '^Server:' "$TEMPDIR/$NODEIP.service_detection.txt")"
+     elif "$EXPERIMENTAL"; then
+          # If testing e.g. an SMTP server
+          :
+     else
+          # We can't use run_http_header here as it messes up the screen. We could automatically
+          # run it when --winshock is requested though but this should suffice here.
+          prln_warning "check failed, rerun with cmd line option --header "
+          fileout "$jsonID" "WARN" "check failed, connect problem" "$cve" "$cwe"
+          return 1
+     fi
+     if [[ $server_banner =~ Microsoft-IIS\/8.5 ]]; then
+          # Windows 2012 R2 is less likely than Windows 2012
+          out "probably "; pr_svrty_critical "vulnerable (NOT ok)"; outln "$check_patches"
+          fileout "${jsonID}" "CRITICAL" "probably vulnerable (NOT OK) $check_patches"
+     elif [[ $server_banner =~ Microsoft-IIS\/8.0 ]]; then
+          out "likely "; pr_svrty_critical "VULNERABLE (NOT ok)"; outln "$check_patches"
+          fileout "${jsonID}" "CRITICAL" "likely vulnerable (NOT OK) $check_patches"
+     elif [[ $server_banner =~ Microsoft-HTTPAPI\/2.0 ]]; then
+          # This is http.sys. It may or may not indicate a 2012 server. IIS is not yet configured though.
+          # So we have a peek on port 80
+          http_get $NODE "$TEMPDIR/$NODE.$NODEIP.http-header.txt"
+          server_banner="$(grep -Eai '^Server:' $TEMPDIR/$NODE.$NODEIP.http-header.txt)"
+          if [[ $server_banner =~ Microsoft-IIS\/8.5 ]]; then
+               out "probably "; pr_svrty_critical "vulnerable (NOT ok)"; outln "$check_patches"
+               fileout "${jsonID}" "CRITICAL" "probably vulnerable (NOT OK) $check_patches"
+          elif [[ $server_banner =~ Microsoft-IIS\/8.0 ]]; then
+               out "likely "; pr_svrty_critical "VULNERABLE (NOT ok)"; outln "$check_patches"
+               fileout "${jsonID}" "CRITICAL" "likely vulnerable (NOT OK) $check_patches"
+          else
+               out "likely "; prln_svrty_best "not vulnerable (OK)"
+               fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
+               outln
+          fi
+     elif "$EXPERIMENTAL"; then
+          out "seems "; pr_svrty_critical "vulnerable (NOT ok)"; outln "$check_patches"
+          fileout "${jsonID}" "CRITICAL" "seems vulnerable (NOT OK) $check_patches"
+     else
+          pr_svrty_best "not vulnerable (OK)"
+          outln " - doesn't seem to be IIS 8.x"
+          fileout "$jsonID" "OK" "not vulnerable - doesn't seem to be IIS 8.x" "$cve" "$cwe"
+     fi
+     return 0
+}
+
+
+# https://web.archive.org/web/20200324101422/http://www.isg.rhul.ac.uk/tls/Lucky13.html
+# Paper: https://doi.org/10.1109/SP.2013.42
 # in a nutshell: don't offer CBC suites (again). MAC as a fix for padding oracles is not enough. Best: TLS v1.2+ AES GCM
 run_lucky13() {
      local spaces="                                           "
@@ -15412,6 +18499,14 @@ run_lucky13() {
      fi
      pr_bold " LUCKY13"; out " ($cve), experimental     "
 
+     if "$TLS13_ONLY"; then
+          pr_svrty_best "not vulnerable (OK)"
+          [[ $DEBUG -ge 1 ]] && out ", no CBC ciphers in TLS 1.3 only servers"
+          outln
+          fileout "$jsonID" "OK" "not vulnerable, TLS 1.3 only" "$cve" "$cwe"
+          return 0
+     fi
+
      "$SSL_NATIVE" && using_sockets=false
      # The openssl binary distributed has almost everything we need (PSK, KRB5 ciphers and feff, ffe0 are typically missing).
      # Measurements show that there's little impact whether we use sockets or TLS here, so the default is sockets here
@@ -15427,7 +18522,7 @@ run_lucky13() {
           fi
      else
           nr_cbc_ciphers=$(count_ciphers $cbc_ciphers)
-          nr_supported_ciphers=$(count_ciphers $(actually_supported_ciphers $cbc_ciphers))
+          nr_supported_ciphers=$(count_ciphers $(actually_supported_osslciphers $cbc_ciphers))
           $OPENSSL s_client $(s_client_options "$STARTTLS $BUGS -no_ssl2 -cipher $cbc_ciphers -connect $NODEIP:$PORT $PROXY $SNI") >$TMPFILE 2>$ERRFILE </dev/null
           sclient_connect_successful $? $TMPFILE
           sclient_success=$?
@@ -15462,12 +18557,12 @@ run_lucky13() {
 
 # https://tools.ietf.org/html/rfc7465    REQUIRES that TLS clients and servers NEVER negotiate the use of RC4 cipher suites!
 # https://en.wikipedia.org/wiki/Transport_Layer_Security#RC4_attacks
-# http://blog.cryptographyengineering.com/2013/03/attack-of-week-rc4-is-kind-of-broken-in.html
+# https://blog.cryptographyengineering.com/2013/03/attack-of-week-rc4-is-kind-of-broken-in.html
 #
 run_rc4() {
      local -i rc4_offered=0
      local -i nr_ciphers=0 nr_ossl_ciphers=0 nr_nonossl_ciphers=0 sclient_success=0
-     local n auth mac export hexc sslv2_ciphers_hex="" sslv2_ciphers_ossl="" s
+     local n auth mac hexc sslv2_ciphers_hex="" sslv2_ciphers_ossl="" s
      local -a normalized_hexcode hexcode ciph sslvers kx enc export2 sigalg ossl_supported
      local -i i
      local -a ciphers_found ciphers_found2 hexcode2 ciph2 rfc_ciph2
@@ -15491,7 +18586,16 @@ run_rc4() {
      fi
      pr_bold " RC4"; out " (${cve// /, })        "
 
-     # get a list of all the cipher suites to test
+     if "$TLS13_ONLY"; then
+          pr_svrty_best "not vulnerable (OK)"
+          [[ $DEBUG -ge 1 ]] && out ", no RC4 support in TLS 1.3 only servers"
+          outln
+          fileout "$jsonID" "OK" "not vulnerable, TLS 1.3 only" "$cve" "$cwe"
+          return 0
+     fi
+
+     # Get a list of all the cipher suites to test. #FIXME: This is rather ineffective as RC4 ciphers won't change.
+     # We should instead build a fixed list here like @ other functions
      if "$using_sockets" || [[ $OSSL_VER_MAJOR -lt 1 ]]; then
           for (( i=0; i < TLS_NR_CIPHERS; i++ )); do
                if [[ "${TLS_CIPHER_RFC_NAME[i]}" =~ RC4 ]] && ( "$using_sockets" || "${TLS_CIPHER_OSSL_SUPPORTED[i]}" ); then
@@ -15543,10 +18647,10 @@ run_rc4() {
                     ossl_supported[nr_ciphers]=true
                     nr_ciphers+=1
                fi
-          done < <($OPENSSL ciphers $OSSL_CIPHERS_S -V 'ALL:COMPLEMENTOFALL:@STRENGTH' 2>>$ERRFILE)
+          done < <(actually_supported_osslciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' '' '-V')
      fi
 
-     if "$using_sockets" && [[ -n "$sslv2_ciphers_hex" ]]; then
+     if "$using_sockets" && [[ -n "$sslv2_ciphers_hex" ]] && [[ $(has_server_protocol ssl2) -ne 1 ]]; then
           sslv2_sockets "${sslv2_ciphers_hex:2}" "true"
           if [[ $? -eq 3 ]] && [[ "$V2_HELLO_CIPHERSPEC_LENGTH" -ne 0 ]]; then
                supported_sslv2_ciphers="$(grep "Supported cipher: " "$TEMPDIR/$NODEIP.parse_sslv2_serverhello.txt")"
@@ -15559,7 +18663,7 @@ run_rc4() {
                     fi
                done
           fi
-     elif "$HAS_SSL2" && [[ -n "$sslv2_ciphers_ossl" ]]; then
+     elif "$HAS_SSL2" && [[ -n "$sslv2_ciphers_ossl" ]] && [[ $(has_server_protocol ssl2) -ne 1 ]]; then
           $OPENSSL s_client -cipher "${sslv2_ciphers_ossl:1}" $STARTTLS $BUGS -connect $NODEIP:$PORT $PROXY -ssl2 >$TMPFILE 2>$ERRFILE </dev/null
           sclient_connect_successful $? "$TMPFILE"
           if [[ $? -eq 0 ]]; then
@@ -15585,8 +18689,8 @@ run_rc4() {
      done
 
      for proto in -no_ssl2 -tls1_1 -tls1 -ssl3; do
-          [[ "$proto" != "-no_ssl2" ]] && [[ $(has_server_protocol "${proto:1}") -eq 1 ]] && continue
-          ! "$HAS_SSL3" && [[ "$proto" == "-ssl3" ]] && continue
+          [[ "$proto" != -no_ssl2 ]] && [[ $(has_server_protocol "${proto:1}") -eq 1 ]] && continue
+          ! "$HAS_SSL3" && [[ "$proto" == -ssl3 ]] && continue
           while true; do
                ciphers_to_test=""
                for (( i=0; i < nr_ossl_ciphers; i++ )); do
@@ -15608,8 +18712,13 @@ run_rc4() {
                     dhlen=$(read_dhbits_from_file "$TMPFILE" quiet)
                     kx[i]="${kx[i]} $dhlen"
                fi
-               "$WIDE" && "$SHOW_SIGALGO" && grep -q "\-\-\-\-\-BEGIN CERTIFICATE\-\-\-\-\-" $TMPFILE && \
+               "$WIDE" && "$SHOW_SIGALGO" && grep -qe '-----BEGIN CERTIFICATE-----' $TMPFILE && \
                     sigalg[i]="$(read_sigalg_from_file "$TMPFILE")"
+
+               # If you use RC4 with newer protocols, you are punished harder
+               if [[ "$proto" == -tls1_1 ]]; then
+                    set_grade_cap "C" "RC4 ciphers offered on TLS 1.1"
+               fi
           done
      done
 
@@ -15668,9 +18777,7 @@ run_rc4() {
                     continue                 # no successful connect AND not verbose displaying each cipher
                fi
                if "$WIDE"; then
-                    #FIXME: JSON+CSV in wide mode is missing
-                    export="${export2[i]}"
-                    neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${ciphers_found[i]}"
+                    neat_list "${normalized_hexcode[i]}" "${ciph[i]}" "${kx[i]}" "${enc[i]}" "${export2[i]}" "${ciphers_found[i]}"
                     if "$SHOW_EACH_C"; then
                          if "${ciphers_found[i]}"; then
                               pr_svrty_high "available"
@@ -15692,6 +18799,7 @@ run_rc4() {
           outln
           "$WIDE" && out " " && prln_svrty_high "VULNERABLE (NOT ok)"
           fileout "$jsonID" "HIGH" "VULNERABLE, Detected ciphers: $rc4_detected" "$cve" "$cwe" "$hint"
+          set_grade_cap "B" "RC4 ciphers offered"
      elif [[ $nr_ciphers -eq 0 ]]; then
           prln_local_problem "No RC4 Ciphers configured in $OPENSSL"
           fileout "$jsonID" "WARN" "RC4 ciphers not supported by local OpenSSL ($OPENSSL)"
@@ -15699,7 +18807,6 @@ run_rc4() {
           prln_svrty_good "no RC4 ciphers detected (OK)"
           fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
      fi
-     outln
 
      "$using_sockets" && HAS_DH_BITS="$has_dh_bits"
      tmpfile_handle ${FUNCNAME[0]}.txt
@@ -15709,23 +18816,113 @@ run_rc4() {
 
 
 run_youknowwho() {
-    local cve="CVE-2013-2566"
-    local cwe="CWE-310"
-    # NOT FIXME as there's no code: http://www.isg.rhul.ac.uk/tls/
-    # http://blog.cryptographyengineering.com/2013/03/attack-of-week-rc4-is-kind-of-broken-in.html
-    return 0
-    # in a nutshell: don't use RC4, really not!
+     local cve="CVE-2013-2566"
+     local cwe="CWE-310"
+     # NOT FIXME as there's no code: https://web.archive.org/web/20191008002003/http://www.isg.rhul.ac.uk/tls/index.html
+     # Paper and presentation: https://www.usenix.org/conference/usenixsecurity13/technical-sessions/paper/alFardan
+     # https://blog.cryptographyengineering.com/2013/03/12/attack-of-week-rc4-is-kind-of-broken-in/
+     return 0
+     # in a nutshell: don't use RC4, really not!
 }
 
-    # https://www.usenix.org/conference/woot13/workshop-program/presentation/smyth
-    # https://secure-resumption.com/tlsauth.pdf
 run_tls_truncation() {
-    #FIXME: difficult to test, is there any test available: pls let me know
-        :
+     # https://www.usenix.org/conference/woot13/workshop-program/presentation/smyth
+     # https://secure-resumption.com/tlsauth.pdf
+     #FIXME: difficult to test, is there any test available: pls let me know
+     :
 }
+
+# see https://nostarttls.secvuln.info/
+#
+run_starttls_injection() {
+     local uds=""
+     local openssl_bin=""
+     local -i socat_pid
+     local -i openssl_pid
+     local vuln=false
+     local cve="CVE-2011-0411 CVE-2021-38084 CVE-2021-33515 CVE-2020-15955 CVE-2021-37844 CVE-2021-37845 CVE-2021-37846 CVE-2020-29548 CVE-2020-15955 CVE-2020-29547"
+     local cwe="CWE-74"
+     local hint=""
+     local jsonID="starttls_injection"
+
+     [[ -z "$STARTTLS" ]] && return 0
+
+     if [[ $VULN_COUNT -le $VULN_THRESHLD ]]; then
+          outln
+          pr_headlineln " Checking for STARTTLS injection "
+          outln
+     fi
+     pr_bold " STARTTLS injection" ; out " (CVE-2011-0411, exp.)  "
+
+     # We'll do a soft fail here, also no warning, as I do not expect everybody to have socat installed
+     if [[ -z "$SOCAT" ]]; then
+          fileout "$jsonID" "WARN" "Need socat for this" "$cve" "$cwe" "$hint"
+          outln "Need socat for this check"
+          return 1
+     fi
+     if [[ -z "$HAS_UDS2" ]] && [[ -z "$HAS_UDS" ]]; then
+          fileout "$jsonID" "WARN" "Need OpenSSL with Unix-domain socket s_client support for this check" "$cve" "$cwe" "$hint"
+          outln "Need an OpenSSL with Unix-domain socket s_client support for this check"
+          return 1
+     fi
+
+     case $SERVICE in
+          smtp) fd_socket 5 "EHLO google.com"
+               ;;
+          pop3) fd_socket 5 "CAPA"
+               ;;
+          imap) five_random=$(tr -dc '[:upper:]' < /dev/urandom | dd bs=5 count=1 2>/dev/null)
+                fd_socket 5 "$five_random NOOP"
+               ;;
+          *)  outln "STARTTLS injection test doesn't work for $SERVICE, yet"
+              fileout "$jsonID" "INFO" "STARTTLS injection test doesn't work for $SERVICE" "$cve" "$cwe" "$hint"
+              return 1
+             ;;
+     esac
+
+     uds="$TEMPDIR/uds"
+     $SOCAT FD:5 UNIX-LISTEN:$uds &
+     socat_pid=$!
+
+     if "$HAS_UDS"; then
+          openssl_bin="$OPENSSL"
+     elif "$HAS_UDS2"; then
+          openssl_bin="$OPENSSL2"
+     fi
+     # normally the interesting fallback we grep later for is in fd2 but we'll catch also stdout here
+     $openssl_bin s_client -unix $uds >$TMPFILE 2>&1 &
+     openssl_pid=$!
+     sleep 1
+
+     [[ "$DEBUG" -ge 2 ]] && tail $TMPFILE
+#FIXME: is the pattern sufficient for SMTP / POP / IMAP?
+     case $SERVICE in
+          # Mind all ' ' here!
+          smtp) grep -Eqa '^250-|^503 ' $TMPFILE && vuln=true ;;
+          pop3) grep -Eqa '^USER|^PIPELINING|^\+OK ' $TMPFILE && vuln=true ;;
+          imap) grep -Eqa ' OK NOOP ' $TMPFILE && vuln=true ;;
+     esac
+
+     if "$vuln"; then
+          out "likely "
+          prln_svrty_high "VULNERABLE (NOT ok)"
+          fileout "$jsonID" "HIGH" "VULNERABLE" "$cve" "$cwe" "$hint"
+     else
+          prln_svrty_good "not vulnerable (OK)"
+          fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
+     fi
+
+     kill $socat_pid 2>/dev/null
+     kill $openssl_pid 2>/dev/null
+     close_socket 5
+
+     tmpfile_handle ${FUNCNAME[0]}.txt
+     return 0
+}
+
 
 # Test for various server implementation errors that aren't tested for elsewhere.
-# Inspired by https://datatracker.ietf.org/doc/draft-ietf-tls-grease.
+# Inspired by RFC 8701.
 run_grease() {
      local -i success
      local bug_found=false
@@ -15736,7 +18933,7 @@ run_grease() {
      local ciph list temp curve_found
      local -i i j rnd alpn_list_len extn_len debug_level=""
      local -i ret=0
-     # Note: The following values were taken from https://datatracker.ietf.org/doc/draft-ietf-tls-grease.
+     # Note: The following values were taken from RFC 8701.
      # These arrays may need to be updated if the values change in the final version of this document.
      local -a -r grease_cipher_suites=( "0a,0a" "1a,1a" "2a,2a" "3a,3a" "4a,4a" "5a,5a" "6a,6a" "7a,7a" "8a,8a" "9a,9a" "aa,aa" "ba,ba" "ca,ca" "da,da" "ea,ea" "fa,fa" )
      local -a -r grease_supported_groups=( "0a,0a" "1a,1a" "2a,2a" "3a,3a" "4a,4a" "5a,5a" "6a,6a" "7a,7a" "8a,8a" "9a,9a" "aa,aa" "ba,ba" "ca,ca" "da,da" "ea,ea" "fa,fa" )
@@ -15754,7 +18951,6 @@ run_grease() {
      for (( i=0; i < 5; i++ )); do
           case $i in
                0) proto="03" ; cipher_list="$TLS12_CIPHER" ;;
-               1) proto="03" ; cipher_list="$TLS12_CIPHER_2ND_TRY" ;;
                2) proto="02" ; cipher_list="$TLS_CIPHER" ;;
                3) proto="01" ; cipher_list="$TLS_CIPHER" ;;
                4) proto="00" ; cipher_list="$TLS_CIPHER" ;;
@@ -15812,17 +19008,17 @@ run_grease() {
           fileout "$jsonID" "MEDIUM" "Server responded with a ServerHello rather than an alert even though it doesn't support any of the client-offered cipher suites."
           bug_found=true
      else
-           # Send a list of non-existent ciphers such that for each cipher that
-           # is defined, there is one in the list that matches in the second byte
-           # (but make sure list contains at more 127 ciphers).
-           debugme echo -e "\nSending ClientHello with non-existent ciphers, but that match existing ciphers in second byte."
-           tls_sockets "$proto" "de,01, de,02, de,03, de,04, de,05, de,06, de,07, de,08, de,09, de,0a, de,0b, de,0c, de,0d, de,0e, de,0f, de,10, de,11, de,12, de,13, de,14, de,15, de,16, de,17, de,18, de,19, de,1a, de,1b, de,23, de,24, de,25, de,26, de,27, de,28, de,29, de,2a, de,2b, de,2c, de,2d, de,2e, de,2f, de,30, de,31, de,32, de,33, de,34, de,35, de,36, de,37, de,38, de,39, de,3a, de,3b, de,3c, de,3d, de,3e, de,3f, de,40, de,41, de,42, de,43, de,44, de,45, de,46, de,60, de,61, de,62, de,63, de,64, de,65, de,66, de,67, de,68, de,69, de,6a, de,6b, de,6c, de,6d, de,72, de,73, de,74, de,75, de,76, de,77, de,78, de,79, de,84, de,85, de,86, de,87, de,88, de,89, de,96, de,97, de,98, de,99, de,9a, de,9b, de,9c, de,9d, de,9e, de,9f, de,a0, de,a1, de,a2, de,a3, de,a4, de,a5, de,a6, de,a7, de,ba, de,bb, de,bc, de,bd, de,be, de,bf, de,c0, de,c1, de,c2, de,c3, de,c4, de,c5, 00,ff"
-           success=$?
-           if [[ $success -eq 0 ]] || [[ $success -eq 2 ]]; then
-                prln_svrty_medium " Server claims to support non-existent cipher suite."
-                fileout "$jsonID" "MEDIUM" "Server claims to support non-existent cipher suite."
-                bug_found=true
-           elif grep -q " The ServerHello specifies a cipher suite that wasn't included in the ClientHello" "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" ; then
+          # Send a list of non-existent ciphers such that for each cipher that
+          # is defined, there is one in the list that matches in the second byte
+          # (but make sure list contains at more 127 ciphers).
+          debugme echo -e "\nSending ClientHello with non-existent ciphers, but that match existing ciphers in second byte."
+          tls_sockets "$proto" "de,01, de,02, de,03, de,04, de,05, de,06, de,07, de,08, de,09, de,0a, de,0b, de,0c, de,0d, de,0e, de,0f, de,10, de,11, de,12, de,13, de,14, de,15, de,16, de,17, de,18, de,19, de,1a, de,1b, de,23, de,24, de,25, de,26, de,27, de,28, de,29, de,2a, de,2b, de,2c, de,2d, de,2e, de,2f, de,30, de,31, de,32, de,33, de,34, de,35, de,36, de,37, de,38, de,39, de,3a, de,3b, de,3c, de,3d, de,3e, de,3f, de,40, de,41, de,42, de,43, de,44, de,45, de,46, de,60, de,61, de,62, de,63, de,64, de,65, de,66, de,67, de,68, de,69, de,6a, de,6b, de,6c, de,6d, de,72, de,73, de,74, de,75, de,76, de,77, de,78, de,79, de,84, de,85, de,86, de,87, de,88, de,89, de,96, de,97, de,98, de,99, de,9a, de,9b, de,9c, de,9d, de,9e, de,9f, de,a0, de,a1, de,a2, de,a3, de,a4, de,a5, de,a6, de,a7, de,ba, de,bb, de,bc, de,bd, de,be, de,bf, de,c0, de,c1, de,c2, de,c3, de,c4, de,c5, 00,ff"
+          success=$?
+          if [[ $success -eq 0 ]] || [[ $success -eq 2 ]]; then
+               prln_svrty_medium " Server claims to support non-existent cipher suite."
+               fileout "$jsonID" "MEDIUM" "Server claims to support non-existent cipher suite."
+               bug_found=true
+          elif grep -q " The ServerHello specifies a cipher suite that wasn't included in the ClientHello" "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" ; then
                prln_svrty_medium " Server only compares against second byte in each cipher suite in ClientHello."
                fileout "$jsonID" "MEDIUM" "Server only compares against second byte in each cipher suite in ClientHello."
                bug_found=true
@@ -15831,7 +19027,7 @@ run_grease() {
      DEBUG="$debug_level"
 
      # Check that server ignores unrecognized extensions
-     # see https://datatracker.ietf.org/doc/draft-ietf-tls-grease
+     # see RFC 8701
      if "$normal_hello_ok" && [[ "$proto" != "00" ]]; then
           # Try multiple different randomly-generated GREASE extensions,
           # but make final test use zero-length extension value, just to
@@ -15850,7 +19046,7 @@ run_grease() {
                fi
                extn_len_hex=$(printf "%04x" $extn_len)
                extn+=",${extn_len_hex:0:2},${extn_len_hex:2:2}"
-               for (( j=0; j <= extn_len-2; j=j+2 )); do
+               for (( j=0; j <= extn_len-2; j+=2 )); do
                     rnd_bytes="$(printf "%04x" $RANDOM)"
                     extn+=",${rnd_bytes:0:2},${rnd_bytes:2:2}"
                done
@@ -15942,7 +19138,7 @@ run_grease() {
      fi
 
      # Check that server ignores unrecognized cipher suite values
-     # see https://datatracker.ietf.org/doc/draft-ietf-tls-grease
+     # see RFC 8701
      if "$normal_hello_ok"; then
           list=""
           for ciph in "${grease_cipher_suites[@]}"; do
@@ -15960,7 +19156,7 @@ run_grease() {
 
      # Check that servers that support ECDHE cipher suites ignore
      # unrecognized named group values.
-     # see https://datatracker.ietf.org/doc/draft-ietf-tls-grease
+     # see RFC 8701
      if [[ "$proto" != "00" ]]; then
           # Send a ClientHello that lists all of the ECDHE cipher suites
           tls_sockets "$proto" "$ecdhe_ciphers, 00,ff" "ephemeralkey"
@@ -16007,7 +19203,7 @@ run_grease() {
 
      # Check that servers that support the ALPN extension ignore
      # unrecognized ALPN values.
-     # see https://datatracker.ietf.org/doc/draft-ietf-tls-grease
+     # see RFC 8701
      if "$normal_hello_ok" && [[ -z $STARTTLS ]] && [[ "$proto" != "00" ]]; then
           for alpn_proto in $ALPN_PROTOs; do
                alpn+=",$(printf "%02x" ${#alpn_proto}),$(string_to_asciihex "$alpn_proto")"
@@ -16026,7 +19222,7 @@ run_grease() {
                selected_alpn_protocol="$(grep "ALPN protocol:" "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" | sed 's/ALPN protocol:  //')"
                # If using a "normal" ALPN extension worked, then add an unrecognized
                # ALPN value to the beginning of the extension and try again.
-               alpn_proto="ignore/$selected_alpn_protocol"
+               alpn_proto="ZZ" # "ZZ" = "{0x5A,0x5A}"
                alpn=",$(printf "%02x" ${#alpn_proto}),$(string_to_asciihex "$alpn_proto")$alpn"
                alpn_list_len=${#alpn}/3
                alpn_list_len_hex=$(printf "%04x" $alpn_list_len)
@@ -16037,7 +19233,7 @@ run_grease() {
                success=$?
                if [[ $success -ne 0 ]] && [[ $success -ne 2 ]]; then
                     prln_svrty_medium " Server fails if ClientHello contains an application_layer_protocol_negotiation extension with an unrecognized ALPN value."
-                    fileout "$jsonID" "MEDIUM" "erver fails if ClientHello contains an application_layer_protocol_negotiation extension with an unrecognized ALPN value."
+                    fileout "$jsonID" "MEDIUM" "Server fails if ClientHello contains an application_layer_protocol_negotiation extension with an unrecognized ALPN value."
                     bug_found=true
                else
                     grease_selected_alpn_protocol="$(grep "ALPN protocol:" "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt" | sed 's/ALPN protocol:  //')"
@@ -16045,9 +19241,9 @@ run_grease() {
                          prln_svrty_medium " Server did not ignore unrecognized ALPN value in the application_layer_protocol_negotiation extension."
                          fileout "$jsonID" "MEDIUM" "Server did not ignore unrecognized ALPN value in the application_layer_protocol_negotiation extension."
                          bug_found=true
-                    elif [[ "$grease_selected_alpn_protocol" =~ ignore/ ]]; then
-                         prln_svrty_medium " Server selected \"ignore/\" ALPN value in the application_layer_protocol_negotiation extension."
-                         fileout "$jsonID" "MEDIUM" "Server selected \"ignore/\" ALPN value in the application_layer_protocol_negotiation extension."
+                    elif [[ "$grease_selected_alpn_protocol" == $alpn_proto ]]; then
+                         prln_svrty_medium " Server selected GREASE ALPN value ($alpn_proto) in the application_layer_protocol_negotiation extension."
+                         fileout "$jsonID" "MEDIUM" "Server selected GREASE ALPN value ($alpn_proto) in the application_layer_protocol_negotiation extension."
                          bug_found=true
                     fi
                fi
@@ -16094,9 +19290,10 @@ run_robot() {
      local rnd_pms="aa112233445566778899112233445566778899112233445566778899112233445566778899112233445566778899"
      local change_cipher_spec finished resp
      local -a response
-     local -i i subret len iteration testnum pubkeybits pubkeybytes
+     local -i i subret len iteration testnum pubkeybytes
+     local pubkeybits
      local vulnerable=false send_ccs_finished=true
-     local -i start_time end_time timeout=$MAX_WAITSOCK
+     local -i start_time end_time robottimeout=$MAX_WAITSOCK
      local cve="CVE-2017-17382 CVE-2017-17427 CVE-2017-17428 CVE-2017-13098 CVE-2017-1000385 CVE-2017-13099 CVE-2016-6883 CVE-2012-5081 CVE-2017-6168"
      local cwe="CWE-203"
      local jsonID="ROBOT"
@@ -16104,7 +19301,7 @@ run_robot() {
      [[ $VULN_COUNT -le $VULN_THRESHLD ]] && outln && pr_headlineln " Testing for Return of Bleichenbacher's Oracle Threat (ROBOT) vulnerability " && outln
      pr_bold " ROBOT                                     "
 
-     if ( [[ "$STARTTLS_PROTOCOL" =~ ldap ]] || [[ "$STARTTLS_PROTOCOL" =~ irc ]] ); then
+     if [[ "$STARTTLS_PROTOCOL" =~ irc ]]; then
           prln_local_problem "STARTTLS/$STARTTLS_PROTOCOL and --ssl-native collide here"
           return 1
      fi
@@ -16192,12 +19389,12 @@ run_robot() {
                # <random> should be a length that makes total length of $padded_pms
                # the same as the length of the public key. <random> should contain no 00 bytes.
                pubkeybits="$($OPENSSL x509 -noout -pubkey -in $HOSTCERT 2>>$ERRFILE | \
-                             $OPENSSL pkey -pubin -text 2>>$ERRFILE | grep -aw "Public-Key:" | \
-                             sed -e 's/.*(//' -e 's/ bit)//')"
+                             $OPENSSL pkey -pubin -text_pub 2>>$ERRFILE | awk -F'(' '/Public-Key/ { print $2 }')"
+               pubkeybits="${pubkeybits%%bit*}"
                pubkeybytes=$pubkeybits/8
                [[ $((pubkeybits%8)) -ne 0 ]] && pubkeybytes+=1
                rnd_pad=""
-               for (( len=0; len < pubkeybytes-52; len=len+2 )); do
+               for (( len=0; len < pubkeybytes-52; len+=2 )); do
                     rnd_pad+="abcd"
                done
                [[ $len -eq $pubkeybytes-52 ]] && rnd_pad+="ab"
@@ -16216,7 +19413,7 @@ run_robot() {
                esac
 
                # Encrypt the padded premaster secret using the server's public key.
-               encrypted_pms="$(asciihex_to_binary_file "$padded_pms" "/dev/stdout" | \
+               encrypted_pms="$(hex2binary "$padded_pms" | \
                     $OPENSSL pkeyutl -encrypt -certin -inkey $HOSTCERT -pkeyopt rsa_padding_mode:none 2>/dev/null | \
                     hexdump -v -e '16/1 "%02x"')"
                if [[ -z "$encrypted_pms" ]]; then
@@ -16225,7 +19422,7 @@ run_robot() {
                     else
                          socksend ",x15, x03, x01, x00, x02, x02, x00" 0
                     fi
-                    close_socket
+                    close_socket 5
                     prln_fixme "Conversion of public key failed around line $((LINENO - 9))"
                     fileout "$jsonID" "WARN" "Conversion of public key failed around line $((LINENO - 10)) "
                     return 1
@@ -16237,8 +19434,8 @@ run_robot() {
                encrypted_pms="$cke_prefix$encrypted_pms"
                len=${#encrypted_pms}
                client_key_exchange=""
-               for (( i=0; i<len; i=i+2 )); do
-                   client_key_exchange+=", x${encrypted_pms:i:2}"
+               for (( i=0; i<len; i+=2 )); do
+                    client_key_exchange+=", x${encrypted_pms:i:2}"
                done
 
                # The contents of change cipher spec are fixed.
@@ -16261,7 +19458,7 @@ run_robot() {
                fi
                debugme echo "reading server error response..."
                start_time=$(LC_ALL=C date "+%s")
-               sockread_serverhello 32768 $timeout
+               sockread 32768 $robottimeout
                subret=$?
                if [[ $subret -eq 0 ]]; then
                     end_time=$(LC_ALL=C date "+%s")
@@ -16271,15 +19468,15 @@ run_robot() {
                     # exchange message, measure the amount of time it took to
                     # receive a response and set the timeout value for future
                     # tests to 2 seconds longer than it took to receive a response.
-                    [[ $iteration -ne 2 ]] && [[ $timeout -eq $MAX_WAITSOCK ]] && \
+                    [[ $iteration -ne 2 ]] && [[ $robottimeout -eq $MAX_WAITSOCK ]] && \
                          [[ $((end_time-start_time)) -lt $((MAX_WAITSOCK-2)) ]] && \
-                         timeout=$((end_time-start_time+2))
+                         robottimeout=$((end_time-start_time+2))
                else
                     response[testnum]="Timeout waiting for alert"
                fi
                debugme echo -e "\nresponse[$testnum] = ${response[testnum]}"
                [[ $DEBUG -ge 3 ]] && [[ $subret -eq 0 ]] && parse_tls_serverhello "${response[testnum]}"
-               close_socket
+               close_socket 5
 
                # Don't continue testing if it has already been determined that
                # tests need to be rerun with a longer timeout.
@@ -16312,14 +19509,14 @@ run_robot() {
                # If the test was run with a short timeout and was found to be
                # potentially vulnerable due to some tests timing out, then
                # verify the results by rerunning with a longer timeout.
-               if [[ $timeout -eq $MAX_WAITSOCK ]]; then
+               if [[ $robottimeout -eq $MAX_WAITSOCK ]]; then
                     break
                elif [[ "${response[0]}" == "Timeout waiting for alert" ]] || \
                     [[ "${response[1]}" == "Timeout waiting for alert" ]] || \
                     [[ "${response[2]}" == "Timeout waiting for alert" ]] || \
                     [[ "${response[3]}" == "Timeout waiting for alert" ]] || \
                     [[ "${response[4]}" == "Timeout waiting for alert" ]]; then
-                    timeout=10
+                    robottimeout=10
                else
                     break
                fi
@@ -16335,6 +19532,7 @@ run_robot() {
                prln_svrty_critical "VULNERABLE (NOT ok)"
                fileout "$jsonID" "CRITICAL" "VULNERABLE" "$cve" "$cwe"
           fi
+          set_grade_cap "F" "Vulnerable to ROBOT"
      else
           prln_svrty_best "not vulnerable (OK)"
           fileout "$jsonID" "OK" "not vulnerable" "$cve" "$cwe"
@@ -16387,16 +19585,16 @@ get_install_dir() {
 
      # still no cipher mapping file (and realpath is not present):
      if [[ ! -r "$CIPHERS_BY_STRENGTH_FILE" ]] && type -p readlink &>/dev/null ; then
-         readlink -f ls &>/dev/null && \
-              TESTSSL_INSTALL_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" || \
-              TESTSSL_INSTALL_DIR="$(dirname "$(readlink "${BASH_SOURCE[0]}")")"
-              # not sure whether Darwin has -f
+          readlink -f ls &>/dev/null && \
+               TESTSSL_INSTALL_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" || \
+               TESTSSL_INSTALL_DIR="$(dirname "$(readlink "${BASH_SOURCE[0]}")")"
+               # not sure whether Darwin has -f
           CIPHERS_BY_STRENGTH_FILE="$TESTSSL_INSTALL_DIR/etc/cipher-mapping.txt"
           [[ -r "$TESTSSL_INSTALL_DIR/cipher-mapping.txt" ]] && CIPHERS_BY_STRENGTH_FILE="$TESTSSL_INSTALL_DIR/cipher-mapping.txt"
      fi
 
      if [[ ! -r "$CIPHERS_BY_STRENGTH_FILE" ]]; then
-          DISPLAY_CIPHERNAMES="no-rfc"
+          DISPLAY_CIPHERNAMES="openssl-only"
           debugme echo "$CIPHERS_BY_STRENGTH_FILE"
           prln_warning "\nATTENTION: No cipher mapping file found!"
           outln "Please note from 2.9 on $PROG_NAME needs files in \"\$TESTSSL_INSTALL_DIR/etc/\" to function correctly."
@@ -16443,11 +19641,13 @@ test_openssl_suffix() {
 
 find_openssl_binary() {
      local s_client_has=$TEMPDIR/s_client_has.txt
+     local s_client_has2=$TEMPDIR/s_client_has2.txt
      local s_client_starttls_has=$TEMPDIR/s_client_starttls_has.txt
+     local s_client_starttls_has2=$TEMPDIR/s_client_starttls_has2
      local openssl_location cwd=""
      local ossl_wo_dev_info
      local curve
-     local -a curves_ossl=("sect163k1" "sect163r1" "sect163r2" "sect193r1" "sect193r2" "sect233k1" "sect233r1" "sect239k1" "sect283k1" "sect283r1" "sect409k1" "sect409r1" "sect571k1" "sect571r1" "secp160k1" "secp160r1" "secp160r2" "secp192k1" "prime192v1" "secp224k1" "secp224r1" "secp256k1" "prime256v1" "secp384r1" "secp521r1" "brainpoolP256r1" "brainpoolP384r1" "brainpoolP512r1" "X25519" "X448")
+     local -a curves_ossl=("sect163k1" "sect163r1" "sect163r2" "sect193r1" "sect193r2" "sect233k1" "sect233r1" "sect239k1" "sect283k1" "sect283r1" "sect409k1" "sect409r1" "sect571k1" "sect571r1" "secp160k1" "secp160r1" "secp160r2" "secp192k1" "prime192v1" "secp224k1" "secp224r1" "secp256k1" "prime256v1" "secp384r1" "secp521r1" "brainpoolP256r1" "brainpoolP384r1" "brainpoolP512r1" "X25519" "X448" "ffdhe2048" "ffdhe3072" "ffdhe4096" "ffdhe6144" "ffdhe8192")
 
      # 0. check environment variable whether it's executable
      if [[ -n "$OPENSSL" ]] && [[ ! -x "$OPENSSL" ]]; then
@@ -16458,6 +19658,8 @@ find_openssl_binary() {
      elif [[ -e "/mnt/c/Windows/System32/bash.exe" ]] && test_openssl_suffix "$(dirname "$(type -p openssl)")"; then
           # 2. otherwise, only if on Bash on Windows, use system binaries only.
           SYSTEM2="WSL"
+          # Workaround for delayed responses of Windows DNS when using "invalid.", see #1738, #1812.
+          [[ $NXCONNECT == invalid. ]] && NXCONNECT=127.0.0.1:0
      elif test_openssl_suffix "$TESTSSL_INSTALL_DIR"; then
           :    # 3. otherwise try openssl in path of testssl.sh
      elif test_openssl_suffix "$TESTSSL_INSTALL_DIR/bin"; then
@@ -16466,13 +19668,22 @@ find_openssl_binary() {
           :    # 5. we tried hard and failed, so now we use the system binaries
      fi
 
-     # no ERRFILE initialized yet, thus we use /dev/null for stderr directly
-     $OPENSSL version -a 2>/dev/null >/dev/null
-     if [[ $? -ne 0 ]] || [[ ! -x "$OPENSSL" ]]; then
-          fatal "cannot exec or find any openssl binary" $ERR_OSSLBIN
+     [[ ! -x "$OPENSSL" ]] && fatal "cannot exec or find any openssl binary" $ERR_OSSLBIN
+
+     # The former detection only was flawed, because when the system supplied openssl.cnf file
+     # couldn't be parsed by our openssl it bailed out here with a misleading error, see #1982.
+     # Now we try with another version of the config file and if it still fails we bail out.
+     if ! $OPENSSL version -d >/dev/null 2>&1 ; then
+          export OPENSSL_CONF="$TESTSSL_INSTALL_DIR/etc/openssl.cnf"
+          if ! $OPENSSL version -d >/dev/null 2>&1 ; then
+               fatal "cannot exec or find any openssl binary" $ERR_OSSLBIN
+          else
+               debugme1 echo "We provide our own openssl.cnf file as the one from your system cannot be used"
+          fi
      fi
 
-     # http://www.openssl.org/news/openssl-notes.html
+     # https://www.openssl.org/news/changelog.html
+     # https://web.archive.org/web/20150815130800/http://openssl.org/news/openssl-notes.html
      OSSL_NAME=$($OPENSSL version 2>/dev/null | awk '{ print $1 }')
      OSSL_VER=$($OPENSSL version 2>/dev/null | awk -F' ' '{ print $2 }')
      OSSL_VER_MAJOR="${OSSL_VER%%\.*}"
@@ -16485,7 +19696,7 @@ find_openssl_binary() {
 
      # see #190, reverting logic: unless otherwise proved openssl has no dh bits
      case "$OSSL_VER_MAJOR.$OSSL_VER_MINOR" in
-          1.0.2|1.1.0|1.1.1) HAS_DH_BITS=true ;;
+          1.0.2|1.1.0|1.1.1|3.*) HAS_DH_BITS=true ;;
      esac
      if [[ "$OSSL_NAME" =~ LibreSSL ]]; then
           [[ ${OSSL_VER//./} -ge 210 ]] && HAS_DH_BITS=true
@@ -16499,97 +19710,142 @@ find_openssl_binary() {
 
      openssl_location="$(type -p $OPENSSL)"
      [[ -n "$GIT_REL" ]] && \
-          cwd="$(/bin/pwd)" || \
+          cwd="$PWD" || \
           cwd="$RUN_DIR"
-     if [[ "$openssl_location" =~ $(/bin/pwd)/bin ]]; then
+     if [[ "$openssl_location" == ${PWD}/bin ]]; then
           OPENSSL_LOCATION="\$PWD/bin/$(basename "$openssl_location")"
      elif [[ "$openssl_location" =~ $cwd ]] && [[ "$cwd" != '.' ]]; then
           OPENSSL_LOCATION="${openssl_location%%$cwd}"
      else
-         OPENSSL_LOCATION="$openssl_location"
+          OPENSSL_LOCATION="$openssl_location"
      fi
 
-     $OPENSSL ciphers -s 2>&1 | grep -aq "unknown option" || \
-          OSSL_CIPHERS_S="-s"
+     OSSL_CIPHERS_S=""
+     HAS_SSL2=false
+     HAS_SSL3=false
+     HAS_TLS13=false
+     HAS_X448=false
+     HAS_X25519=false
+     HAS_SIGALGS=false
+     HAS_NO_SSL2=false
+     HAS_NOSERVERNAME=false
+     HAS_CIPHERSUITES=false
+     HAS_SECLEVEL=false
+     HAS_COMP=false
+     HAS_NO_COMP=false
+     HAS_CURVES=false
+     OSSL_SUPPORTED_CURVES=""
+     HAS_PKEY=false
+     HAS_PKUTIL=false
+     HAS_ALPN=false
+     HAS_NPN=false
+     HAS_FALLBACK_SCSV=false
+     HAS_PROXY=false
+     HAS_XMPP=false
+     HAS_XMPP_SERVER=false
+     HAS_XMPP_SERVER2=false
+     HAS_POSTGRES=false
+     HAS_MYSQL=false
+     HAS_LMTP=false
+     HAS_SIEVE=false
+     HAS_NNTP=false
+     HAS_IRC=false
+     HAS_CHACHA20=false
+     HAS_AES128_GCM=false
+     HAS_AES256_GCM=false
+     HAS_ZLIB=false
+     HAS_UDS=false
+     HAS_UDS2=false
+	 TRUSTED1ST=""
+     HAS_ENABLE_PHA=false
 
-     $OPENSSL s_client -ssl2 -connect x 2>&1 | grep -aq "unknown option" || \
-          HAS_SSL2=true
+     $OPENSSL ciphers -s 2>&1 | grep -aiq "unknown option" || OSSL_CIPHERS_S="-s"
 
-     $OPENSSL s_client -ssl3 -connect x 2>&1 | grep -aq "unknown option" || \
-          HAS_SSL3=true
+     $OPENSSL s_client -ssl2 </dev/null 2>&1 | grep -aiq "unknown option" || HAS_SSL2=true
+     $OPENSSL s_client -ssl3 </dev/null 2>&1 | grep -aiq "unknown option" || HAS_SSL3=true
+     $OPENSSL s_client -tls1_3 </dev/null 2>&1 | grep -aiq "unknown option" || HAS_TLS13=true
+     $OPENSSL s_client -no_ssl2 </dev/null 2>&1 | grep -aiq "unknown option" || HAS_NO_SSL2=true
 
-     $OPENSSL s_client -tls1_3 -connect x 2>&1 | grep -aq "unknown option" || \
-          HAS_TLS13=true
+     $OPENSSL genpkey -algorithm X448 2>&1 | grep -aq "not found" || HAS_X448=true
+     $OPENSSL genpkey -algorithm X25519 2>&1 | grep -aq "not found" || HAS_X25519=true
+     $OPENSSL pkey -help 2>&1 | grep -q Error || HAS_PKEY=true
+     $OPENSSL pkeyutl 2>&1 | grep -q Error ||  HAS_PKUTIL=true
 
-     $OPENSSL genpkey -algorithm X448 -out - 2>&1 | grep -aq "not found" || \
-          HAS_X448=true
+     # Below and at other occurrences we do a little trick using "$NXCONNECT" to avoid plain and
+     # link level DNS lookups. See issue #1418 and https://tools.ietf.org/html/rfc6761#section-6.4
+     if "$HAS_TLS13"; then
+          $OPENSSL s_client -tls1_3 -sigalgs PSS+SHA256:PSS+SHA384 -connect $NXCONNECT </dev/null 2>&1 | grep -aiq "unknown option" || HAS_SIGALGS=true
+     fi
 
-     $OPENSSL genpkey -algorithm X25519 -out - 2>&1 | grep -aq "not found" || \
-          HAS_X25519=true
+     $OPENSSL s_client -noservername </dev/null 2>&1 | grep -aiq "unknown option" || HAS_NOSERVERNAME=true
+     $OPENSSL s_client -ciphersuites </dev/null 2>&1 | grep -aiq "unknown option" || HAS_CIPHERSUITES=true
 
-     $OPENSSL s_client -no_ssl2 -connect x 2>&1 | grep -aq "unknown option" || \
-          HAS_NO_SSL2=true
+     $OPENSSL ciphers @SECLEVEL=0:ALL > /dev/null 2> /dev/null && HAS_SECLEVEL=true
 
-     $OPENSSL s_client -noservername -connect x 2>&1 | grep -aq "unknown option" || \
-          HAS_NOSERVERNAME=true
+     $OPENSSL s_client -comp </dev/null 2>&1 | grep -aiq "unknown option" || HAS_COMP=true
+     $OPENSSL s_client -no_comp </dev/null 2>&1 | grep -aiq "unknown option" || HAS_NO_COMP=true
 
-     $OPENSSL s_client -ciphersuites -connect x 2>&1 | grep -aq "unknown option" || \
-          HAS_CIPHERSUITES=true
+     OPENSSL_NR_CIPHERS=$(count_ciphers "$(actually_supported_osslciphers 'ALL:COMPLEMENTOFALL' 'ALL')")
 
-     $OPENSSL s_client -comp -connect x 2>&1 | grep -aq "unknown option" || \
-          HAS_COMP=true
+     # The following statement works with OpenSSL 1.0.2, 1.1.1 and 3.0 and LibreSSL 3.4
+     if $OPENSSL s_client -curves </dev/null 2>&1 | grep -aiq "unknown option"; then
+          # This is e.g. for LibreSSL (tested with version 3.4.1): WSL users will get "127.0.0.1:0" here,
+          # all other "invalid.:0". We need a port here, in any case!
+          # The $OPENSSL connect call deliberately fails: when the curve isn't available with
+          # "getaddrinfo: Name or service not known", newer LibreSSL with "Failed to set groups".
+          for curve in "${curves_ossl[@]}"; do
+               $OPENSSL s_client -groups $curve -connect ${NXCONNECT%:*}:0 </dev/null 2>&1 | grep -Eiaq "Error with command|unknown option|Failed to set groups"
+               [[ $? -ne 0 ]] && OSSL_SUPPORTED_CURVES+=" $curve "
+          done
+     else
+          HAS_CURVES=true
+          for curve in "${curves_ossl[@]}"; do
+               # Same as above, we just don't need a port for invalid.
+               $OPENSSL s_client -curves $curve -connect $NXCONNECT </dev/null 2>&1 | grep -Eiaq "Error with command|unknown option"
+               [[ $? -ne 0 ]] && OSSL_SUPPORTED_CURVES+=" $curve "
+          done
+     fi
 
-     $OPENSSL s_client -no_comp -connect x 2>&1 | grep -aq "unknown option" || \
-          HAS_NO_COMP=true
-
-     OPENSSL_NR_CIPHERS=$(count_ciphers "$(actually_supported_ciphers 'ALL:COMPLEMENTOFALL' 'ALL')")
-
-     for curve in "${curves_ossl[@]}"; do
-          $OPENSSL s_client -curves $curve -connect x 2>&1 | grep -Eiaq "Error with command|unknown option"
-          [[ $? -ne 0 ]] && OSSL_SUPPORTED_CURVES+=" $curve "
-     done
-
-     $OPENSSL pkey -help 2>&1 | grep -q Error || \
-          HAS_PKEY=true
-
-     $OPENSSL pkeyutl 2>&1 | grep -q Error || \
-          HAS_PKUTIL=true
-
+     # For the following we feel safe enough to query the s_client help functions.
+     # That was not good enough for the previous lookups
      $OPENSSL s_client -help 2>$s_client_has
+     $OPENSSL s_client -starttls foo </dev/null 2>$s_client_starttls_has
 
-     $OPENSSL s_client -starttls foo 2>$s_client_starttls_has
+     grep -qe '-proxy' $s_client_has && HAS_PROXY=true
+     grep -qwe '-alpn' $s_client_has && HAS_ALPN=true
+     grep -qwe '-nextprotoneg' $s_client_has && HAS_NPN=true
 
-     grep -qw '\-alpn' $s_client_has && \
-          HAS_ALPN=true
+     grep -qwe '-fallback_scsv' $s_client_has && HAS_FALLBACK_SCSV=true
 
-     grep -qw '\-nextprotoneg' $s_client_has && \
-          HAS_NPN=true
+     # the output from 1.0.2 and 1.1.1/3.0.x is quite different
+     grep -q 'xmpp' $s_client_starttls_has && HAS_XMPP=true
+     grep -Eq 'xmpp-server|xmpp\[-server\]' $s_client_starttls_has && HAS_XMPP_SERVER=true
 
-     grep -qw '\-fallback_scsv' $s_client_has && \
-          HAS_FALLBACK_SCSV=true
+     grep -q 'postgres' $s_client_starttls_has && HAS_POSTGRES=true
+     grep -q 'mysql' $s_client_starttls_has && HAS_MYSQL=true
+     grep -q 'lmtp' $s_client_starttls_has && HAS_LMTP=true
+     grep -q 'sieve' $s_client_starttls_has && HAS_SIEVE=true
+     grep -q 'nntp' $s_client_starttls_has && HAS_NNTP=true
+     grep -q 'irc' $s_client_starttls_has && HAS_IRC=true
 
-     grep -q '\-proxy' $s_client_has && \
-          HAS_PROXY=true
+     grep -q 'Unix-domain socket' $s_client_has && HAS_UDS=true
 
-     grep -q '\-xmpp' $s_client_has && \
-          HAS_XMPP=true
+     grep -qe '-enable_pha' $s_client_has && HAS_ENABLE_PHA=true
 
-     grep -q 'postgres' $s_client_starttls_has && \
-          HAS_POSTGRES=true
+     # Now check whether the standard $OPENSSL has Unix-domain socket and xmpp-server support. If
+     # not check /usr/bin/openssl -- if available. This is more a kludge which we shouldn't use for
+     # every openssl feature. At some point we need to decide which with openssl version we go.
+     OPENSSL2=/usr/bin/openssl
+     if [[ ! "$OSSL_NAME" =~ LibreSSL ]] && [[ ! $OSSL_VER =~ 1.1.1 ]] && [[ ! $OSSL_VER_MAJOR =~ 3 ]]; then
+          if [[ -x $OPENSSL2 ]]; then
+               $OPENSSL2 s_client -help 2>$s_client_has2
+               $OPENSSL2 s_client -starttls foo 2>$s_client_starttls_has2
+               grep -q 'Unix-domain socket' $s_client_has2 && HAS_UDS2=true
+               grep -q 'xmpp-server' $s_client_starttls_has2 && HAS_XMPP_SERVER2=true
+          fi
+     fi
 
-     grep -q 'mysql' $s_client_starttls_has && \
-          HAS_MYSQL=true
-
-     grep -q 'lmtp' $s_client_starttls_has && \
-          HAS_LMTP=true
-
-     grep -q 'nntp' $s_client_starttls_has && \
-          HAS_NNTP=true
-
-     grep -q 'irc' $s_client_starttls_has && \
-          HAS_IRC=true
-
-     $OPENSSL enc -chacha20 -K "12345678901234567890123456789012" -iv "01000000123456789012345678901234" > /dev/null 2> /dev/null <<< "test"
+     $OPENSSL enc -chacha20 -K 12345678901234567890123456789012 -iv 01000000123456789012345678901234 > /dev/null 2> /dev/null <<< "test"
      [[ $? -eq 0 ]] && HAS_CHACHA20=true
 
      $OPENSSL enc -aes-128-gcm -K 0123456789abcdef0123456789abcdef -iv 0123456789abcdef01234567  > /dev/null 2> /dev/null <<< "test"
@@ -16600,27 +19856,48 @@ find_openssl_binary() {
 
      [[ "$(echo -e "\x78\x9C\xAB\xCA\xC9\x4C\xE2\x02\x00\x06\x20\x01\xBC" | $OPENSSL zlib -d 2>/dev/null)" == zlib ]] && HAS_ZLIB=true
 
-     if [[ "$OPENSSL_TIMEOUT" != "" ]]; then
+     $OPENSSL verify -trusted_first </dev/null 2>&1 | grep -q '^usage' || TRUSTED1ST="-trusted_first"
+
+     if [[ -n "$CONNECT_TIMEOUT" ]] || [[ -n "$OPENSSL_TIMEOUT" ]]; then
+          # We don't set a general timeout as we might not have "timeout" installed and we only
+          # do what is instructed. Thus we check first what the command line params were,
+          # then we proceed
           if type -p timeout >/dev/null 2>&1; then
-               if ! "$do_mass_testing"; then
-                    # there are different "timeout". Check whether --preserve-status is supported
-                    if timeout --help 2>/dev/null | grep -q 'preserve-status'; then
-                         OPENSSL="timeout --preserve-status $OPENSSL_TIMEOUT $OPENSSL"
-                    else
-                         OPENSSL="timeout $OPENSSL_TIMEOUT $OPENSSL"
-                    fi
+               # There are different versions of "timeout". Check whether --preserve-status is supported
+               if timeout --help 2>/dev/null | grep -q 'preserve-status'; then
+                    TIMEOUT_CMD="timeout --preserve-status"
+               else
+                    TIMEOUT_CMD="timeout"
                fi
-               MAX_OSSL_FAIL+=2
           else
+               TIMEOUT_CMD=""
                outln
-               prln_warning " Necessary binary \"timeout\" not found."
-               ignore_no_or_lame " Continue without timeout? " "yes"
-               [[ $? -ne 0 ]] && exit $ERR_OSSLBIN
-               unset OPENSSL_TIMEOUT
+               fatal "You specified a connect or openssl timeout but the binary \"timeout\" couldn't be found " $ERR_RESOURCE
+          fi
+     fi
+
+     if ! "$do_mass_testing"; then
+          if [[ -n $OPENSSL_TIMEOUT ]]; then
+               OPENSSL="$TIMEOUT_CMD $OPENSSL_TIMEOUT $OPENSSL"
           fi
      fi
 
      return 0
+}
+
+
+find_socat() {
+     local result""
+
+     result=$(type -p socat)
+     if [[ $? -ne 0 ]]; then
+          return 1
+     else
+          if [[ -x $result ]] && $result -V 2>&1 | grep -iaq 'socat version' ; then
+               SOCAT=$result
+               return 0
+          fi
+     fi
 }
 
 
@@ -16666,10 +19943,40 @@ check_bsd_mount() {
      fi
 }
 
+# It's important to avoid certain locales as the impact bash's pattern matching, see #1860
+# and comment in #2100
+#
+setup_lc_collate() {
+     local l=""
+     local msg='locale(1) support for any of "C, POSIX, C.UTF-8, en_US.UTF-8, en_GB.UTF-8" missing'
+     local found=false
+
+     type -p locale &> /dev/null && HAS_LOCALE=true
+     if ! "$HAS_LOCALE"; then
+          # likely docker container or any other minimal environment. This should work(tm)
+          LC_COLLATE=C
+          return 0
+     fi
+
+     for l in C POSIX C.UTF-8 en_US.UTF-8 en_GB.UTF-8; do
+          locale -a | grep -q $l
+          [[ $? -ne 0 ]] && continue
+          export LC_COLLATE=$l
+          found=true
+          break
+     done
+     if ! "$found"; then
+          prln_local_problem "$msg\n"
+          # we can't use fileout yet as it messes up JSON output, see #2103
+          return 1
+     fi
+     return 0
+}
+
 # This sets the PRINTF command for writing into TCP sockets. It is needed because
 # The shell builtin printf flushes the write buffer at every \n, ("\x0a") which
 # in turn means a new TCP fragment. That causes a slight performance penalty and
-# and some F5s to hiccup, see #1113. Unfortunately this can be used only with GNU's
+# some F5s to hiccup, see #1113. Unfortunately this can be used only with GNU's
 # and OpenBSD's /usr/bin/printf -- FreeBSD + OS X can't do this. Thus here we need
 # to pipe through dd or cat, see socksend() and socksend_clienthello(). An empty
 # $PRINTF signals the bash internal printf which then uses cat as a stdout buffer.
@@ -16700,37 +20007,38 @@ help() {
 
      "$PROG_NAME [options] <URI>"    or    "$PROG_NAME <options>"
 
-
-"$PROG_NAME <options>", where <options> is:
+"$PROG_NAME <option>", where <option> is mostly standalone and one of:
 
      --help                        what you're looking at
      -b, --banner                  displays banner + version of $PROG_NAME
      -v, --version                 same as previous
-     -V, --local                   pretty print all local ciphers
-     -V, --local <pattern>         which local ciphers with <pattern> are available? If pattern is not a number: word match
+     -V, --local [pattern]         pretty print all local ciphers (of openssl only). If search pattern supplied: it is an
+                                   an ignore case word pattern of cipher hexcode or any other string in its name, kx or bits
 
-     <pattern>                     is always an ignore case word pattern of cipher hexcode or any other string in the name, kx or bits
+"$PROG_NAME [options] <URI>", where <URI> is:
 
-"$PROG_NAME <URI>", where <URI> is:
+     <URI>                         host|host:port|URL|URL:port   port 443 is default, URL can only contain HTTPS as a protocol
 
-     <URI>                         host|host:port|URL|URL:port   port 443 is default, URL can only contain HTTPS protocol)
+  and [options] is/are:
 
-"$PROG_NAME [options] <URI>", where [options] is:
-
-     -t, --starttls <protocol>     Does a default run against a STARTTLS enabled <protocol,
-                                   protocol is <ftp|smtp|lmtp|pop3|imap|xmpp|telnet|ldap|nntp|postgres|mysql>
-     --xmpphost <to_domain>        For STARTTLS enabled XMPP it supplies the XML stream to-'' domain -- sometimes needed
+     -t, --starttls <protocol>     Does a run against a STARTTLS enabled service which is one of ftp, smtp, lmtp, pop3, imap,
+                                   sieve, xmpp, xmpp-server, telnet, ldap, nntp, postgres, mysql
+     --xmpphost <to_domain>        For STARTTLS xmpp or xmpp-server checks it supplies the domainname (like SNI)
      --mx <domain/host>            Tests MX records from high to low priority (STARTTLS, port 25)
      --file/-iL <fname>            Mass testing option: Reads one testssl.sh command line per line from <fname>.
-                                   Implicitly turns on "--warnings batch". Can be combined with --serial or --parallel
+                                   Can be combined with --serial or --parallel. Implicitly turns on "--warnings batch".
                                    Text format 1: Comments via # allowed, EOF signals end of <fname>
                                    Text format 2: nmap output in greppable format (-oG), 1 port per line allowed
      --mode <serial|parallel>      Mass testing to be done serial (default) or parallel (--parallel is shortcut for the latter)
+     --warnings <batch|off>        "batch" doesn't continue when a testing error is encountered, off continues and skips warnings
+     --connect-timeout <seconds>   useful to avoid hangers. Max <seconds> to wait for the TCP socket connect to return
+     --openssl-timeout <seconds>   useful to avoid hangers. Max <seconds> to wait before openssl connect will be terminated
 
 single check as <options>  ("$PROG_NAME URI" does everything except -E and -g):
      -e, --each-cipher             checks each local cipher remotely
      -E, --cipher-per-proto        checks those per protocol
-     -s, --std, --standard         tests certain lists of cipher suites by strength
+     -s, --std, --categories       tests standard cipher categories by strength
+     -f, --fs, --nsa               checks forward secrecy settings
      -p, --protocols               checks TLS/SSL protocols (including SPDY/HTTP2)
      -g, --grease                  tests several server implementation bugs like GREASE and size limitations
      -S, --server-defaults         displays the server's default picks and certificate info
@@ -16744,7 +20052,8 @@ single check as <options>  ("$PROG_NAME URI" does everything except -E and -g):
      -H, --heartbleed              tests for Heartbleed vulnerability
      -I, --ccs, --ccs-injection    tests for CCS injection vulnerability
      -T, --ticketbleed             tests for Ticketbleed vulnerability in BigIP loadbalancers
-     -BB, --robot                  tests for Return of Bleichenbacher's Oracle Threat (ROBOT) vulnerability
+     --BB, --robot                 tests for Return of Bleichenbacher's Oracle Threat (ROBOT) vulnerability
+     --SI, --starttls-injection    tests for STARTTLS injection issues
      -R, --renegotiation           tests for renegotiation vulnerabilities
      -C, --compression, --crime    tests for CRIME vulnerability (TLS compression issue)
      -B, --breach                  tests for BREACH vulnerability (HTTP compression issue)
@@ -16753,10 +20062,10 @@ single check as <options>  ("$PROG_NAME URI" does everything except -E and -g):
      -W, --sweet32                 tests 64 bit block ciphers (3DES, RC2 and IDEA): SWEET32 vulnerability
      -A, --beast                   tests for BEAST vulnerability
      -L, --lucky13                 tests for LUCKY13
+     -WS, --winshock               tests for winshock vulnerability
      -F, --freak                   tests for FREAK vulnerability
      -J, --logjam                  tests for LOGJAM vulnerability
      -D, --drown                   tests for DROWN vulnerability
-     -f, --pfs, --fs, --nsa        checks (perfect) forward secrecy settings
      -4, --rc4, --appelbaum        which RC4 ciphers are being offered?
 
 tuning / connect options (most also can be preset via environment variables):
@@ -16772,15 +20081,16 @@ tuning / connect options (most also can be preset via environment variables):
                                    b) arg "one" means: just test the first DNS returns (useful for multiple IPs)
      -n, --nodns <min|none>        if "none": do not try any DNS lookups, "min" queries A, AAAA and MX records
      --sneaky                      leave less traces in target logs: user agent, referer
+     --user-agent <user agent>     set a custom user agent instead of the standard user agent
      --ids-friendly                skips a few vulnerability checks which may cause IDSs to block the scanning IP
      --phone-out                   allow to contact external servers for CRL download and querying OCSP responder
-     --add-ca <cafile>             path to <cafile> or a comma separated list of CA files enables test against additional CAs.
+     --add-ca <CA files|CA dir>    path to <CAdir> with *.pem or a comma separated list of CA files to include in trust check
+     --basicauth <user:pass>       provide HTTP basic auth information.
+     --reqheader <header>          add custom http request headers
 
 output options (can also be preset via environment variables):
-     --warnings <batch|off|false>  "batch" doesn't ask for a confirmation, "off" or "false" skips connection warnings
-     --openssl-timeout <seconds>   useful to avoid hangers. <seconds> to wait before openssl connect will be terminated
      --quiet                       don't output the banner. By doing this you acknowledge usage terms normally appearing in the banner
-     --wide                        wide output for tests like RC4, BEAST. PFS also with hexcode, kx, strength, RFC name
+     --wide                        wide output for tests like RC4, BEAST. FS also with hexcode, kx, strength, RFC name
      --show-each                   for wide outputs: display all ciphers tested -- not only succeeded ones
      --mapping <openssl|           openssl: use the OpenSSL cipher suite name as the primary name cipher suite name form (default)
                 iana|rfc             -> use the IANA/(RFC) cipher suite name as the primary name cipher suite name form
@@ -16789,6 +20099,7 @@ output options (can also be preset via environment variables):
      --color <0|1|2|3>             0: no escape or other codes,  1: b/w escape codes,  2: color (default), 3: extra color (color all ciphers)
      --colorblind                  swap green and blue in the output
      --debug <0-6>                 1: screen output normal but keeps debug output in /tmp/.  2-6: see "grep -A 5 '^DEBUG=' testssl.sh"
+     --disable-rating              Explicitly disables the rating output
 
 file output options (can also be preset via environment variables)
      --log, --logging              logs stdout to '\${NODE}-p\${port}\${YYYYMMDD-HHMM}.log' in current working directory (cwd)
@@ -16801,11 +20112,12 @@ file output options (can also be preset via environment variables)
      --csvfile|-oC <csvfile>       additional output as CSV to the specified file or directory, similar to --logfile
      --html                        additional output as HTML to file '\${NODE}-p\${port}\${YYYYMMDD-HHMM}.html'
      --htmlfile|-oH <htmlfile>     additional output as HTML to the specified file or directory, similar to --logfile
-     --out(f,F)ile|-oa/-oA <fname> log to a LOG,JSON,CSV,HTML file (see nmap). -oA/-oa: pretty/flat JSON. 
+     --out(f,F)ile|-oa/-oA <fname> log to a LOG,JSON,CSV,HTML file (see nmap). -oA/-oa: pretty/flat JSON.
                                    "auto" uses '\${NODE}-p\${port}\${YYYYMMDD-HHMM}'. If fname if a dir uses 'dir/\${NODE}-p\${port}\${YYYYMMDD-HHMM}'
      --hints                       additional hints to findings
      --severity <severity>         severities with lower level will be filtered for CSV+JSON, possible values <LOW|MEDIUM|HIGH|CRITICAL>
      --append                      if (non-empty) <logfile>, <csvfile>, <jsonfile> or <htmlfile> exists, append to file. Omits any header
+     --overwrite                   if <logfile>, <csvfile>, <jsonfile> or <htmlfile> exists it overwrites it without any warning
      --outprefix <fname_prefix>    before  '\${NODE}.' above prepend <fname_prefix>
 
 
@@ -16823,7 +20135,15 @@ EOF
 }
 
 maketempf() {
-     TEMPDIR=$(mktemp -d /tmp/testssl.XXXXXX) || exit $ERR_FCREATE
+     TEMPDIR=$(mktemp -d /tmp/testssl.XXXXXX 2>/dev/null)
+     if [[ $? -ne 0 ]]; then
+          # For e.g. devices where we can't write to /tmp we chose $PWD but we can't
+          # allow every char as we haven't quoted all strings depending on it, see #1445
+          if [[ $PWD =~ [^A-Za-z0-9\.,/_-] ]]; then
+               fatal "\$PWD contains illegal chars: \"$BASH_REMATCH\"" $ERR_FCREATE
+          fi
+          TEMPDIR=$(mktemp -d "$PWD/testssl.XXXXXX") || exit $ERR_FCREATE
+     fi
      TMPFILE=$TEMPDIR/tempfile.txt || exit $ERR_FCREATE
      if [[ "$DEBUG" -eq 0 ]]; then
           ERRFILE="/dev/null"
@@ -16838,7 +20158,6 @@ prepare_debug() {
           cat >$TEMPDIR/environment.txt << EOF
 
 
-CVS_REL: $CVS_REL
 GIT_REL: $GIT_REL
 
 PID: $$
@@ -16861,6 +20180,7 @@ OSSL_VER_PLATFORM: $OSSL_VER_PLATFORM
 
 OPENSSL_NR_CIPHERS: $OPENSSL_NR_CIPHERS
 OPENSSL_CONF: $OPENSSL_CONF
+HAS_CURVES: $HAS_CURVES
 OSSL_SUPPORTED_CURVES: $OSSL_SUPPORTED_CURVES
 
 HAS_IPv6: $HAS_IPv6
@@ -16869,6 +20189,7 @@ HAS_SSL3: $HAS_SSL3
 HAS_TLS13: $HAS_TLS13
 HAS_X448: $HAS_X448
 HAS_X25519: $HAS_X25519
+HAS_SIGALGS: $HAS_SIGALGS
 HAS_NO_SSL2: $HAS_NO_SSL2
 HAS_SPDY: $HAS_SPDY
 HAS_ALPN: $HAS_ALPN
@@ -16876,15 +20197,33 @@ HAS_FALLBACK_SCSV: $HAS_FALLBACK_SCSV
 HAS_COMP: $HAS_COMP
 HAS_NO_COMP: $HAS_NO_COMP
 HAS_CIPHERSUITES: $HAS_CIPHERSUITES
+HAS_SECLEVEL: $HAS_SECLEVEL
 HAS_PKEY: $HAS_PKEY
 HAS_PKUTIL: $HAS_PKUTIL
 HAS_PROXY: $HAS_PROXY
 HAS_XMPP: $HAS_XMPP
+HAS_XMPP_SERVER: $HAS_XMPP_SERVER
+HAS_XMPP_SERVER2: $HAS_XMPP_SERVER2
 HAS_POSTGRES: $HAS_POSTGRES
 HAS_MYSQL: $HAS_MYSQL
 HAS_LMTP: $HAS_LMTP
+HAS_SIEVE: $HAS_SIEVE
 HAS_NNTP: $HAS_NNTP
 HAS_IRC: $HAS_IRC
+HAS_UDS: $HAS_UDS
+HAS_UDS2: $HAS_UDS2
+HAS_ENABLE_PHA: $HAS_ENABLE_PHA
+
+HAS_DIG: $HAS_DIG
+HAS_HOST: $HAS_HOST
+HAS_DRILL: $HAS_DRILL
+HAS_NSLOOKUP: $HAS_NSLOOKUP
+HAS_IDN: $HAS_IDN
+HAS_IDN2: $HAS_IDN2
+HAS_AVAHIRESOLVE: $HAS_AVAHIRESOLVE
+HAS_DIG_NOIDNOUT: $HAS_DIG_NOIDNOUT
+HAS_DIG_R: $HAS_DIG_R
+HAS_XXD: $HAS_XXD
 
 PATH: $PATH
 PROG_NAME: $PROG_NAME
@@ -16901,10 +20240,13 @@ HAS_GNUDATE: $HAS_GNUDATE
 HAS_FREEBSDDATE: $HAS_FREEBSDDATE
 HAS_OPENBSDDATE: $HAS_OPENBSDDATE
 HAS_SED_E: $HAS_SED_E
+HAS_LOCALE: $HAS_LOCALE
 
 SHOW_EACH_C: $SHOW_EACH_C
 SSL_NATIVE: $SSL_NATIVE
 ASSUME_HTTP $ASSUME_HTTP
+BASICAUTH: $BASICAUTH
+REQHEADER: $REQHEADER
 SNEAKY: $SNEAKY
 OFFENSIVE: $OFFENSIVE
 PHONE_OUT: $PHONE_OUT
@@ -16913,7 +20255,7 @@ DEBUG: $DEBUG
 
 HSTS_MIN: $HSTS_MIN
 HPKP_MIN: $HPKP_MIN
-CLIENT_MIN_PFS: $CLIENT_MIN_PFS
+CLIENT_MIN_FS: $CLIENT_MIN_FS
 DAYS2WARN1: $DAYS2WARN1
 DAYS2WARN2: $DAYS2WARN2
 
@@ -16924,9 +20266,11 @@ CCS_MAX_WAITSOCK: $CCS_MAX_WAITSOCK
 USLEEP_SND $USLEEP_SND
 USLEEP_REC $USLEEP_REC
 
+SOCAT: $SOCAT
+
 EOF
           type -p locale &>/dev/null && locale >>$TEMPDIR/environment.txt || echo "locale doesn't exist" >>$TEMPDIR/environment.txt
-          actually_supported_ciphers 'ALL:COMPLEMENTOFALL' 'ALL' "-V" &>$TEMPDIR/all_local_ciphers.txt
+          actually_supported_osslciphers 'ALL:COMPLEMENTOFALL' 'ALL' "-V" &>$TEMPDIR/all_local_ciphers.txt
      fi
      # see also $TEMPDIR/s_client_has.txt from find_openssl_binary
 }
@@ -16939,11 +20283,7 @@ prepare_arrays() {
 
      if [[ -e "$CIPHERS_BY_STRENGTH_FILE" ]]; then
           "$HAS_SSL2" && ossl_supported_sslv2="$($OPENSSL ciphers -ssl2 -V 'ALL:COMPLEMENTOFALL:@STRENGTH' 2>$ERRFILE)"
-          if "$HAS_SSL2"; then
-               ossl_supported_tls="$(actually_supported_ciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-tls1 -V")"
-          else
-               ossl_supported_tls="$(actually_supported_ciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-V")"
-          fi
+          ossl_supported_tls="$(actually_supported_osslciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL' "-no_ssl2 -V")"
           TLS13_OSSL_CIPHERS=""
           while read hexc n TLS_CIPHER_OSSL_NAME[i] TLS_CIPHER_RFC_NAME[i] TLS_CIPHER_SSLVERS[i] TLS_CIPHER_KX[i] TLS_CIPHER_AUTH[i] TLS_CIPHER_ENC[i] mac TLS_CIPHER_EXPORT[i]; do
                TLS_CIPHER_HEXCODE[i]="$hexc"
@@ -16951,7 +20291,7 @@ prepare_arrays() {
                if [[ ${#hexc} -eq 9 ]]; then
                     # >= SSLv3 ciphers
                     if [[ $OSSL_VER_MAJOR -lt 1 ]]; then
-                         [[ ":${ossl_supported_tls}:" =~ ":${TLS_CIPHER_OSSL_NAME[i]}:" ]] && TLS_CIPHER_OSSL_SUPPORTED[i]=true
+                         [[ ":${ossl_supported_tls}:" =~ :${TLS_CIPHER_OSSL_NAME[i]}: ]] && TLS_CIPHER_OSSL_SUPPORTED[i]=true
                     else
                          ossl_ciph="$(awk '/'"$hexc"'/ { print $3 }' <<< "$ossl_supported_tls")"
                          if [[ -n "$ossl_ciph" ]]; then
@@ -16961,7 +20301,7 @@ prepare_arrays() {
                          fi
                     fi
                elif [[ $OSSL_VER_MAJOR -lt 1 ]]; then
-                    [[ ":${ossl_supported_sslv2}:" =~ ":${TLS_CIPHER_OSSL_NAME[i]}:" ]] && TLS_CIPHER_OSSL_SUPPORTED[i]=true
+                    [[ ":${ossl_supported_sslv2}:" =~ :${TLS_CIPHER_OSSL_NAME[i]}: ]] && TLS_CIPHER_OSSL_SUPPORTED[i]=true
                else
                     [[ "$ossl_supported_sslv2" =~ $hexc ]] && TLS_CIPHER_OSSL_SUPPORTED[i]=true
                fi
@@ -16974,19 +20314,15 @@ prepare_arrays() {
 
 
 mybanner() {
-     local idtag
      local bb1 bb2 bb3
 
      "$QUIET" && return
      "$CHILD_MASS_TESTING" && return
-     OPENSSL_NR_CIPHERS=$(count_ciphers "$(actually_supported_ciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL')")
-     [[ -z "$GIT_REL" ]] && \
-          idtag="$CVS_REL" || \
-          idtag="$GIT_REL -- $CVS_REL_SHORT"
+     OPENSSL_NR_CIPHERS=$(count_ciphers "$(actually_supported_osslciphers 'ALL:COMPLEMENTOFALL:@STRENGTH' 'ALL')")
      bb1=$(cat <<EOF
 
 ###########################################################
-    $PROG_NAME       $VERSION from 
+    $PROG_NAME       $VERSION from
 EOF
 )
      bb2=$(cat <<EOF
@@ -16995,7 +20331,7 @@ EOF
              modification under GPLv2 permitted.
       USAGE w/o ANY WARRANTY. USE IT AT YOUR OWN RISK!
 
-       Please file bugs @ 
+       Please file bugs @
 EOF
 )
      bb3=$(cat <<EOF
@@ -17003,16 +20339,14 @@ EOF
 ###########################################################
 EOF
 )
-     pr_bold "$bb1"
+     pr_bold "$bb1 "
      pr_boldurl "$SWURL"; outln
-     if [[ -n "$idtag" ]]; then
-          #FIXME: if we run it not off the git dir we miss the version tag.
-          # at least we don't want to display empty brackets here...
+     if [[ -n "$GIT_REL" ]]; then
           pr_bold "    ("
-          pr_grey "$idtag"
+          pr_litegrey "$GIT_REL"
           prln_bold ")"
      fi
-     pr_bold "$bb2"
+     pr_bold "$bb2 "
      pr_boldurl "https://testssl.sh/bugs/"; outln
      pr_bold "$bb3"
      outln "\n"
@@ -17053,11 +20387,21 @@ cleanup() {
           [[ -d "$TEMPDIR" ]] && rm -rf "$TEMPDIR";
      fi
      outln
-     "$SECTION_FOOTER_NEEDED" && fileout_section_footer true
-     html_footer
-     fileout_footer
+     # No shorthand expression to avoid errors when $CMDLINE_PARSED haven't been filled yet.
+     if [[ $CMDLINE_PARSED == true ]]; then
+          "$SECTION_FOOTER_NEEDED" && fileout_section_footer true
+          html_footer
+          fileout_footer
+     fi
      # debugging off, see above
      grep -q xtrace <<< "$SHELLOPTS" && ! "$DEBUG_ALLINONE" && exec 2>&42 42>&-
+}
+
+# see https://unix.stackexchange.com/questions/57940/trap-int-term-exit-really-necessary
+sig_cleanup() {
+     trap '' EXIT
+     cleanup
+     exit 0
 }
 
 child_error() {
@@ -17079,7 +20423,9 @@ fatal() {
           outln "$3" >&2
           [[ -n "$LOGFILE" ]] && outln "$3" >>$LOGFILE
      fi
-     fileout "scanProblem" "FATAL" "$1"
+     # Make sure we don't try to write into files when not created yet.
+     # No shorthand expression to avoid errors when $CMDLINE_PARSED haven't been filled yet.
+     [[ $CMDLINE_PARSED == true ]] && fileout "scanProblem" "FATAL" "$1"
      exit $2
 }
 
@@ -17117,8 +20463,7 @@ initialize_engine(){
           export OPENSSL_CONF=''
           return 1
      elif $OPENSSL engine gost -v 2>&1 | grep -Eq 'invalid command|no such engine'; then
-          outln
-          pr_warning "No engine or GOST support via engine with your $OPENSSL"; outln
+          [[ "$DEBUG" -ge 1 ]] && outln && pr_warning "No engine or GOST support via engine with your $OPENSSL"; outln
           fileout_insert_warning "engine_problem" "WARN" "No engine or GOST support via engine with your $OPENSSL"
           export OPENSSL_CONF=''
           return 1
@@ -17127,15 +20472,16 @@ initialize_engine(){
           # to suppress the warning (confuses users), see #1119
           # https://github.com/openssl/openssl/commit/b524b808a1d1ba204dbdcbb42de4e3bddb3472ac
           if ! grep -q 'using the .include directive' /etc/ssl/openssl.cnf; then
-                 outln
-                 pr_warning "No engine or GOST support via engine with your $OPENSSL"; outln
+               [[ "$DEBUG" -ge 1 ]] && outln && pr_warning "No engine or GOST support via engine with your $OPENSSL"; outln
           fi
           fileout_insert_warning "engine_problem" "WARN" "No engine or GOST support via engine with your $OPENSSL"
           # Avoid clashes of OpenSSL 1.1.1 config file with our openssl 1.0.2. This is for Debian 10
           export OPENSSL_CONF=''
           return 1
-     else      # we have engine support
-          if [[ -n "$OPENSSL_CONF" ]]; then
+     else
+          # we have engine support. But we want to check whether an external OPENSSL_CONF was supplied.
+          # $TESTSSL_INSTALL_DIR/etc/openssl.cnf is an internal presetting, see #1982
+          if [[ -n "$OPENSSL_CONF" ]] && [[ "$OPENSSL_CONF" != "$TESTSSL_INSTALL_DIR/etc/openssl.cnf" ]]; then
                prln_warning "For now I am providing the config file to have GOST support"
           else
                OPENSSL_CONF=$TEMPDIR/gost.conf
@@ -17191,13 +20537,12 @@ ignore_no_or_lame() {
 # arg1: URI
 parse_hn_port() {
      local tmp_port
+     local node_tmp=""
 
      NODE="$1"
      NODE="${NODE/https\:\/\//}"        # strip "https"
      NODE="${NODE%%/*}"                 # strip trailing urlpath
      NODE="${NODE%%.}"                  # strip trailing "." if supplied
-
-     # if there's a trailing ':' probably a starttls/application protocol was specified
      if grep -q ':$' <<< "$NODE"; then
           if grep -wq http <<< "$NODE"; then
                fatal "\"http\" is not what you meant probably" $ERR_CMDLINE
@@ -17205,8 +20550,7 @@ parse_hn_port() {
                fatal "\"$1\" is not a valid URI" $ERR_CMDLINE
           fi
      fi
-
-     # was the address supplied like [AA:BB:CC::]:port ?
+     # Was an IPv6 address supplied like [AA:BB:CC::]:port ?
      if grep -q ']' <<< "$NODE"; then
           tmp_port=$(printf "$NODE" | sed 's/\[.*\]//' | sed 's/://')
           # determine v6 port, supposed it was supplied additionally
@@ -17220,13 +20564,44 @@ parse_hn_port() {
           grep -q ':' <<< "$NODE" && \
                PORT=$(sed 's/^.*\://' <<< "$NODE") && NODE=$(sed 's/\:.*$//' <<< "$NODE")
      fi
-     debugme echo $NODE:$PORT
-     SNI="-servername $NODE"
 
+     # We check for non-ASCII chars now. If there are some we'll try to convert it if IDN/IDN2 is installed
+     # If not, we'll continue. Hoping later that dig can use it. If not the error handler will tell
+     # Honestly we don't care whether it's IDN2008 or IDN2003 or Emoji domains as long as it works.
+     # So we try to resolve anything supplied. If it can't  our resolver error handler takes care
+     if [[ "$NODE" == *[![:ascii:]]* ]]; then
+          if ! "$HAS_IDN2" && ! "$HAS_IDN"; then
+               prln_warning " URI contains non-ASCII characters and libidn/libidn2 not available."
+               outln " Trying to feed the resolver without converted \"$NODE\" ...\n"
+               #ToDo: fileout is missing
+               node_tmp="$NODE"
+          elif "$HAS_IDN2"; then
+               node_tmp="$(idn2 "$NODE" 2>/dev/null)"
+          fi
+          if "$HAS_IDN" && [[ -z "$node_tmp" ]]; then
+               node_tmp="$(idn "$NODE" 2>/dev/null)"
+          fi
+          if [[ -z "$node_tmp" ]]; then
+               prln_warning " URI contains non-ASCII characters and IDN conversion failed."
+               outln " Trying to feed the resolver without converted \"$NODE\" ...\n"
+               #ToDo: fileout is missing
+               node_tmp="$NODE"
+          fi
+          NODE="$node_tmp"
+     fi
+
+     debugme echo $NODE:$PORT
+     if [[ -n "$XMPP_HOST" ]]; then
+          # XMPP host is set, force SNI to be that
+          SNI="-servername $XMPP_HOST"
+     else
+          SNI="-servername $NODE"
+     fi
      URL_PATH=$(sed 's/https:\/\///' <<< "$1" | sed 's/'"${NODE}"'//' | sed 's/.*'"${PORT}"'//')      # remove protocol and node part and port
      URL_PATH=$(sed 's/\/\//\//g' <<< "$URL_PATH")          # we rather want // -> /
+     URL_PATH=${URL_PATH%%.}                                # strip trailing "." so that it is not interpreted as URL
      [[ -z "$URL_PATH" ]] && URL_PATH="/"
-     debugme echo $URL_PATH
+     debugme echo "URL_PATH: $URL_PATH"
      return 0                                               # NODE, URL_PATH, PORT is set now
 }
 
@@ -17262,11 +20637,14 @@ filter_ip4_address() {
      done
 }
 
+# For security testing sometimes we have local entries. Getent is BS under Linux for localhost: No network, no resolution
+# arg1 is the entry we want to look up in the host file
 get_local_aaaa() {
      local ip6=""
      local etchosts="/etc/hosts /c/Windows/System32/drivers/etc/hosts"
 
-     # for security testing sometimes we have local entries. Getent is BS under Linux for localhost: No network, no resolution
+     [[ -z "$1" ]] && echo "" && return 1
+     # Also multiple records should work fine
      ip6=$(grep -wih "$1" $etchosts 2>/dev/null | grep ':' | grep -Ev '^#|\.local' | grep -Ei "[[:space:]]$1" | awk '{ print $1 }')
      if is_ipv6addr "$ip6"; then
           echo "$ip6"
@@ -17274,12 +20652,10 @@ get_local_aaaa() {
           echo ""
      fi
 }
-
 get_local_a() {
      local ip4=""
      local etchosts="/etc/hosts /c/Windows/System32/drivers/etc/hosts"
 
-     # for security testing sometimes we have local entries. Getent is BS under Linux for localhost: No network, no resolution
      ip4=$(grep -wih "$1" $etchosts 2>/dev/null | grep -Ev ':|^#|\.local' | grep -Ei "[[:space:]]$1" | awk '{ print $1 }')
      if is_ipv4addr "$ip4"; then
           echo "$ip4"
@@ -17288,11 +20664,35 @@ get_local_a() {
      fi
 }
 
-# does a hard exit if no lookup binary is provided
+# Does a hard exit if no lookup binary is provided
+# Checks for IDN capabilities also
+#
 check_resolver_bins() {
-     if ! type -p dig &> /dev/null && ! type -p host &> /dev/null && ! type -p drill &> /dev/null && ! type -p nslookup &>/dev/null; then
+     local saved_openssl_conf="$OPENSSL_CONF"
+
+     OPENSSL_CONF=""                         # see https://github.com/drwetter/testssl.sh/issues/134
+     type -p dig   &> /dev/null &&  HAS_DIG=true
+     type -p host  &> /dev/null &&  HAS_HOST=true
+     type -p drill &> /dev/null &&  HAS_DRILL=true
+     type -p nslookup &> /dev/null && HAS_NSLOOKUP=true
+     type -p avahi-resolve &>/dev/null && HAS_AVAHIRESOLVE=true
+     type -p idn  &>/dev/null && HAS_IDN=true
+     type -p idn2 &>/dev/null && HAS_IDN2=true
+
+     if ! "$HAS_DIG" && ! "$HAS_HOST" && ! "$HAS_DRILL" && ! "$HAS_NSLOOKUP"; then
           fatal "Neither \"dig\", \"host\", \"drill\" or \"nslookup\" is present" $ERR_DNSBIN
      fi
+     if "$HAS_DIG"; then
+          # Old dig versions don't have an option to ignore $HOME/.digrc
+          if ! dig -h | grep -qEe '-r.*~/.digrc'; then
+               HAS_DIG_R=false
+               DIG_R=""
+          fi
+          if dig -h | grep -Eq idnout; then
+               HAS_DIG_NOIDNOUT=true
+          fi
+     fi
+     OPENSSL_CONF="$saved_openssl_conf"      # see https://github.com/drwetter/testssl.sh/issues/134
      return 0
 }
 
@@ -17301,7 +20701,9 @@ check_resolver_bins() {
 get_a_record() {
      local ip4=""
      local saved_openssl_conf="$OPENSSL_CONF"
+     local noidnout=""
 
+     "$HAS_DIG_NOIDNOUT" && noidnout="+noidnout"
      [[ "$NODNS" == none ]] && return 0      # if no DNS lookup was instructed, leave here
      if [[ "$1" == localhost ]]; then
           # This is a bit ugly but prevents from doing DNS lookups which could fail
@@ -17309,38 +20711,31 @@ get_a_record() {
           return 0
      fi
      if is_ipv4addr "$1"; then
-          # This saves walking through this. Also it avoids hangs e.g. if you run docker locally without reachabale DNS
+          # This saves walking through this. Also it avoids hangs e.g. if you run docker locally without reachable DNS
           echo $1
           return 0
      fi
      OPENSSL_CONF=""                         # see https://github.com/drwetter/testssl.sh/issues/134
-     check_resolver_bins
      if [[ "$NODE" == *.local ]]; then
-          if type -p avahi-resolve &>/dev/null; then
+          if "$HAS_AVAHIRESOLVE"; then
                ip4=$(filter_ip4_address $(avahi-resolve -4 -n "$1" 2>/dev/null | awk '{ print $2 }'))
-          elif type -p dig &>/dev/null; then
-               ip4=$(filter_ip4_address $(dig @224.0.0.251 -p 5353 +short -t a +notcp "$1" 2>/dev/null | sed '/^;;/d'))
+          elif "$HAS_DIG"; then
+               ip4=$(filter_ip4_address $(dig $DIG_R @224.0.0.251 -p 5353 +short -t a +notcp "$1" 2>/dev/null | sed '/^;;/d'))
           else
                fatal "Local hostname given but no 'avahi-resolve' or 'dig' available." $ERR_DNSBIN
           fi
      fi
-     if [[ -z "$ip4" ]]; then
-          if type -p dig &> /dev/null ; then
-               ip4=$(filter_ip4_address $(dig +timeout=2 +tries=2 +short -t a "$1" 2>/dev/null | awk '/^[0-9]/ { print $1 }'))
-          fi
+     if [[ -z "$ip4" ]] && "$HAS_DIG"; then
+          ip4=$(filter_ip4_address $(dig +search $DIG_R +short +timeout=2 +tries=2 $noidnout -t a "$1" 2>/dev/null | awk '/^[0-9]/ { print $1 }'))
      fi
-     if [[ -z "$ip4" ]]; then
-          type -p host &> /dev/null && \
-               ip4=$(filter_ip4_address $(host -t a "$1" 2>/dev/null | awk '/address/ { print $NF }'))
+     if [[ -z "$ip4" ]] && "$HAS_HOST"; then
+          ip4=$(filter_ip4_address $(host -t a "$1" 2>/dev/null | awk '/address/ { print $NF }'))
      fi
-     if [[ -z "$ip4" ]]; then
-          type -p drill &> /dev/null && \
-               ip4=$(filter_ip4_address $(drill a "$1" | awk '/ANSWER SECTION/,/AUTHORITY SECTION/ { print $NF }' | awk '/^[0-9]/'))
+     if [[ -z "$ip4" ]] && "$HAS_DRILL"; then
+          ip4=$(filter_ip4_address $(drill a "$1" | awk '/ANSWER SECTION/,/AUTHORITY SECTION/ { print $NF }' | awk '/^[0-9]/'))
      fi
-     if [[ -z "$ip4" ]]; then
-          if type -p nslookup &>/dev/null; then
-               ip4=$(filter_ip4_address $(strip_lf "$(nslookup -querytype=a "$1" 2>/dev/null | awk '/^Name/ { getline; print $NF }')"))
-          fi
+     if [[ -z "$ip4" ]] && "$HAS_NSLOOKUP"; then
+          ip4=$(filter_ip4_address $(strip_lf "$(nslookup -querytype=a "$1" 2>/dev/null | awk '/^Name/ { getline; print $NF }')"))
      fi
      OPENSSL_CONF="$saved_openssl_conf"      # see https://github.com/drwetter/testssl.sh/issues/134
      echo "$ip4"
@@ -17351,34 +20746,35 @@ get_a_record() {
 get_aaaa_record() {
      local ip6=""
      local saved_openssl_conf="$OPENSSL_CONF"
+     local noidnout=""
 
+     "$HAS_DIG_NOIDNOUT" && noidnout="+noidnout"
      [[ "$NODNS" == none ]] && return 0      # if no DNS lookup was instructed, leave here
      OPENSSL_CONF=""                         # see https://github.com/drwetter/testssl.sh/issues/134
      if is_ipv6addr "$1"; then
-          # This saves walking through this. Also it avoids hangs e.g. if you run docker locally without reachabale DNS
+          # This saves walking through this. Also it avoids hangs e.g. if you run docker locally without reachable DNS
           echo "$1"
           return 0
      elif is_ipv4addr "$1"; then
           # we need also this here as get_aaaa_record is always called after get_a_record and we want to handle this at a low level
           return 0
      fi
-     check_resolver_bins
      if [[ -z "$ip6" ]]; then
           if [[ "$NODE" == *.local ]]; then
-               if type -p avahi-resolve &>/dev/null; then
+               if "$HAS_AVAHIRESOLVE"; then
                     ip6=$(filter_ip6_address $(avahi-resolve -6 -n "$1" 2>/dev/null | awk '{ print $2 }'))
-               elif type -p dig &>/dev/null; then
-                    ip6=$(filter_ip6_address $(dig @ff02::fb -p 5353 -t aaaa +short +notcp "$NODE"))
+               elif "$HAS_DIG"; then
+                    ip6=$(filter_ip6_address $(dig $DIG_R @ff02::fb -p 5353 -t aaaa +short +notcp "$NODE"))
                else
                     fatal "Local hostname given but no 'avahi-resolve' or 'dig' available." $ERR_DNSBIN
                fi
-          elif type -p dig &> /dev/null; then
-               ip6=$(filter_ip6_address $(dig +short +timeout=2 +tries=2 -t aaaa "$1" 2>/dev/null | awk '/^[0-9]/ { print $1 }'))
-          elif type -p host &> /dev/null ; then
+          elif "$HAS_DIG"; then
+               ip6=$(filter_ip6_address $(dig +search $DIG_R +short +timeout=2 +tries=2 $noidnout -t aaaa "$1" 2>/dev/null | awk '/^[0-9]/ { print $1 }'))
+          elif "$HAS_HOST"; then
                ip6=$(filter_ip6_address $(host -t aaaa "$1" | awk '/address/ { print $NF }'))
-          elif type -p drill &> /dev/null; then
+          elif "$HAS_DRILL"; then
                ip6=$(filter_ip6_address $(drill aaaa "$1" | awk '/ANSWER SECTION/,/AUTHORITY SECTION/ { print $NF }' | awk '/^[0-9]/'))
-          elif type -p nslookup &>/dev/null; then
+          elif "$HAS_NSLOOKUP"; then
                ip6=$(filter_ip6_address $(strip_lf "$(nslookup -type=aaaa "$1" 2>/dev/null | awk '/'"^${a}"'.*AAAA/ { print $NF }')"))
           fi
      fi
@@ -17390,11 +20786,15 @@ get_aaaa_record() {
 # arg1: domain to check for
 get_caa_rr_record() {
      local raw_caa=""
+     local hash len line
      local -i len_caa_property
      local caa_property_name
      local caa_property_value
      local saved_openssl_conf="$OPENSSL_CONF"
      local all_caa=""
+     local noidnout=""
+
+     "$HAS_DIG_NOIDNOUT" && noidnout="+noidnout"
 
      [[ -n "$NODNS" ]] && return 0           # if minimum DNS lookup was instructed, leave here
      # if there's a type257 record there are two output formats here, mostly depending on age of distribution
@@ -17404,18 +20804,17 @@ get_caa_rr_record() {
      # for dig +short the output always starts with '0 issue [..]' or '\# 19 [..]' so we normalize thereto to keep caa_flag, caa_property
      # caa_property then has key/value pairs, see https://tools.ietf.org/html/rfc6844#section-3
      OPENSSL_CONF=""
-     check_resolver_bins
-     if type -p dig &> /dev/null; then
-          raw_caa="$(dig +timeout=3 +tries=3 $1 type257 +short | awk '{ print $1" "$2" "$3 }')"
+     if "$HAS_DIG"; then
+          raw_caa="$(dig $DIG_R +search +short +timeout=3 +tries=3 $noidnout type257 "$1" 2>/dev/null | awk '{ print $1" "$2" "$3 }')"
           # empty if no CAA record
-     elif type -p drill &> /dev/null; then
+     elif "$HAS_DRILL"; then
           raw_caa="$(drill $1 type257 | awk '/'"^${1}"'.*CAA/ { print $5,$6,$7 }')"
-     elif type -p host &> /dev/null; then
+     elif "$HAS_HOST"; then
           raw_caa="$(host -t type257 $1)"
           if grep -Ewvq "has no CAA|has no TYPE257" <<< "$raw_caa"; then
                raw_caa="$(sed -e 's/^.*has CAA record //' -e 's/^.*has TYPE257 record //' <<< "$raw_caa")"
           fi
-     elif type -p nslookup &> /dev/null; then
+     elif "$HAS_NSLOOKUP"; then
           raw_caa="$(strip_lf "$(nslookup -type=type257 $1 | grep -w rdata_257)")"
           if [[ -n "$raw_caa" ]]; then
                raw_caa="$(sed 's/^.*rdata_257 = //' <<< "$raw_caa")"
@@ -17465,28 +20864,58 @@ get_caa_rr_record() {
      return 0
 }
 
-# watch out: $1 can also be a cname! --> all checked
+# arg1: domain to check for. Returned will be the MX record as a string
 get_mx_record() {
      local mx=""
      local saved_openssl_conf="$OPENSSL_CONF"
+     local noidnout=""
 
+     "$HAS_DIG_NOIDNOUT" && noidnout="+noidnout"
      OPENSSL_CONF=""                         # see https://github.com/drwetter/testssl.sh/issues/134
-     check_resolver_bins
      # we need the last two columns here
-     if type -p host &> /dev/null; then
-          mxs="$(host -t MX "$1" 2>/dev/null | awk '/is handled by/ { print $(NF-1), $NF }')"
-     elif type -p dig &> /dev/null; then
-          mxs="$(dig +short -t MX "$1" 2>/dev/null | awk '/^[0-9]/ { print $1" "$2 }')"
-     elif type -p drill &> /dev/null; then
-          mxs="$(drill mx $1 | awk '/IN[ \t]MX[ \t]+/ { print $(NF-1), $NF }')"
-     elif type -p nslookup &> /dev/null; then
-          mxs="$(strip_lf "$(nslookup -type=MX "$1" 2>/dev/null | awk '/mail exchanger/ { print $(NF-1), $NF }')")"
+     if "$HAS_HOST"; then
+          mx="$(host -t MX "$1" 2>/dev/null | awk '/is handled by/ { print $(NF-1), $NF }')"
+     elif "$HAS_DIG"; then
+          mx="$(dig $DIG_R +search +short $noidnout -t MX "$1" 2>/dev/null | awk '/^[0-9]/ { print $1" "$2 }')"
+     elif "$HAS_DRILL"; then
+          mx="$(drill mx $1 | awk '/IN[ \t]MX[ \t]+/ { print $(NF-1), $NF }')"
+     elif "$HAS_NSLOOKUP"; then
+          mx="$(strip_lf "$(nslookup -type=MX "$1" 2>/dev/null | awk '/mail exchanger/ { print $(NF-1), $NF }')")"
      else
+          # shouldn't reach this, as we checked in the top
           fatal "No dig, host, drill or nslookup" $ERR_DNSBIN
      fi
      OPENSSL_CONF="$saved_openssl_conf"
-     echo "$mxs"
+     echo "$mx"
 }
+
+# arg1: domain / hostname. Returned will be the TXT record as a string which can be multilined
+# (one entry per line), for e.g. non-MTA-STS records.
+# Is supposed to be used by MTA STS in the future like get_txt_record _mta-sts.DOMAIN.TLD
+get_txt_record() {
+     local record=""
+     local saved_openssl_conf="$OPENSSL_CONF"
+     local noidnout=""
+
+     "$HAS_DIG_NOIDNOUT" && noidnout="+noidnout"
+     OPENSSL_CONF=""                         # see https://github.com/drwetter/testssl.sh/issues/134
+     # we need the last two columns here and strip any remaining double quotes later
+     if "$HAS_HOST"; then
+          record="$(host -t TXT "$1" 2>/dev/null | awk -F\" '/descriptive text/ { print $(NF-1) }')"
+     elif "$HAS_DIG"; then
+          record="$(dig $DIG_R +search +short $noidnout -t TXT "$1" 2>/dev/null)"
+     elif "$HAS_DRILL"; then
+          record="$(drill txt $1 | awk -F\" '/^[a-z0-9].*TXT/ { print $(NF-1) }')"
+     elif "$HAS_NSLOOKUP"; then
+          record="$(strip_lf "$(nslookup -type=MX "$1" 2>/dev/null | awk -F= '/text/ { print $(NF-1), $NF }')")"
+     else
+          # shouldn't reach this, as we checked in the top
+          fatal "No dig, host, drill or nslookup" $ERR_DNSBIN
+     fi
+     OPENSSL_CONF="$saved_openssl_conf"
+     echo "${record//\"/}"
+}
+
 
 
 # set IPADDRs and IP46ADDRs
@@ -17495,8 +20924,8 @@ determine_ip_addresses() {
      local ip4=""
      local ip6=""
 
-     ip4=$(get_a_record $NODE)
-     ip6=$(get_aaaa_record $NODE)
+     ip4="$(get_a_record "$NODE")"
+     ip6="$(get_aaaa_record "$NODE")"
      IP46ADDRs=$(newline_to_spaces "$ip4 $ip6")
 
      if [[ -n "$CMDLINE_IP" ]]; then
@@ -17521,16 +20950,16 @@ determine_ip_addresses() {
           ip4="$NODE"                        # only an IPv4 address was supplied as an argument, no hostname
           SNI=""                             # override Server Name Indication as we test the IP only
      else
-          ip4=$(get_local_a $NODE)           # is there a local host entry?
-          if [[ -z $ip4 ]]; then             # empty: no (LOCAL_A is predefined as false)
-               ip4=$(get_a_record $NODE)
+          ip4=$(get_local_a "$NODE")         # is there a local host entry?
+          if [[ -z "$ip4" ]]; then           # empty: no (LOCAL_A is predefined as false)
+               ip4=$(get_a_record "$NODE")
           else
                LOCAL_A=true                  # we have the ip4 from local host entry and need to signal this to testssl
           fi
           # same now for ipv6
-          ip6=$(get_local_aaaa $NODE)
-          if [[ -z $ip6 ]]; then
-               ip6=$(get_aaaa_record $NODE)
+          ip6=$(get_local_aaaa "$NODE")
+          if [[ -z "$ip6" ]]; then
+               ip6=$(get_aaaa_record "$NODE")
           else
                LOCAL_AAAA=true               # we have a local ipv6 entry and need to signal this to testssl
           fi
@@ -17565,33 +20994,37 @@ determine_ip_addresses() {
 
 determine_rdns() {
      local saved_openssl_conf="$OPENSSL_CONF"
-     local nodeip=""
+     local nodeip="" rdns="" line=""
 
      [[ -n "$NODNS" ]] && rDNS="(instructed to minimize DNS queries)" && return 0   # PTR records were not asked for
      local nodeip="$(tr -d '[]' <<< $NODEIP)"     # for DNS we do not need the square brackets of IPv6 addresses
      OPENSSL_CONF=""                              # see https://github.com/drwetter/testssl.sh/issues/134
-     check_resolver_bins
      if [[ "$NODE" == *.local ]]; then
-          if type -p avahi-resolve &>/dev/null; then
+          if "$HAS_AVAHIRESOLVE"; then
                rDNS=$(avahi-resolve -a $nodeip 2>/dev/null | awk '{ print $2 }')
-          elif type -p dig &>/dev/null; then
-               rDNS=$(dig -x $nodeip @224.0.0.251 -p 5353 +notcp +noall +answer +short | awk '{ print $1 }')
+          elif "$HAS_DIG"; then
+               rDNS=$(dig $DIG_R -x $nodeip @224.0.0.251 -p 5353 +notcp +noall +answer +short | awk '{ print $1 }')
           fi
-     elif type -p dig &> /dev/null; then
+     elif "$HAS_DIG"; then
           # 1+2 should suffice. It's a compromise for if e.g. network is down but we have a docker/localhost server
-          rDNS=$(dig -x $nodeip +timeout=1 +tries=2 +noall +answer +short | awk '{ print $1 }')    # +short returns also CNAME, e.g. openssl.org
-     elif type -p host &> /dev/null; then
+          rDNS=$(dig $DIG_R -x $nodeip +timeout=1 +tries=2 +noall +answer +short | awk '{ print $1 }')    # +short returns also CNAME, e.g. openssl.org
+     elif "$HAS_HOST"; then
           rDNS=$(host -t PTR $nodeip 2>/dev/null | awk '/pointer/ { print $NF }')
-     elif type -p drill &> /dev/null; then
+     elif "$HAS_DRILL"; then
           rDNS=$(drill -x ptr $nodeip 2>/dev/null | awk '/ANSWER SECTION/ { getline; print $NF }')
-     elif type -p nslookup &> /dev/null; then
+     elif "$HAS_NSLOOKUP"; then
           rDNS=$(strip_lf "$(nslookup -type=PTR $nodeip 2>/dev/null | grep -v 'canonical name =' | grep 'name = ' | awk '{ print $NF }' | sed 's/\.$//')")
      fi
      OPENSSL_CONF="$saved_openssl_conf"      # see https://github.com/drwetter/testssl.sh/issues/134
-     rDNS="$(echo $rDNS)"
-     # remove chars which under weird circumstances can show up here
-     rDNS=${rDNS// /}
-     rDNS=${rDNS//;/}
+     # First, rDNS can contain multilines due to multiple PTR DNS records, though this is not recommended.
+     # So we use a loop to check for each FQDN returned. There we remove chars which under weird
+     # circumstances (see #1506) can show up here. The blacklist is taken from RFC 1912 ("Allowable characters in a
+     # label for a host name are only ASCII, letters, digits, and the `-' character")
+     while read -r line; do
+          line="$(tr -dc '[a-zA-Z0-9-_.]' <<< "$line")"
+          [[ -z "$rdns" ]] && rdns="$line" || rdns="$rdns $line"
+     done <<< "$rDNS"
+     rDNS="$rdns"
      [[ -z "$rDNS" ]] && rDNS="--"
      return 0
 }
@@ -17630,92 +21063,328 @@ check_proxy() {
      fi
 }
 
+# Given the ASCII-HEX of a DER-encoded distinguished name, return the string
+# representation of the name.
+print_dn() {
+     local dn="$1"
+     local cert name
+     local -i len
 
-# this is only being called from determine_optimal_proto in order to check whether we have a server
-# with client authentication, a server with no SSL session ID switched off
+     # Use $OPENSSL to print the DN by creating a certificate containing the DN
+     # as the issuer and then having $OPENSSL print the issuer field in the
+     # resulting certificate.
+
+     # Create the to-be-signed portion of the certificate: version || serialNumber || signature || issuer || validity || subject || subjectPublicKeyInfo
+     # with the DN to be printed being the issuer.
+     cert="A003020102020100300A06082A8648CE3D040302${dn}301E170D3139303830353038333030305A170D3139303830353038333030305A30003019301306072A8648CE3D020106082A8648CE3D030107030200FF"
+
+     # Make a SEQUENCE of the to-be-signed portion of the certificate.
+     len=$((${#cert}/2))
+     if [[ $len -lt 128 ]]; then
+          cert="30$(printf "%02x" $len)$cert"
+     elif [[ $len -lt 256 ]]; then
+          cert="3081$(printf "%02x" $len)$cert"
+     else
+          cert="3082$(printf "%04x" $len)$cert"
+     fi
+
+     # Append a signature algorithm and signature value to the end of the
+     # to-be-signed portion of the certificate and then make a SEQUENCE of
+     # the result.
+     cert+="300A06082A8648CE3D040302030200FF"
+     len=$((${#cert}/2))
+     if [[ $len -lt 128 ]]; then
+          cert="30$(printf "%02x" $len)$cert"
+     elif [[ $len -lt 256 ]]; then
+          cert="3081$(printf "%02x" $len)$cert"
+     else
+          cert="3082$(printf "%04x" $len)$cert"
+     fi
+     # Use the LDAP String Representation of Distinguished Names (RFC 2253),
+     # The current specification is in RFC 4514.
+     name="$(hex2binary "$cert" | $OPENSSL x509 -issuer -noout -inform DER -nameopt RFC2253 2>/dev/null)"
+     name="${name#issuer=}"
+     tm_out "$(strip_leading_space "$name")"
+     return 0
+}
+
+# Given the OpenSSL output of a response from a TLS server (with the -msg option)
+# in which the response includes a CertificateRequest message, return the list of
+# distinguished names that are in the CA list.
+extract_calist() {
+     local response="$1"
+     local is_tls13=false
+     local certreq calist="" certtypes sigalgs dn
+     local calist_string=""
+     local -i len type
+
+     # Determine whether this is a TLS 1.3 response, since the information
+     # is encoded in a different place for TLS 1.3.
+     [[ "$response" =~ \<\<\<\ TLS\ 1.3[\,]?\ Handshake\ \[length\ [0-9a-fA-F]*\]\,\ CertificateRequest ]] && is_tls13=true
+
+     # Extract just the CertificateRequest message as an ASCII-HEX string.
+     certreq="${response##*CertificateRequest}"
+     certreq="0d${certreq#*0d}"
+     certreq="${certreq%%<<<*}"
+     certreq="$(strip_spaces "$(newline_to_spaces "$certreq")")"
+     certreq="${certreq:8}"
+
+     # Get the list of DNs from the CertificateRequest message.
+     if "$is_tls13"; then
+          # struct {
+          #     opaque certificate_request_context<0..2^8-1>;
+          #     Extension extensions<2..2^16-1>;
+          # } CertificateRequest;
+          len=2*$(hex2dec "${certreq:0:2}")
+          certreq="${certreq:$((len+2))}"
+          len=2*$(hex2dec "${certreq:0:4}")
+          certreq="${certreq:4}"
+          while true; do
+               [[ -z "$certreq" ]] && break
+               type=$(hex2dec "${certreq:0:4}")
+               len=2*$(hex2dec "${certreq:4:4}")
+               if [[ $type -eq 47 ]]; then
+                    # This is the certificate_authorities extension
+                    calist="${certreq:8:len}"
+                    len=2*$(hex2dec "${calist:0:4}")
+                    calist="${calist:4:len}"
+                    break
+               fi
+               certreq="${certreq:$((len+8))}"
+          done
+     else
+          # struct {
+          #     ClientCertificateType certificate_types<1..2^8-1>;
+          #     SignatureAndHashAlgorithm
+          #     supported_signature_algorithms<2^16-1>;
+          #     DistinguishedName certificate_authorities<0..2^16-1>;
+          # } CertificateRequest;
+          len=2*$(hex2dec "${certreq:0:2}")
+          certtypes="${certreq:2:len}"
+          certreq="${certreq:$((len+2))}"
+          len=2*$(hex2dec "${certreq:0:4}")
+          sigalgs="${certreq:4:len}"
+          certreq="${certreq:$((len+4))}"
+          len=2*$(hex2dec "${certreq:0:4}")
+          calist="${certreq:4:len}"
+     fi
+     # Convert each DN to a string.
+     while true; do
+          [[ -z "$calist" ]] && break
+          len=2*$(hex2dec "${calist:0:4}")
+          dn="${calist:4:len}"
+          calist_string+="$(print_dn "$dn")\n"
+          calist="${calist:$((len+4))}"
+     done
+     [[ -z "$calist_string" ]] && calist_string="empty"
+     tm_out "$calist_string"
+     return 0
+}
+
+# This is only being called from determine_optimal_proto() in order to check whether we have a server with
+# client authentication, a server with no SSL session ID switched off -- and as the name indicates a protocol.
+# ARG1 is the openssl s_client connect return value. (Darwin or LibreSSL may return 1 here)
+# ARG2 is the server hello file name
 #
 sclient_auth() {
-     [[ $1 -eq 0 ]] && return 0                                            # no client auth (CLIENT_AUTH=false is preset globally)
-     if [[ -n $(awk '/Master-Key: / { print $2 }' "$2") ]]; then           # connect succeeded
-          if grep -q '^<<< .*CertificateRequest' "$2"; then                # CertificateRequest message in -msg
-               CLIENT_AUTH=true
+     local server_hello="$(cat -v "$2")"
+     local re='Master-Key: ([^\
+]*)'
+     local connect_success=false
+
+     [[ $1 -eq 0 ]] && connect_success=true
+
+     ! "$connect_success" && [[ "$server_hello" =~ $re ]] && \
+          [[ -n "${BASH_REMATCH[1]}" ]] && connect_success=true
+     ! "$connect_success" && \
+          [[ "$server_hello" =~ (New|Reused)\,\ (SSLv[23]|TLSv1(\.[0-3])?(\/SSLv3)?)\,\ Cipher\ is\ ([A-Z0-9]+-[A-Za-z0-9\-]+|TLS_[A-Za-z0-9_]+) ]] && \
+          connect_success=true
+
+     if "$connect_success"; then
+          [[ "$server_hello" =~ Session-ID:\ [a-fA-F0-9]{2,64} ]] && NO_SSL_SESSIONID=false
+          # we needed to set this for later
+
+          if [[ "$server_hello" =~ \<\<\<\ (SSL\ [23]|TLS\ 1)(\.[0-3])?[\,]?\ Handshake\ \[length\ [0-9a-fA-F]*\]\,\ CertificateRequest ]]; then
+               # CertificateRequest message in -msg
+               CLIENT_AUTH="required"
+               [[ $1 -eq 0 ]] && CLIENT_AUTH="optional"
+               CLIENT_AUTH_CA_LIST="$(extract_calist "$server_hello")"
                return 0
           fi
-          if [[ -z $(awk '/Session-ID: / { print $2 }' "$2") ]]; then      # probably no SSL session
-               if [[ 2 -eq $(grep -c CERTIFICATE "$2") ]]; then            # do another sanity check to be sure
-                    CLIENT_AUTH=false
-                    NO_SSL_SESSIONID=true                                  # NO_SSL_SESSIONID is preset globally to false for all other cases
-                    return 0
-               fi
+          [[ $1 -eq 0 ]] && return 0
+          if [[ "$server_hello" =~ \-\-\-BEGIN\ CERTIFICATE\-\-\-.*\-\-\-END\ CERTIFICATE\-\-\- ]]; then
+               # This should be already set but just to be sure
+               CLIENT_AUTH="none"
+               return 0
+          else
+               return 1
           fi
      fi
-     # what's left now is: master key empty, handshake returned not successful, session ID empty --> not successful
      return 1
 }
 
-
-# This is a helper function for determine_optimal_proto() below. It sets the
-# the global STARTTLS_OPTIMAL_PROTO / OPTIMAL_PROTO accordingly and returns 1
-# if no protocol could be determined and 0 if this was possible.
-#
-determine_optimal_proto_sockets_helper() {
+# Determine the best parameters to use with tls_sockets():
+#   For TLSv1.3, determine what extension number to use for the key_share extension.
+#   For TLSv1.2, determine what cipher list to send, since there are more than 128
+#   TLSv1.2 ciphers and some servers fail if the ClientHello contains too many ciphers.
+# If both TLSv1.3 and TLSv1.2 ClientHello messages result in failed connection attempts,
+# then try to determine whether:
+#   (1) This is an SSLv2-only server
+#   (2) This server supports some protocol in SSLv3 - TLSv1.1, but cannot handle version negotiation.
+#   (3) This is not a TLS/SSL enabled server.
+# This information can be used by determine_optimal_proto() to help distinguish between a server
+# that is not TLS/SSL enabled and one that is not compatible with the version of OpenSSL being used.
+determine_optimal_sockets_params() {
+     local -i ret1=1 ret2=1 ret3=1
+     local i proto cipher_offered
      local all_failed=true
-     local proto=""
-     local optimal_proto=""
-     local starttls="$1"
-     local -i ret
 
-     for proto in 03 01 04 00 02 22; do
-          case $proto in
-               03) tls_sockets "$proto" "$TLS12_CIPHER"
-                    ret=$?
-                    if [[ $ret -eq 0 ]] || [[ $ret -eq 2 ]]; then
-                         case $DETECTED_TLS_VERSION in
-                              0303)  add_tls_offered tls1_2 yes; optimal_proto="-tls1_2" ;;
-                              0302)  add_tls_offered tls1_1 yes; optimal_proto="-tls1_1" ;;
-                              0301)  add_tls_offered tls1 yes; optimal_proto="-tls1" ;;
-                              0300)  add_tls_offered ssl3 yes; optimal_proto="-ssl3" ;;
-                         esac
-                         all_failed=false
-                         break
-                    fi ;;
-               04) tls_sockets "$proto" "$TLS13_CIPHER"
-                    if [[ $? -eq 0 ]]; then
-                         add_tls_offered tls1_3 yes; optimal_proto="-tls1_3"
-                         all_failed=false
-                         break
-                    fi ;;
-               01|00|02) tls_sockets "$proto" "$TLS_CIPHER" "" "" "true"
-                    ret=$?
-                    if [[ $ret -eq 0 ]] || [[ $ret -eq 2 ]]; then
-                         case $DETECTED_TLS_VERSION in
-                              0302)  add_tls_offered tls1_1 yes; optimal_proto="-tls1_1" ;;
-                              0301)  add_tls_offered tls1 yes; optimal_proto="-tls1" ;;
-                              0300)  add_tls_offered ssl3 yes; optimal_proto="-ssl3" ;;
-                         esac
-                         all_failed=false
-                         break
-                    fi ;;
-               22)  sslv2_sockets
-                    [[ $? -eq 3 ]] && all_failed=false && add_tls_offered ssl2 yes && optimal_proto="-ssl2"
-                    ;;
-          esac
-     done
-     [[ "$proto" != 22 ]] && cp $TEMPDIR/$NODEIP.parse_tls_serverhello.txt $TMPFILE
-     debugme echo "proto: $proto"
+     # If a STARTTLS protocol is specified and $SSL_NATIVE is true, then skip this test, since
+     # $SSL_NATIVE may have been set to true as a result of tls_sockets() not supporting the STARTTLS
+     # protocol.
+     [[ -n "$STARTTLS_PROTOCOL" ]] && "$SSL_NATIVE" && return 0
 
-     if [[ -n "$starttls" ]]; then
-          STARTTLS_OPTIMAL_PROTO="$optimal_proto"
+     # NOTE: The following code is only needed as long as draft versions of TLSv1.3 prior to draft 23
+     # are supported. It is used to determine whether a draft 23 or pre-draft 23 ClientHello should be
+     # sent.
+     KEY_SHARE_EXTN_NR="33"
+     tls_sockets "04" "$TLS13_CIPHER" "" "00, 2b, 00, 0f, 0e, 03,04, 7f,1c, 7f,1b, 7f,1a, 7f,19, 7f,18, 7f,17"
+     if [[ $? -eq 0 ]]; then
+          add_proto_offered tls1_3 yes
+          all_failed=false
      else
-          OPTIMAL_PROTO="$optimal_proto"
+          KEY_SHARE_EXTN_NR="28"
+          tls_sockets "04" "$TLS13_CIPHER" "" "00, 2b, 00, 0b, 0a, 7f,16, 7f,15, 7f,14, 7f,13, 7f,12"
+          if [[ $? -eq 0 ]]; then
+               add_proto_offered tls1_3 yes
+               all_failed=false
+          else
+               add_proto_offered tls1_3 no
+               KEY_SHARE_EXTN_NR="33"
+          fi
+     fi
+     if ! "$all_failed"; then
+          # Determine which version of TLS 1.3 was offered. For drafts 18-21 the
+          # version appears in the ProtocolVersion field of the ServerHello. For
+          # drafts 22-28 and the final TLS 1.3 the ProtocolVersion field contains
+          # 0303 and the actual version appears in the supported_versions extension.
+          if [[ "${TLS_SERVER_HELLO:8:3}" == 7F1 ]]; then
+               add_proto_offered tls1_3_draft$(hex2dec "${TLS_SERVER_HELLO:10:2}") yes
+          elif [[ "$TLS_SERVER_HELLO" =~ 002B00020304 ]]; then
+               add_proto_offered tls1_3_rfc8446 yes
+          elif [[ "$TLS_SERVER_HELLO" =~ 002B00027F1[2-9A-C] ]]; then
+               add_proto_offered tls1_3_draft$(hex2dec "${BASH_REMATCH:10:2}") yes
+          fi
+     fi
+
+     # Need to determine which set of ciphers is best to use with
+     # a TLSv1.2 ClientHello since there are far more than 128 ciphers
+     # that can be used.
+     tls_sockets "03" "$TLS12_CIPHER"
+     ret1=$?
+     if [[ $ret1 -eq 0 ]] || [[ $ret1 -eq 2 ]]; then
+          case $DETECTED_TLS_VERSION in
+               0303)  add_proto_offered tls1_2 yes ;;
+               0302)  add_proto_offered tls1_1 yes ;;
+               0301)  add_proto_offered tls1 yes ;;
+               0300)  add_proto_offered ssl3 yes ;;
+          esac
+          all_failed=false
+     fi
+
+     # Try again with a different, less common, set of cipher suites
+     # see #807 and #806. If using these cipher suites results in a
+     # successful connection, then change $TLS12_CIPHER to these
+     # cipher suites so that later tests will use this list of cipher
+     # suites.
+     if [[ $ret1 -ne 0 ]]; then
+          tls_sockets "03" "$TLS12_CIPHER_2ND_TRY"
+          ret2=$?
+          if [[ $ret2 -eq 0 ]]; then
+               add_proto_offered tls1_2 yes
+               TLS12_CIPHER="$TLS12_CIPHER_2ND_TRY"
+               all_failed=false
+          fi
+          if [[ $ret2 -eq 2 ]]; then
+               case $DETECTED_TLS_VERSION in
+                    0302)  add_proto_offered tls1_1 yes ;;
+                    0301)  add_proto_offered tls1 yes ;;
+                    0300)  add_proto_offered ssl3 yes ;;
+               esac
+               [[ $ret1 -ne 2 ]] && TLS12_CIPHER="$TLS12_CIPHER_2ND_TRY"
+               all_failed=false
+          fi
+     fi
+     # Try a third time with cipher suites not in $TLS12_CIPHER or
+     # $TLS12_CIPHER_2ND_TRY. If using these cipher suites results in a
+     # successful connection, then change $TLS12_CIPHER to these
+     # cipher suites so that later tests will use this list of cipher
+     # suites.
+     if [[ $ret1 -ne 0 ]] && [[ $ret2 -ne 0 ]]; then
+          tls_sockets "03" "$TLS12_CIPHER_3RD_TRY"
+          ret3=$?
+          if [[ $ret3 -eq 0 ]]; then
+               add_proto_offered tls1_2 yes
+               TLS12_CIPHER="$TLS12_CIPHER_3RD_TRY"
+               all_failed=false
+          else
+               add_proto_offered tls1_2 no
+          fi
+          if [[ $ret3 -eq 2 ]]; then
+               case $DETECTED_TLS_VERSION in
+                    0302)  add_proto_offered tls1_1 yes ;;
+                    0301)  add_proto_offered tls1 yes ;;
+                    0300)  add_proto_offered ssl3 yes ;;
+               esac
+               [[ $ret1 -ne 2 ]] && [[ $ret2 -ne 2 ]] && TLS12_CIPHER="$TLS12_CIPHER_3RD_TRY"
+               all_failed=false
+          fi
+     fi
+     if [[ $ret1 -eq 0 ]] || [[ $ret2 -eq 0 ]] || [[ $ret3 -eq 0 ]]; then
+          cipher_offered="$(get_cipher "$TEMPDIR/$NODEIP.parse_tls_serverhello.txt")"
+          if [[ "$cipher_offered" == TLS_* ]] || [[ "$cipher_offered" == SSL_* ]]; then
+               cipher_offered="$(rfc2hexcode "$cipher_offered")"
+          else
+               cipher_offered="$(openssl2hexcode "$cipher_offered")"
+          fi
+          [[ ${#cipher_offered} -eq 9 ]] && TLS12_CIPHER_OFFERED="${cipher_offered:2:2},${cipher_offered:7:2}"
      fi
 
      if "$all_failed"; then
-          return 1
-     else
-          return 0
+          # One of the following must be true:
+          #   * This is not a TLS/SSL enabled server.
+          #   * The server only supports SSLv2
+          #   * The server does not handle version negotiation correctly.
+          for proto in 01 00 02; do
+               tls_sockets "$proto" "$TLS_CIPHER" "" "" "true"
+               ret1=$?
+               if [[ $ret1 -ne 0 ]]; then
+                    case $proto in
+                         02)  add_proto_offered tls1_1 no ;;
+                         01)  add_proto_offered tls1 no ;;
+                         00)  add_proto_offered ssl3 no ;;
+                    esac
+               fi
+               if [[ $ret1 -eq 0 ]] || [[ $ret1 -eq 2 ]]; then
+                    case $DETECTED_TLS_VERSION in
+                         0302)  add_proto_offered tls1_1 yes ;;
+                         0301)  add_proto_offered tls1 yes ;;
+                         0300)  add_proto_offered ssl3 yes ;;
+                    esac
+                    OPTIMAL_SOCKETS_PROTO="$proto"
+                    all_failed=false
+                    break
+               fi
+          done
      fi
+     if "$all_failed"; then
+          sslv2_sockets
+          [[ $? -eq 3 ]] && all_failed=false && add_proto_offered ssl2 yes
+     fi
+     ALL_FAILED_SOCKETS="$all_failed"
+     return 0
 }
+
 
 # This function determines (STARTTLS_)OPTIMAL_PROTO. It is basically a workaround function as under certain
 # circumstances a ClientHello without specifying a protocol will fail.
@@ -17728,121 +21397,183 @@ determine_optimal_proto_sockets_helper() {
 determine_optimal_proto() {
      local all_failed=true
      local tmp=""
-     local using_sockets=true
+     local proto optimal_proto
+     local jsonID="optimal_proto"
 
      "$do_tls_sockets" && return 0
 
      >$ERRFILE
-     "$SSL_NATIVE" && using_sockets=false
-
      if [[ -n "$1" ]]; then
-          # STARTTLS
-          if "$using_sockets"; then
-               determine_optimal_proto_sockets_helper "$1"
-               [[ $? -eq 1 ]] && all_failed=true || all_failed=false
-          else
-               # No sockets
-               # STARTTLS workaround needed see https://github.com/drwetter/testssl.sh/issues/188 -- kind of odd
-               for STARTTLS_OPTIMAL_PROTO in -tls1_2 -tls1 -ssl3 -tls1_1 -tls1_3 -ssl2; do
-                    case $STARTTLS_OPTIMAL_PROTO in
-                         -tls1_3) "$HAS_TLS13" || continue ;;
-                         -ssl3)   "$HAS_SSL3" || continue ;;
-                         -ssl2)   "$HAS_SSL2" || continue ;;
-                         *) ;;
-                    esac
-                    #FIXME: to be replaced / added by socket ( if "$using_sockets" ...)
-                    $OPENSSL s_client $(s_client_options "$STARTTLS_OPTIMAL_PROTO $BUGS -connect "$NODEIP:$PORT" $PROXY -msg -starttls $1" $SNI) </dev/null >$TMPFILE 2>>$ERRFILE
-                    if sclient_auth $? $TMPFILE; then
-                         all_failed=false
-                         break
-                    fi
-                    all_failed=true
-               done
-               "$all_failed" && STARTTLS_OPTIMAL_PROTO=""
-          fi
+          # STARTTLS workaround needed see https://github.com/drwetter/testssl.sh/issues/188 -- kind of odd
+          for STARTTLS_OPTIMAL_PROTO in -tls1_2 -tls1 -ssl3 -tls1_1 -tls1_3 -ssl2; do
+               case $STARTTLS_OPTIMAL_PROTO in
+                    -tls1_3) "$HAS_TLS13" || continue ;;
+                    -ssl3)   "$HAS_SSL3" || continue ;;
+                    -ssl2)   "$HAS_SSL2" || continue ;;
+                    *) ;;
+               esac
+               $OPENSSL s_client $(s_client_options "$STARTTLS_OPTIMAL_PROTO $BUGS -connect "$NODEIP:$PORT" $PROXY -msg $STARTTLS $SNI") </dev/null >$TMPFILE 2>>$ERRFILE
+               if sclient_auth $? $TMPFILE; then
+                    all_failed=false
+                    add_proto_offered "${STARTTLS_OPTIMAL_PROTO/-/}" yes
+                    break
+               fi
+          done
+          "$all_failed" && STARTTLS_OPTIMAL_PROTO=""
+          optimal_proto="$STARTTLS_OPTIMAL_PROTO"
           debugme echo "STARTTLS_OPTIMAL_PROTO: $STARTTLS_OPTIMAL_PROTO"
      else
           # No STARTTLS
-          if "$using_sockets"; then
-               determine_optimal_proto_sockets_helper
-               [[ $? -eq 1 ]] && all_failed=true || all_failed=false
-          else
-               # no sockets
-               for OPTIMAL_PROTO in '' -tls1_2 -tls1 -tls1_3 -ssl3 -tls1_1 -ssl2; do
-                    case $OPTIMAL_PROTO in
-                         -tls1_3) "$HAS_TLS13" || continue ;;
-                         -ssl3)   "$HAS_SSL3" || continue ;;
-                         -ssl2)   "$HAS_SSL2" || continue ;;
-                         *) ;;
-                    esac
-                    $OPENSSL s_client $(s_client_options "$OPTIMAL_PROTO $BUGS -connect "$NODEIP:$PORT" -msg $PROXY $SNI") </dev/null >$TMPFILE 2>>$ERRFILE
-                    if sclient_auth $? $TMPFILE; then
-                         # we use the successful handshake at least to get one valid protocol supported -- it saves us time later
-                         if [[ -z "$OPTIMAL_PROTO" ]]; then
-                              # convert to openssl terminology
-                              tmp=$(get_protocol $TMPFILE)
-                              tmp=${tmp/\./_}
-                              tmp=${tmp/v/}
-                              tmp="$(tolower $tmp)"
-                              add_tls_offered "${tmp}" yes
-                              case $tmp in
-                                   tls1)   OPTIMAL_PROTO="-tls1" ;;
-                                   tls1_1) OPTIMAL_PROTO="-tls1_1" ;;
-                                   tls1_2) OPTIMAL_PROTO="-tls1_2" ;;
-                                   tls1_3) OPTIMAL_PROTO="-tls1_3" ;;
-                                   ssl2)   OPTIMAL_PROTO="-ssl2" ;;
-                              esac
-                         else
-                              add_tls_offered "${OPTIMAL_PROTO/-/}" yes
-                         fi
-                         debugme echo "one proto determined: $tmp"
-                         all_failed=false
-                         break
+          for proto in '' -tls1_2 -tls1 -tls1_3 -ssl3 -tls1_1 -ssl2; do
+               case $proto in
+                    -tls1_3) "$HAS_TLS13" || continue ;;
+                    -ssl3)   "$HAS_SSL3" || continue ;;
+                    -ssl2)   "$HAS_SSL2" || continue ;;
+                    *) ;;
+               esac
+               # Only send $GET_REQ11 in case of a non-empty $URL_PATH, as it
+               # is not needed otherwise. Also, sending $GET_REQ11 may cause
+               # problems if the server being tested is not an HTTPS server,
+               # and $URL_PATH should be empty for non-HTTPS servers.
+               # With TLS 1.3 it is only possible to test for client authentication
+               # if $OPENSSL supports post-handshake authentication. So, don't send try
+               # to send $GET_REQ11 after a TLS 1.3 ClientHello to a TLS 1.3 server if
+               # $ENABLE_PHA is false.
+               if [[ -z "$URL_PATH" ]] || [[ "$URL_PATH" == / ]] || \
+                  ( "$HAS_TLS13" && ! "$HAS_ENABLE_PHA" && ( [[ -z "$proto" ]] || [[ "$proto" == -tls1_3 ]] ) && [[ $(has_server_protocol "tls1_3") -ne 1 ]] ); then
+                    $OPENSSL s_client $(s_client_options "$proto $BUGS -connect "$NODEIP:$PORT" -msg $PROXY $SNI") </dev/null >$TMPFILE 2>>$ERRFILE
+               else
+                    safe_echo "$GET_REQ11" | $OPENSSL s_client $(s_client_options "$proto $BUGS -connect "$NODEIP:$PORT" -msg $PROXY $SNI -ign_eof -enable_pha") >$TMPFILE 2>>$ERRFILE &
+                    wait_kill $! $HEADER_MAXSLEEP
+                    if [[ $? -eq 0 ]]; then
+                         # Issue HTTP GET again as it properly finished within $HEADER_MAXSLEEP and didn't hang.
+                         # Doing it again in the foreground to get an accurate return code.
+                         safe_echo "$GET_REQ11" | $OPENSSL s_client $(s_client_options "$proto $BUGS -connect "$NODEIP:$PORT" -msg $PROXY $SNI -ign_eof -enable_pha") >$TMPFILE 2>>$ERRFILE
+                    else
+                         # Issuing HTTP GET caused $OPENSSL to hang, so just try to determine
+                         # protocol support without also trying to collect information about
+                         # client authentication.
+                         $OPENSSL s_client $(s_client_options "$proto $BUGS -connect "$NODEIP:$PORT" -msg $PROXY $SNI") </dev/null >$TMPFILE 2>>$ERRFILE
                     fi
-                    all_failed=true
-               done
-          fi
+               fi
+
+               if sclient_auth $? $TMPFILE; then
+                    # we use the successful handshake at least to get one valid protocol supported -- it saves us time later
+                    if [[ -z "$proto" ]]; then
+                         # convert to openssl terminology
+                         tmp=$(get_protocol $TMPFILE)
+                         tmp=${tmp/\./_}
+                         tmp=${tmp/v/}
+                         tmp="$(tolower $tmp)"
+                         add_proto_offered "${tmp}" yes
+                         debugme echo "one proto determined: $tmp"
+                         OPTIMAL_PROTO=""
+                    else
+                         add_proto_offered "${proto/-/}" yes
+                         OPTIMAL_PROTO="$proto"
+                    fi
+                    all_failed=false
+                    # If a $URL_PATH is specified and a TLS 1.3 server is being
+                    # tested using an $OPENSSL that supports TLS 1.3 but not
+                    # post-handshake authentication, then test for client
+                    # authentication using a protocol version earlier than
+                    # TLS 1.3 (unless the server only is TLS 1.3-only).
+                    if [[ "$tmp" == tls1_3 ]] && [[ -n "$URL_PATH" ]] && [[ "$URL_PATH" != / ]] && ! "$HAS_ENABLE_PHA"; then
+                         if [[ "$(has_server_protocol "tls1_2")" -eq 0 ]] || [[ "$(has_server_protocol "tls1_1")" -eq 0 ]] || \
+                            [[ "$(has_server_protocol "tls1")" -eq 0 ]] || [[ "$(has_server_protocol "ssl3")" -eq 0 ]]; then
+                              safe_echo "$GET_REQ11" | $OPENSSL s_client $(s_client_options "$BUGS -connect "$NODEIP:$PORT" -msg $PROXY $SNI -ign_eof -no_tls1_3") >$TEMPDIR/client_auth_test.txt 2>>$ERRFILE &
+                              wait_kill $! $HEADER_MAXSLEEP
+                              # If the HTTP properly finished within $HEADER_MAXSLEEP and didn't hang, then
+                              # do it again in the foreground to get an accurate return code. If it did hang,
+                              # there is no way to test for client authentication, so don't try.
+                              if [[ $? -eq 0 ]]; then
+                                   safe_echo "$GET_REQ11" | $OPENSSL s_client $(s_client_options "$BUGS -connect "$NODEIP:$PORT" -msg $PROXY $SNI -ign_eof -no_tls1_3") >$TEMPDIR/client_auth_test.txt 2>>$ERRFILE
+                                   sclient_auth $? $TEMPDIR/client_auth_test.txt
+                              fi
+                         elif [[ "$CLIENT_AUTH" == none ]]; then
+                              # This is a TLS 1.3-only server and $OPENSSL does not support -enable_pha, so it is not
+                              # possible to test for client authentication.
+                              CLIENT_AUTH="unknown"
+                         fi
+                    fi
+                    break
+               fi
+          done
           "$all_failed" && OPTIMAL_PROTO=""
-          if [[ "$OPTIMAL_PROTO" == -ssl2 ]]; then
-               prln_magenta "$NODEIP:$PORT appears to only support SSLv2."
-               ignore_no_or_lame " Type \"yes\" to proceed and accept false negatives or positives" "yes"
-               [[ $? -ne 0 ]] && exit $ERR_CLUELESS
-          fi
+          optimal_proto="$OPTIMAL_PROTO"
+
           debugme echo "OPTIMAL_PROTO: $OPTIMAL_PROTO"
      fi
-     [[ "$OPTIMAL_PROTO" != -ssl2 ]]  && ! "$all_failed" && grep -q '^Server Temp Key' $TMPFILE && HAS_DH_BITS=true     # FIX #190
+     [[ "$optimal_proto" != -ssl2 ]]  && ! "$all_failed" && grep -q '^Server Temp Key' $TMPFILE && HAS_DH_BITS=true     # FIX #190
+     if [[ "$(has_server_protocol "tls1_3")" -eq 0 ]] && [[ "$(has_server_protocol "tls1_2")" -ne 0 ]] &&
+        [[ "$(has_server_protocol "tls1_1")" -ne 0 ]] && [[ "$(has_server_protocol "tls1")" -ne 0 ]] &&
+        [[ "$(has_server_protocol "ssl3")" -ne 0 ]]; then
+          TLS13_ONLY=true
+     elif [[ -z "$TLS12_CIPHER_OFFERED" ]] && [[ "$(has_server_protocol "tls1_2")" -eq 0 ]] && [[ "$(get_protocol $TMPFILE)" == TLSv1.2 ]]; then
+          TLS12_CIPHER_OFFERED="$(get_cipher $TMPFILE)"
+          TLS12_CIPHER_OFFERED="$(openssl2hexcode "$TLS12_CIPHER_OFFERED")"
+          [[ ${#TLS12_CIPHER_OFFERED} -eq 9 ]] && TLS12_CIPHER_OFFERED="${TLS12_CIPHER_OFFERED:2:2},${TLS12_CIPHER_OFFERED:7:2}" || TLS12_CIPHER_OFFERED=""
+     fi
 
-     if "$all_failed"; then
+     if [[ "$optimal_proto" == -ssl2 ]]; then
+          prln_magenta "$NODEIP:$PORT appears to only support SSLv2."
+          fileout "$jsonID" "WARN" "$NODEIP:$PORT appears to only support SSLv2."
+          ignore_no_or_lame " Type \"yes\" to proceed and accept false negatives or positives" "yes"
+          [[ $? -ne 0 ]] && exit $ERR_CLUELESS
+     elif "$all_failed" && ! "$ALL_FAILED_SOCKETS"; then
+          if ! "$HAS_TLS13" && "$TLS13_ONLY"; then
+               pr_magenta " $NODE:$PORT appears to support TLS 1.3 ONLY. You better use --openssl=<path_to_openssl_supporting_TLS_1.3>"
+               if ! "$OSSL_SHORTCUT" || [[ ! -x /usr/bin/openssl ]] || /usr/bin/openssl s_client -tls1_3 2>&1 | grep -aiq "unknown option"; then
+                    outln
+                    fileout "$jsonID" "WARN" "$NODE:$PORT appears to support TLS 1.3 ONLY, but $OPENSSL does not support TLS 1.3"
+                    ignore_no_or_lame " Type \"yes\" to proceed and accept all scan problems" "yes"
+                    [[ $? -ne 0 ]] && exit $ERR_CLUELESS
+                    MAX_OSSL_FAIL=10
+               else
+                    # dirty hack but an idea for the future to be implemented upfront: Now we know, we'll better off
+                    # with the OS supplied openssl binary. We need to initialize variables / arrays again though.
+                    # And the service detection can't be made up for now
+                    outln ", \n proceeding with /usr/bin/openssl"
+                    OPENSSL=/usr/bin/openssl
+                    find_openssl_binary
+                    prepare_arrays
+               fi
+          elif ! "$HAS_SSL3" && [[ "$(has_server_protocol "ssl3")" -eq 0 ]] && [[ "$(has_server_protocol "tls1_3")" -ne 0 ]] && \
+               [[ "$(has_server_protocol "tls1_2")" -ne 0 ]] && [[ "$(has_server_protocol "tls1_1")" -ne 0 ]] &&
+               [[ "$(has_server_protocol "tls1")" -ne 0 ]]; then
+               prln_magenta " $NODE:$PORT appears to support SSLv3 ONLY. You better use --openssl=<path_to_openssl_supporting_SSL_3>"
+               fileout "$jsonID" "WARN" "$NODE:$PORT appears to support SSLv3 ONLY, but $OPENSSL does not support SSLv3."
+               ignore_no_or_lame " Type \"yes\" to proceed and accept all scan problems" "yes"
+               [[ $? -ne 0 ]] && exit $ERR_CLUELESS
+               MAX_OSSL_FAIL=10
+          else
+               prln_bold " Your OpenSSL cannot connect to $NODEIP:$PORT"
+               fileout "$jsonID" "WARN" "Your OpenSSL cannot connect to $NODEIP:$PORT."
+               ignore_no_or_lame " The results might look ok but they could be nonsense. Really proceed ? (\"yes\" to continue)" "yes"
+               [[ $? -ne 0 ]] && exit $ERR_CLUELESS
+          fi
+     elif "$all_failed"; then
           outln
           if "$HAS_IPv6"; then
                pr_bold " Your $OPENSSL is not IPv6 aware, or $NODEIP:$PORT "
+               fileout "$jsonID" "WARN" "Your $OPENSSL is not IPv6 aware, or $NODEIP:$PORT doesn't seem to be a TLS/SSL enabled server."
           else
                pr_bold " $NODEIP:$PORT "
+               fileout "$jsonID" "WARN" "$NODEIP:$PORT doesn't seem to be a TLS/SSL enabled server."
           fi
           tmpfile_handle ${FUNCNAME[0]}.txt
           prln_bold "doesn't seem to be a TLS/SSL enabled server";
           ignore_no_or_lame " The results might look ok but they could be nonsense. Really proceed ? (\"yes\" to continue)" "yes"
           [[ $? -ne 0 ]] && exit $ERR_CLUELESS
-     fi
-
-     # NOTE: The following code is only needed as long as draft versions of TLSv1.3 prior to draft 23
-     # are supported. It is used to determine whether a draft 23 or pre-draft 23 ClientHello should be
-     # sent.
-     if [[ -z "$1" ]]; then
-          KEY_SHARE_EXTN_NR="33"
-          tls_sockets "04" "$TLS13_CIPHER" "" "00, 2b, 00, 0f, 0e, 03,04, 7f,1c, 7f,1b, 7f,1a, 7f,19, 7f,18, 7f,17"
-          if [[ $? -eq 0 ]]; then
-               add_tls_offered tls1_3 yes
-          else
-               KEY_SHARE_EXTN_NR="28"
-               tls_sockets "04" "$TLS13_CIPHER" "" "00, 2b, 00, 0b, 0a, 7f,16, 7f,15, 7f,14, 7f,13, 7f,12"
-               if [[ $? -eq 0 ]]; then
-                    add_tls_offered tls1_3 yes
-               else
-                    add_tls_offered tls1_3 no
-                    KEY_SHARE_EXTN_NR="33"
-               fi
-          fi
+     elif ! "$all_failed" && "$ALL_FAILED_SOCKETS" && ! "$SSL_NATIVE"; then
+          # For some reason connecting with tls_sockets/sslv2_sockets didn't work, but connecting
+          # with $OPENSSL s_client did.
+          # FIXME: Should we include some sort of "please report" note here?
+          prln_magenta " Testing with $NODE:$PORT only worked using $OPENSSL."
+          prln_magenta " Test results may be somewhat better if the --ssl-native option is used."
+          fileout "$jsonID" "WARN" "Testing with $NODE:$PORT only worked using $OPENSSL."
+          ignore_no_or_lame " Type \"yes\" to proceed and accept false negatives or positives" "yes"
+          [[ $? -ne 0 ]] && exit $ERR_CLUELESS
      fi
 
      tmpfile_handle ${FUNCNAME[0]}.txt
@@ -17850,13 +21581,15 @@ determine_optimal_proto() {
 }
 
 
-# arg1 (optional): ftp smtp, lmtp, pop3, imap, xmpp, telnet, ldap, postgres, mysql, irc, nntp (maybe with trailing s)
+# arg1 (optional): ftp smtp, lmtp, pop3, imap, sieve, xmpp, xmpp-server, telnet, ldap, postgres, mysql, irc, nntp (maybe with trailing s)
 #
 determine_service() {
      local ua
      local protocol
+     local basicauth_header=""
+     local reqheader=""
 
-     # check if we can connect to $NODEIP:$PORT
+     # Check if we can connect to $NODEIP:$PORT. Attention: This ALWAYS uses sockets. Thus timeouts for --ssl-=native do not apply
      if ! fd_socket 5; then
           if [[ -n "$PROXY" ]]; then
                fatal "You're sure $PROXYNODE:$PROXYPORT allows tunneling here? Can't connect to \"$NODEIP:$PORT\"" $ERR_CONNECT
@@ -17869,37 +21602,42 @@ determine_service() {
                fi
           fi
      fi
-     close_socket
+     close_socket 5
 
      outln
      if [[ -z "$1" ]]; then
           # no STARTTLS.
-          determine_optimal_proto
+          determine_optimal_sockets_params
           $SNEAKY && \
                ua="$UA_SNEAKY" || \
                ua="$UA_STD"
-          GET_REQ11="GET $URL_PATH HTTP/1.1\r\nHost: $NODE\r\nUser-Agent: $ua\r\nAccept-Encoding: identity\r\nAccept: text/*\r\nConnection: Close\r\n\r\n"
+          if [[ -n "$BASICAUTH" ]]; then
+               basicauth_header="Authorization: Basic $(safe_echo "$BASICAUTH" | $OPENSSL base64 2>/dev/null)\r\n"
+          fi
+          if [[ -n "$REQHEADERS" ]]; then
+               reqheader="$(join_by "\r\n" "${REQHEADERS[@]}")\r\n" #Add all required custom http headers to one string with newlines
+          fi
+          GET_REQ11="GET $URL_PATH HTTP/1.1\r\nHost: $NODE\r\nUser-Agent: $ua\r\n${basicauth_header}${reqheader}Accept-Encoding: identity\r\nAccept: text/*\r\nConnection: Close\r\n\r\n"
+          determine_optimal_proto
           # returns always 0:
           service_detection $OPTIMAL_PROTO
      else # STARTTLS
-          if [[ "$1" == postgres ]]; then
-               protocol="postgres"
+          if [[ "$1" == postgres ]] || [[ "$1" == sieve ]]; then
+               protocol="$1"
           else
                protocol=${1%s}     # strip trailing 's' in ftp(s), smtp(s), pop3(s), etc
           fi
 
           case "$protocol" in
-               ftp|smtp|lmtp|pop3|imap|xmpp|telnet|ldap|postgres|mysql|nntp)
+               ftp|smtp|lmtp|pop3|imap|sieve|xmpp|xmpp-server|telnet|ldap|postgres|mysql|nntp)
                     STARTTLS="-starttls $protocol"
-                    if [[ "$protocol" == xmpp ]]; then
-                         # for XMPP, openssl has a problem using -connect $NODEIP:$PORT. thus we use -connect $NODE:$PORT instead!
-                         NODEIP="$NODE"
+                    if [[ "$protocol" == xmpp ]] || [[ "$protocol" == xmpp-server ]]; then
                          if [[ -n "$XMPP_HOST" ]]; then
                               if ! "$HAS_XMPP"; then
                                    fatal "Your $OPENSSL does not support the \"-xmpphost\" option" $ERR_OSSLBIN
                               fi
                               STARTTLS="$STARTTLS -xmpphost $XMPP_HOST"         # small hack -- instead of changing calls all over the place
-                              # see http://xmpp.org/rfcs/rfc3920.html
+                              # see https://xmpp.org/rfcs/rfc3920.html
                          else
                               if is_ipv4addr "$NODE"; then
                                    # XMPP needs a jabber domainname
@@ -17907,11 +21645,22 @@ determine_service() {
                                         prln_warning " IP address doesn't work for XMPP, trying PTR record $rDNS"
                                         # remove trailing .
                                         NODE=${rDNS%%.}
-                                        NODEIP=${rDNS%%.}
                                    else
                                         fatal "No DNS supplied and no PTR record available which I can try for XMPP" $ERR_DNSLOOKUP
                                    fi
                               fi
+                              if "$HAS_XMPP"; then
+                                   # small hack -- instead of changing calls all over the place
+                                   STARTTLS="$STARTTLS -xmpphost $NODE"
+                              else
+                                   # If the XMPP name cannot be provided using -xmpphost,
+                                   # then it needs to be provided to the -connect option
+                                   NODEIP="$NODE"
+                              fi
+                         fi
+                         if [[ "$protocol" == xmpp-server ]] && ! "$HAS_XMPP_SERVER"; then
+                              #FIXME: make use of HAS_XMPP_SERVER2
+                              fatal "Your $OPENSSL does not support the \"-starttls xmpp-server\" option" $ERR_OSSLBIN
                          fi
                     elif [[ "$protocol" == postgres ]]; then
                          # Check if openssl version supports postgres.
@@ -17928,26 +21677,37 @@ determine_service() {
                          if ! "$HAS_LMTP"; then
                               fatal "Your $OPENSSL does not support the \"-starttls lmtp\" option" $ERR_OSSLBIN
                          fi
+                    elif [[ "$protocol" == sieve ]]; then
+                         # Check if openssl version supports sieve.
+                         if ! "$HAS_SIEVE"; then
+                              fatal "Your $OPENSSL does not support the \"-starttls sieve\" option" $ERR_OSSLBIN
+                         fi
                     elif [[ "$protocol" == nntp ]]; then
                          # Check if openssl version supports lmtp.
                          if ! "$HAS_NNTP"; then
                               fatal "Your $OPENSSL does not support the \"-starttls nntp\" option" $ERR_OSSLBIN
                          fi
                     fi
+                    determine_optimal_sockets_params
                     determine_optimal_proto "$1"
 
                     out " Service set:$CORRECT_SPACES            STARTTLS via "
                     out "$(toupper "$protocol")"
-                    [[ "$protocol" == mysql ]] && out " -- attention, this is experimental"
+                    [[ "$protocol" == mysql ]] && out " (experimental)"
                     fileout "service" "INFO" "$protocol"
                     [[ -n "$XMPP_HOST" ]] && out " (XMPP domain=\'$XMPP_HOST\')"
                     outln
                     ;;
                *)   outln
-                    fatal "momentarily only ftp, smtp, lmtp, pop3, imap, xmpp, telnet, ldap, nntp, postgres and mysql allowed" $ERR_CMDLINE
+                    fatal "momentarily only ftp, smtp, lmtp, pop3, imap, sieve, xmpp, xmpp-server, telnet, ldap, nntp, postgres and mysql allowed" $ERR_CMDLINE
                     ;;
           esac
+          # It comes handy later also for STARTTLS injection to define this global. When we do banner grabbing
+          # or replace service_detection() we might not need that anymore
+          SERVICE=$protocol
+
      fi
+
      tmpfile_handle ${FUNCNAME[0]}.txt
      return 0       # OPTIMAL_PROTO, GET_REQ*/HEAD_REQ* is set now
 }
@@ -17957,67 +21717,38 @@ determine_service() {
 # Return value is 0 unless we have a problem executing
 #
 determine_sizelimitbug() {
-     local test_ciphers='CC,14, CC,13, CC,15, C0,30, C0,2C, C0,28, C0,24, 00,A5, 00,A3, 00,A1, 00,9F, CC,A9, CC,A8, CC,AA, C0,AF, C0,AD, C0,A3, C0,9F, 00,6B, 00,6A, 00,69, 00,68, C0,77, C0,73, 00,C4, 00,C3, 00,C2, 00,C1, C0,32, C0,2E, C0,2A, C0,26, C0,79, C0,75, 00,9D, C0,A1, C0,9D, 00,3D, 00,C0, C0,3D, C0,3F, C0,41, C0,43, C0,45, C0,49, C0,4B, C0,4D, C0,4F, C0,51, C0,53, C0,55, C0,57, C0,59, C0,5D, C0,5F, C0,61, C0,63, C0,7B, C0,7D, C0,7F, C0,81, C0,83, C0,87, C0,89, C0,8B, C0,8D, 16,B7, 16,B8, 16,B9, 16,BA, C0,2F, C0,2B, C0,27, C0,23, 00,A4, 00,A2, 00,A0, 00,9E, C0,AE, C0,AC, C0,A2, C0,9E, C0,A0, C0,9C, 00,67, 00,40, 00,3F, 00,3E, C0,76, C0,72, 00,BE, 00,BD, 00,BC, 00,BB, C0,31, C0,2D, C0,29, C0,25, C0,78, C0,74, 00,9C, 00,3C, 00,BA, C0,3C, C0,3E, C0,40, C0,42, C0,44, C0,48, C0,4A, C0,4C, C0,4E, C0,50, C0,52, C0,54, C0,56, C0,58, C0,5C, C0,5E, C0,60, C0,62, C0,7A, C0,7C, C0,7E, C0,80, C0,82'
-     local overflow_cipher1='C0,86'
-     local overflow_cipher2='C0,88'
+     # overflow_cipher must be some cipher that does not appear in TLS12_CIPHER.
+     local overflow_cipher='C0,86'
+     local -i nr_ciphers
 
-     # For STARTTLS protcols not being implemented yet via sockets this is a bypass otherwise it  won't be usable at all (e.g. LDAP)
-     [[ "$STARTTLS" =~ ldap ]] && return 0
+     # For STARTTLS protocols not being implemented yet via sockets this is a bypass otherwise it won't be usable at all (e.g. LDAP)
+     # Fixme: find out whether we can't skip this in general for STARTTLS
      [[ "$STARTTLS" =~ irc ]] && return 0
 
-     debugme echo -n "${FUNCNAME[0]} starting at # of ciphers (excl. 00FF): "
-     debugme 'echo  "$test_ciphers" | tr ' ' '\n' | wc -l'
-     # Only with TLS 1.2 offered at the server side it is possible to hit this bug, in practise. Thus
+     # Only with TLS 1.2 offered at the server side it is possible to hit this bug, in practice. Thus
      # we assume if TLS 1.2 is not supported, the server has no cipher size limit bug. It still may,
      # theoretically, but in a regular check with testssl.sh we won't hit this limit with lower protocols.
-     # Upon calling this function we may know already whether TLS 1.2 is supported. If not we just
-     # check for it (and add it to the known protocols to be supported).
-     # Then we send 127 ciphers, check whether they work, and increase it by one and check again. The
-     # limit bug should occur @ 128 ciphers. To be sure we test until 129 ciphers.
+     # Upon calling this function we already know whether TLS 1.2 is supported. If TLS 1.2 is supported, we
+     # send 129 ciphers (including 00FF) and check whether it works.
 
      if [[ 1 -eq $(has_server_protocol 03) ]]; then
           SERVER_SIZE_LIMIT_BUG=false
-     elif [[ 0 -eq $(has_server_protocol 03) ]]; then
-          debugme echo "Sending 127 ciphers"
-          tls_sockets 03 "${test_ciphers}, 00,FF"
-          if [[ $? -eq 0 ]]; then
-               debugme echo "Sending 128 ciphers"
-               tls_sockets 03 "${test_ciphers}, ${overflow_cipher1}, 00,FF"
-               if [[ $? -ne 0 ]]; then
-                    SERVER_SIZE_LIMIT_BUG=true
+     else
+          if [[ "$DEBUG" -ge 1 ]]; then
+               nr_ciphers="$(tr ' ' '\n' <<< "${overflow_cipher}, $TLS12_CIPHER" | sed -e '/^$/d' | wc -l)"
+               if [[ $nr_ciphers -ne 129 ]]; then
+                    prln_warning "FIXME line $LINENO, ${FUNCNAME[0]} sending $nr_ciphers ciphers rather than 129."
                else
-                    debugme echo "Sending 129 ciphers"
-                    tls_sockets 03 "${test_ciphers}, ${overflow_cipher1}, ${overflow_cipher2}, 00,FF"
-                    if [[ $? -ne 0 ]]; then
-                         SERVER_SIZE_LIMIT_BUG=true
-                    else
-                         SERVER_SIZE_LIMIT_BUG=false
-                    fi
+                    debugme echo "${FUNCNAME[0]} sending $nr_ciphers ciphers"
                fi
-               debugme echo -e "\nSERVER_SIZE_LIMIT_BUG: $SERVER_SIZE_LIMIT_BUG"
-          else
-               pr_warning "FIXME line $LINENO, TLS 1.2 handshake in ${FUNCNAME[0]} failed"
-               return 1
           fi
-     elif [[ 2 -eq $(has_server_protocol 03) ]]; then
-          tls_sockets 03 "${test_ciphers}, 00,FF"
+          tls_sockets 03 "${overflow_cipher}, ${TLS12_CIPHER}"
           if [[ $? -eq 0 ]]; then
-               add_tls_offered tls1_2 yes
-               tls_sockets 03 "${test_ciphers}, ${overflow_cipher1}, 00,FF"
-               if [[ $? -ne 0 ]]; then
-                    SERVER_SIZE_LIMIT_BUG=true
-                else
-                    tls_sockets 03 "${test_ciphers}, ${overflow_cipher1}, ${overflow_cipher2}, 00,FF"
-                    if [[ $? -ne 0 ]]; then
-                         SERVER_SIZE_LIMIT_BUG=true
-                    else
-                         SERVER_SIZE_LIMIT_BUG=false
-                    fi
-               fi
-               debugme echo -e "\nSERVER_SIZE_LIMIT_BUG: $SERVER_SIZE_LIMIT_BUG"
+               SERVER_SIZE_LIMIT_BUG=false
           else
-               debugme echo -e "\nNo TLS 1.2 in ${FUNCNAME[0]} found"
+               SERVER_SIZE_LIMIT_BUG=true
           fi
+          debugme echo -e "\nSERVER_SIZE_LIMIT_BUG: $SERVER_SIZE_LIMIT_BUG"
      fi
      if "$SERVER_SIZE_LIMIT_BUG"; then
           out " Pre-test: "
@@ -18105,7 +21836,7 @@ run_mx_all_ips() {
           word="the only"
      fi
      mxport=${2:-25}
-     if [[ -n "$LOGFILE" ]]; then
+     if [[ -n "$LOGFILE" ]] || [[ -n "$PARENT_LOGFILE" ]]; then
           prepare_logging
      else
           prepare_logging "${FNAME_PREFIX}mx-$1"
@@ -18167,7 +21898,7 @@ create_mass_testing_cmdline() {
      local testing_type="$1"
      local cmd test_number
      local outfile_arg
-     local -i nr_cmds=0 index=0
+     local -i nr_cmds=0 i=0
      local skip_next=false
 
      MASS_TESTING_CMDLINE=()
@@ -18179,7 +21910,7 @@ create_mass_testing_cmdline() {
      # uses '=' for supplying a value we just skip next parameter (we don't use 'parse_opt_equal_sign' here)
      debugme echo "${CMDLINE_ARRAY[@]}"
      for cmd in "${CMDLINE_ARRAY[@]}"; do
-          "$skip_next" && skip_next=false && index+=1 && continue
+          "$skip_next" && skip_next=false && i+=1 && continue
           if [[ "$cmd" =~ --file ]] || [[ "$cmd" =~ -iL ]]; then
                # Don't include the "--file[=...] or -iL argument in the child's command
                # line, but do include "--warnings=batch".
@@ -18191,35 +21922,53 @@ create_mass_testing_cmdline() {
           elif [[ "$testing_type" == serial ]]; then
                if "$JSONHEADER" && ( [[ "$cmd" =~ --jsonfile-pretty ]] || [[ "$cmd" =~ -oJ ]] ); then
                     >"$TEMPDIR/jsonfile_child.json"
-                    MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile-pretty=$TEMPDIR/jsonfile_child.json"
+                    MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile-pretty-parent=$TEMPDIR/jsonfile_child.json"
                     # next is the jsonfile itself, as no '=' was supplied
                     [[ "$cmd" == --jsonfile-pretty ]] && skip_next=true
                     [[ "$cmd" == -oJ ]] && skip_next=true
                elif "$JSONHEADER" && ( [[ "$cmd" =~ --jsonfile ]] || [[ "$cmd" =~ -oj ]] ); then
                     >"$TEMPDIR/jsonfile_child.json"
-                    MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile=$TEMPDIR/jsonfile_child.json"
+                    MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile-parent=$TEMPDIR/jsonfile_child.json"
                     # next is the jsonfile itself, as no '=' was supplied
                     [[ "$cmd" == --jsonfile ]] && skip_next=true
                     [[ "$cmd" == -oj ]] && skip_next=true
+               elif "$CSVHEADER" && ( [[ "$cmd" =~ --csvfile ]] || [[ "$cmd" =~ -oC ]] ); then
+                    outfile_arg="$(parse_opt_equal_sign "$cmd" "${CMDLINE_ARRAY[i+1]}")"
+                    MASS_TESTING_CMDLINE[nr_cmds]="--csvfile-parent=$outfile_arg"
+                    # next is the filename itself, as no '=' was supplied
+                    [[ "$cmd" == --csvfile ]] && skip_next=true
+                    [[ "$cmd" == -oC ]] && skip_next=true
+               elif "$HTMLHEADER" && ( [[ "$cmd" =~ --htmlfile ]] || [[ "$cmd" =~ -oH ]] ); then
+                    outfile_arg="$(parse_opt_equal_sign "$cmd" "${CMDLINE_ARRAY[i+1]}")"
+                    MASS_TESTING_CMDLINE[nr_cmds]="--htmlfile-parent=$outfile_arg"
+                    # next is the filename itself, as no '=' was supplied
+                    [[ "$cmd" == --htmlfile ]] && skip_next=true
+                    [[ "$cmd" == -oH ]] && skip_next=true
+               elif [[ "$cmd" =~ --logfile ]] || [[ "$cmd" =~ -oL ]]; then
+                    outfile_arg="$(parse_opt_equal_sign "$cmd" "${CMDLINE_ARRAY[i+1]}")"
+                    MASS_TESTING_CMDLINE[nr_cmds]="--logfile-parent=$outfile_arg"
+                    # next is the filename itself, as no '=' was supplied
+                    [[ "$cmd" == --logfile ]] && skip_next=true
+                    [[ "$cmd" == -oL ]] && skip_next=true
                elif "$JSONHEADER" && ( [[ "$cmd" =~ --outFile ]] || [[ "$cmd" =~ -oA ]] ); then
-                    outfile_arg="$(parse_opt_equal_sign "$cmd" "${CMDLINE_ARRAY[index+1]}")"
+                    outfile_arg="$(parse_opt_equal_sign "$cmd" "${CMDLINE_ARRAY[i+1]}")"
                     >"$TEMPDIR/jsonfile_child.json"
-                    MASS_TESTING_CMDLINE[nr_cmds]="-oJ=$TEMPDIR/jsonfile_child.json"
+                    MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile-pretty-parent=$TEMPDIR/jsonfile_child.json"
                     nr_cmds+=1
-                    MASS_TESTING_CMDLINE[nr_cmds]="-oC=$outfile_arg.csv"
+                    MASS_TESTING_CMDLINE[nr_cmds]="--csvfile-parent=$outfile_arg.csv"
                     nr_cmds+=1
-                    MASS_TESTING_CMDLINE[nr_cmds]="-oH=$outfile_arg.html"
+                    MASS_TESTING_CMDLINE[nr_cmds]="--htmlfile-parent=$outfile_arg.html"
                     # next is the filename itself, as no '=' was supplied
                     [[ "$cmd" == --outFile ]] && skip_next=true
                     [[ "$cmd" == -oA ]] && skip_next=true
                elif "$JSONHEADER" && ( [[ "$cmd" =~ --outfile ]] || [[ "$cmd" =~ -oa ]] ); then
-                    outfile_arg="$(parse_opt_equal_sign "$cmd" "${CMDLINE_ARRAY[index+1]}")"
+                    outfile_arg="$(parse_opt_equal_sign "$cmd" "${CMDLINE_ARRAY[i+1]}")"
                     >"$TEMPDIR/jsonfile_child.json"
-                    MASS_TESTING_CMDLINE[nr_cmds]="-oj=$TEMPDIR/jsonfile_child.json"
+                    MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile-parent=$TEMPDIR/jsonfile_child.json"
                     nr_cmds+=1
-                    MASS_TESTING_CMDLINE[nr_cmds]="-oC=$outfile_arg.csv"
+                    MASS_TESTING_CMDLINE[nr_cmds]="--csvfile-parent=$outfile_arg.csv"
                     nr_cmds+=1
-                    MASS_TESTING_CMDLINE[nr_cmds]="-oH=$outfile_arg.html"
+                    MASS_TESTING_CMDLINE[nr_cmds]="--htmlfile-parent=$outfile_arg.html"
                     # next is the filename itself, as no '=' was supplied
                     [[ "$cmd" == --outfile ]] && skip_next=true
                     [[ "$cmd" == -oa ]] && skip_next=true
@@ -18234,44 +21983,54 @@ create_mass_testing_cmdline() {
                          # file name to each child process. If <jsonfile> is a
                          # directory, then just pass it on to the child processes.
                          if "$JSONHEADER"; then
-                              MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile=$TEMPDIR/jsonfile_${test_number}.json"
+                              MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile-parent=$TEMPDIR/jsonfile_${test_number}.json"
                               # next is the jsonfile itself, as no '=' was supplied
                               [[ "$cmd" == --jsonfile ]] && skip_next=true
+                              [[ "$cmd" == -oj ]] && skip_next=true
                          else
                               MASS_TESTING_CMDLINE[nr_cmds]="$cmd"
                          fi
                          ;;
                     --jsonfile-pretty|--jsonfile-pretty=*|-oJ|-oJ=*)
                          if "$JSONHEADER"; then
-                              MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile-pretty=$TEMPDIR/jsonfile_${test_number}.json"
+                              MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile-pretty-parent=$TEMPDIR/jsonfile_${test_number}.json"
                               [[ "$cmd" == --jsonfile-pretty ]] && skip_next=true
+                              [[ "$cmd" == -oJ ]] && skip_next=true
                          else
                               MASS_TESTING_CMDLINE[nr_cmds]="$cmd"
                          fi
                          ;;
                     --csvfile|--csvfile=*|-oC|-oC=*)
                          if "$CSVHEADER"; then
-                              MASS_TESTING_CMDLINE[nr_cmds]="--csvfile=$TEMPDIR/csvfile_${test_number}.csv"
+                              MASS_TESTING_CMDLINE[nr_cmds]="--csvfile-parent=$TEMPDIR/csvfile_${test_number}.csv"
                               [[ "$cmd" == --csvfile ]] && skip_next=true
+                              [[ "$cmd" == -oC ]] && skip_next=true
                          else
                               MASS_TESTING_CMDLINE[nr_cmds]="$cmd"
                          fi
                          ;;
                     --htmlfile|--htmlfile=*|-oH|-oH=*)
                          if "$HTMLHEADER"; then
-                              MASS_TESTING_CMDLINE[nr_cmds]="--htmlfile=$TEMPDIR/htmlfile_${test_number}.html"
+                              MASS_TESTING_CMDLINE[nr_cmds]="--htmlfile-parent=$TEMPDIR/htmlfile_${test_number}.html"
                               [[ "$cmd" == --htmlfile ]] && skip_next=true
+                              [[ "$cmd" == -oH ]] && skip_next=true
                          else
                               MASS_TESTING_CMDLINE[nr_cmds]="$cmd"
                          fi
                          ;;
+                    --logfile|--logfile=*|-oL|-oL=*)
+                         outfile_arg="$(parse_opt_equal_sign "$cmd" "${CMDLINE_ARRAY[i+1]}")"
+                         MASS_TESTING_CMDLINE[nr_cmds]="--logfile-parent=$outfile_arg"
+                         [[ "$cmd" == --logfile ]] && skip_next=true
+                         [[ "$cmd" == -oL ]] && skip_next=true
+                         ;;
                     --outfile|--outfile=*|-oa|-oa=*)
                          if "$JSONHEADER"; then
-                              MASS_TESTING_CMDLINE[nr_cmds]="-oj=$TEMPDIR/jsonfile_${test_number}.json"
+                              MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile-parent=$TEMPDIR/jsonfile_${test_number}.json"
                               nr_cmds+=1
-                              MASS_TESTING_CMDLINE[nr_cmds]="-oC=$TEMPDIR/csvfile_${test_number}.csv"
+                              MASS_TESTING_CMDLINE[nr_cmds]="--csvfile-parent=$TEMPDIR/csvfile_${test_number}.csv"
                               nr_cmds+=1
-                              MASS_TESTING_CMDLINE[nr_cmds]="-oH=$TEMPDIR/htmlfile_${test_number}.html"
+                              MASS_TESTING_CMDLINE[nr_cmds]="--htmlfile-parent=$TEMPDIR/htmlfile_${test_number}.html"
                               # next is the filename itself, as no '=' was supplied
                               [[ "$cmd" == --outfile ]] && skip_next=true
                               [[ "$cmd" == -oa ]] && skip_next=true
@@ -18281,11 +22040,11 @@ create_mass_testing_cmdline() {
                          ;;
                     --outFile|--outFile=*|-oA|-oA=*)
                          if "$JSONHEADER"; then
-                              MASS_TESTING_CMDLINE[nr_cmds]="-oJ=$TEMPDIR/jsonfile_${test_number}.json"
+                              MASS_TESTING_CMDLINE[nr_cmds]="--jsonfile-pretty-parent=$TEMPDIR/jsonfile_${test_number}.json"
                               nr_cmds+=1
-                              MASS_TESTING_CMDLINE[nr_cmds]="-oC=$TEMPDIR/csvfile_${test_number}.csv"
+                              MASS_TESTING_CMDLINE[nr_cmds]="--csvfile-parent=$TEMPDIR/csvfile_${test_number}.csv"
                               nr_cmds+=1
-                              MASS_TESTING_CMDLINE[nr_cmds]="-oH=$TEMPDIR/htmlfile_${test_number}.html"
+                              MASS_TESTING_CMDLINE[nr_cmds]="--htmlfile-parent=$TEMPDIR/htmlfile_${test_number}.html"
                               # next is the filename itself, as no '=' was supplied
                               [[ "$cmd" == --outFile ]] && skip_next=true
                               [[ "$cmd" == -oA ]] && skip_next=true
@@ -18299,7 +22058,7 @@ create_mass_testing_cmdline() {
                esac
                nr_cmds+=1
           fi
-          index+=1
+          i+=1
      done
 
      # Now add the command line arguments for the specific test to the command line.
@@ -18330,7 +22089,8 @@ ports2starttls() {
           389)      echo "-t ldap ";;
           3306)     echo "-t mysql " ;;
           5222)     echo "-t xmpp " ;;   # domain of jabber server maybe needed
-          5432)     echo "-t postgres" ;;
+          5432)     echo "-t postgres " ;;
+          4190)     echo "-t sieve " ;;
           563)                ;;  # NNTPS
           636)                ;;  # LDAP
           1443|8443|443|981)  ;;  # HTTPS
@@ -18348,14 +22108,14 @@ nmap_to_plain_file() {
      local target_fname=""
      local oneline=""
      local ip hostdontcare round_brackets ports_specs starttls
-     local tmp port host_spec protocol dontcare dontcare1
+     local tmp port host_spec protocol ssl_hint dontcare dontcare1
      #FIXME: IPv6 is missing here
 
      # Ok, since we are here we are sure to have an nmap file. To avoid questions we make sure it's the right format too
      if [[ "$(head -1 "$FNAME")" =~ ( -oG )(.*) ]] || [[ "$(head -1 "$FNAME")" =~ ( -oA )(.*) ]] ; then
           # yes, greppable
           if [[ $(grep -c Status "$FNAME") -ge 1 ]]; then
-               [[ $(grep -c  '\/open\/' "$FNAME")  -eq 0 ]] && \
+               [[ $(grep -c  '/open/' "$FNAME")  -eq 0 ]] && \
                     fatal "Nmap file $FNAME should contain at least one open port" $ERR_FNAMEPARSE
           else
                fatal "strange, nmap grepable misses \"Status\"" -1
@@ -18363,17 +22123,12 @@ nmap_to_plain_file() {
      else
           fatal "Nmap file $FNAME is not in grep(p)able format (-oG filename.g(n)map)" $ERR_FNAMEPARSE
      fi
-     # strip extension and create output file *.txt in same folder
+     # create ${FNAME%.*}.txt in $TEMPDIR
      target_fname="${FNAME%.*}.txt"
-     > "${target_fname}"
-     if [[ $? -ne 0 ]]; then
-          # try to just create ${FNAME%.*}.txt in the same dir as the gnmap file failed.
-          # backup is using one in $TEMPDIR
-          target_fname="${target_fname##*\/}"     # strip path (Unix)
-          target_fname="${target_fname##*\\}"     # strip path (Dos)
-          target_fname="$TEMPDIR/$target_fname"
-          > "${target_fname}" || fatal "Cannot create \"${target_fname}\"" $ERR_FCREATE
-     fi
+     target_fname="${target_fname##*\/}"     # strip path (Unix)
+     target_fname="${target_fname##*\\}"     # strip path (Dos)
+     target_fname="$TEMPDIR/$target_fname"
+     > "${target_fname}" || fatal "Cannot create \"${target_fname}\"" $ERR_FCREATE
 
      # Line x:   "Host: AAA.BBB.CCC.DDD (<FQDN>) Status: Up"
      # Line x+1: "Host: AAA.BBB.CCC.DDD (<FQDN>) Ports: 443/open/tcp//https///"
@@ -18394,11 +22149,15 @@ nmap_to_plain_file() {
           while read -r oneline; do
                # 25/open/tcp//smtp//<banner>/,
                [[ "$oneline" =~ '/open/tcp/' ]] || continue                # no open tcp for this port on this IP --> move on
-               IFS=/ read -r port dontcare protocol dontcare1 <<< "$oneline"
-               starttls="$(ports2starttls $port)"
-               [[ $? -eq 1 ]] && continue                                  # nmap got a port but we don't know how to speak to
-               [[ "$DEBUG" -ge 1 ]] && echo "${starttls}$host_spec:$port"
-               echo "${starttls}${host_spec}:${port}" >>"$target_fname"
+               IFS=/ read -r port dontcare protocol ssl_hint dontcare1 <<< "$oneline"
+               if [[ "$ssl_hint" =~ ^(ssl|https) ]] || [[ "$dontcare1" =~ ^(ssl|https) ]]; then
+                    echo "${host_spec}:${port}" >>"$target_fname"
+               else
+                    starttls="$(ports2starttls $port)"
+                    [[ $? -eq 1 ]] && continue                             # nmap got a port but we don't know how to speak to
+                    [[ "$DEBUG" -ge 1 ]] && echo "${starttls}$host_spec:$port"
+                    echo "${starttls}${host_spec}:${port}" >>"$target_fname"
+               fi
           done < <(tr ',' '\n' <<< "$ports_specs")
      done < "$FNAME"
      [[ "$DEBUG" -ge 1 ]] && echo
@@ -18623,6 +22382,245 @@ run_mass_testing_parallel() {
      return $?
 }
 
+run_rating() {
+     local pre_cap_grade final_grade
+     local -i c1_score c2_score c3_score c1_wscore c2_wscore c3_wscore final_score
+     local -i c1_worst c1_best
+     local -i c3_worst c3_best c3_worst_cb c3_best_cb
+     local old_ifs=$IFS sorted_reasons sorted_warnings
+     local -i reason_nr=0 warning_nr=0
+
+     outln "\n";
+     pr_headlineln " Rating (experimental) "
+     outln
+
+     [[ -n "$STARTTLS_PROTOCOL" ]] && set_grade_cap "T" "Encryption via STARTTLS is not mandatory (opportunistic)."
+
+     # Sort the reasons. This is just nicer to read in general
+     IFS=$'\n' sorted_reasons=($(sort -ru <<<"${GRADE_CAP_REASONS[*]}"))
+     IFS=$'\n' sorted_warnings=($(sort -u <<<"${GRADE_WARNINGS[*]}"))
+     IFS=$old_ifs
+     pr_bold " Rating specs"; out " (not complete)  "; outln "SSL Labs's 'SSL Server Rating Guide' (version 2009q from 2020-01-30)"
+     pr_bold " Specification documentation  "; pr_url "https://github.com/ssllabs/research/wiki/SSL-Server-Rating-Guide"
+     outln
+     fileout "rating_spec" "INFO" "SSL Labs's 'SSL Server Rating Guide' (version 2009q from 2020-01-30)"
+     fileout "rating_doc" "INFO" "https://github.com/ssllabs/research/wiki/SSL-Server-Rating-Guide"
+
+     # No point in calculating a score, if a cap of "F", "T", or "M" has been set
+     if [[ $GRADE_CAP == F || $GRADE_CAP == T || $GRADE_CAP == M ]]; then
+          pr_bold " Protocol Support"; out " (weighted)  "; outln "0 (0)"
+          pr_bold " Key Exchange"; out "     (weighted)  "; outln "0 (0)"
+          pr_bold " Cipher Strength"; out "  (weighted)  "; outln "0 (0)"
+          pr_bold " Final Score                  "; outln "0"
+          pr_bold " Overall Grade                "; prln_svrty_critical "$GRADE_CAP"
+
+          fileout "protocol_support_score" "INFO" "0"
+          fileout "protocol_support_score_weighted" "INFO" "0"
+          fileout "key_exchange_score" "INFO" "0"
+          fileout "key_exchange_score_weighted" "INFO" "0"
+          fileout "cipher_strength_score" "INFO" "0"
+          fileout "cipher_strength_score_weighted" "INFO" "0"
+          fileout "final_score" "INFO" "0"
+          fileout "overall_grade" "CRITICAL" "$GRADE_CAP"
+     else
+          ## Category 1
+          # get best score, by searching for the best protocol, until a hit occurs
+          if [[ $(has_server_protocol "tls1_3") -eq 0 || $(has_server_protocol "tls1_2") -eq 0 ]]; then
+               c1_best=100
+          elif [[ $(has_server_protocol "tls1_1") -eq 0 ]]; then
+               c1_best=95
+          elif [[ $(has_server_protocol "tls1") -eq 0 ]]; then
+               c1_best=90
+          elif [[ $(has_server_protocol "ssl3") -eq 0 ]]; then
+               c1_best=80
+               # If the best protocol offered is SSLv3, cap to F. It is easier done here
+               set_grade_cap "F" "SSLv3 is the best protocol offered"
+          else # SSLv2 gives 0 points
+               c1_best=0
+          fi
+
+          # get worst score, by searching for the worst protocol, until a hit occurs
+          if [[ $(has_server_protocol "ssl2") -eq 0 ]]; then
+               c1_worst=0
+          elif [[ $(has_server_protocol "ssl3") -eq 0 ]]; then
+               c1_worst=80
+          elif [[ $(has_server_protocol "tls1") -eq 0 ]]; then
+               c1_worst=90
+          elif [[ $(has_server_protocol "tls1_1") -eq 0 ]]; then
+               c1_worst=95
+          else # TLS1.2 and TLS1.3 both give 100 points
+               c1_worst=100
+          fi
+
+          c1_score=$(( (c1_best+c1_worst)/2 )) # Gets the category score
+          c1_wscore=$((c1_score*30/100)) # Gets the weighted score for category (30%)
+
+          pr_bold " Protocol Support "; out "(weighted)  "; outln "$c1_score ($c1_wscore)"
+          fileout "protocol_support_score" "INFO" "$c1_score"
+          fileout "protocol_support_score_weighted" "INFO" "$c1_wscore"
+
+          ## Category 2
+          if [[ $KEY_EXCH_SCORE -le 40 ]]; then
+               set_grade_cap "F" "Using an insecure public key and/or ephemeral key"
+          elif [[ $KEY_EXCH_SCORE -le 80 ]]; then
+               set_grade_cap "B" "Using a weak public key and/or ephemeral key"
+          fi
+
+          c2_score=$KEY_EXCH_SCORE
+          c2_wscore=$((c2_score*30/100))
+
+          pr_bold " Key Exchange "; out "    (weighted)  "; outln "$c2_score ($c2_wscore)"
+          fileout "key_exchange_score" "INFO" "$c2_score"
+          fileout "key_exchange_score_weighted" "INFO" "$c2_wscore"
+
+
+          ## Category 3
+          # Get the cipher bits sizes for the best cipher, and the worst cipher
+          c3_best_cb=$CIPH_STR_BEST
+          c3_worst_cb=$CIPH_STR_WORST
+
+          # Determine score for the best key
+          if [[ $c3_best_cb -ge 256 ]]; then
+               c3_best=100
+          elif [[ $c3_best_cb -ge 128 ]]; then
+               c3_best=80
+          elif [[ $c3_best_cb -ge 0 ]]; then
+               c3_best=20
+          else
+               c3_best=0
+          fi
+
+          # Determine the score for the worst key
+          if [[ $c3_worst_cb -gt 0 && $c3_worst_cb -lt 128 ]]; then
+               c3_worst=20
+          elif [[ $c3_worst_cb -ge 128 && $c3_worst_cb -lt 256 ]]; then
+               c3_worst=80
+          elif [[ $c3_worst_cb -ge 256 ]]; then
+               c3_worst=100
+          else
+               c3_worst=0
+          fi
+          c3_score=$(( (c3_best+c3_worst)/2 )) # Gets the category score
+          c3_wscore=$((c3_score*40/100))       # Gets the weighted score for category (40%)
+
+          pr_bold " Cipher Strength "; out " (weighted)  "; outln "$c3_score ($c3_wscore)"
+          fileout "cipher_strength_score" "INFO" "$c3_score"
+          fileout "cipher_strength_score_weighted" "INFO" "$c3_wscore"
+
+          ## Calculate final score and grade
+          # If any category resulted in a score of 0, push final grade to 0
+          if [[ $c1_score -eq 0 || $c2_score -eq 0 || $c3_score -eq 0 ]]; then
+               final_score=0
+          else
+               final_score=$((c1_wscore+c2_wscore+c3_wscore))
+          fi
+
+          pr_bold " Final Score                  "; outln $final_score
+          fileout "final_score" "INFO" "$final_score"
+
+          # Calculate the pre-cap grade
+          if [[ $final_score -ge 80 ]]; then
+               pre_cap_grade="A"
+          elif [[ $final_score -ge 65 ]]; then
+               pre_cap_grade="B"
+          elif [[ $final_score -ge 50 ]]; then
+               pre_cap_grade="C"
+          elif [[ $final_score -ge 35 ]]; then
+               pre_cap_grade="D"
+          elif [[ $final_score -ge 20 ]]; then
+               pre_cap_grade="E"
+          elif [[ $final_score -lt 20 ]]; then
+               pre_cap_grade="F"
+          fi
+
+          # If the calculated grade is bigger than the grade cap, then set grade as the cap
+          if [[ -n "$GRADE_CAP" && ! $pre_cap_grade > $GRADE_CAP ]]; then
+               final_grade=$GRADE_CAP
+          # For "exceptional" config, an "A+" is awarded, or "A-" for slightly less "exceptional"
+          elif [[ -z "$GRADE_CAP" && $pre_cap_grade == A ]]; then
+               if [[ ${#sorted_warnings[@]} -eq 0 ]]; then
+                    final_grade="A+"
+               else
+                    final_grade="A-"
+               fi
+          else
+               final_grade=$pre_cap_grade
+          fi
+
+          pr_bold " Overall Grade                "
+          case "$final_grade" in
+               A*) prln_svrty_best $final_grade
+                   fileout "overall_grade" "OK" "$final_grade"
+                    ;;
+               B) prln_svrty_medium $final_grade
+                  fileout "overall_grade" "MEDIUM" "$final_grade"
+                    ;;
+               C) prln_svrty_medium $final_grade
+                  fileout "overall_grade" "MEDIUM" "$final_grade"
+                    ;;
+               D) prln_svrty_high $final_grade
+                  fileout "overall_grade" "HIGH" "$final_grade"
+                    ;;
+               E) prln_svrty_high $final_grade
+                  fileout "overall_grade" "HIGH" "$final_grade"
+                    ;;
+               F) prln_svrty_critical $final_grade
+                  fileout "overall_grade" "CRITICAL" "$final_grade"
+                    ;;
+          esac
+     fi
+
+     # Pretty print - again, it's just nicer to read
+     for reason in "${sorted_reasons[@]}"; do
+          if [[ $reason_nr -eq 0 ]]; then
+               pr_bold " Grade cap reasons            "; outln "$reason"
+          else
+               outln "                              $reason"
+          fi
+          ((reason_nr++))
+          fileout "grade_cap_reason_${reason_nr}" "INFO" "$reason"
+     done
+
+     for warning in "${sorted_warnings[@]}"; do
+          if [[ $warning_nr -eq 0 ]]; then
+               pr_bold " Grade warning                "; prln_svrty_medium "$warning"
+          else
+               prln_svrty_medium "                              $warning"
+          fi
+          ((warning_nr++))
+          fileout "grade_cap_warning_${warning_nr}" "INFO" "$warning"
+     done
+
+     return 0
+}
+
+# Checks whether rating can be done or not.
+# Rating needs a mix of certificate and vulnerabilities checks, in order to give out proper grades.
+# This function disables rating, if not all required checks are enabled
+# Returns "0" if rating is enabled, and "1" if rating is disabled
+set_rating_state() {
+     local gbl
+     local -i nr_enabled=0
+
+     # All of these should be enabled
+     for gbl in do_protocols do_cipherlists do_fs do_server_defaults do_header \
+          do_heartbleed do_ccs_injection do_ticketbleed do_robot do_renego \
+          do_crime do_ssl_poodle do_tls_fallback_scsv do_drown do_beast \
+          do_rc4 do_logjam; do
+          "${!gbl}" && ((nr_enabled++))
+     done
+
+     # ... at least one of these has to be set
+     [[ "$do_allciphers" || "$do_cipher_per_proto" ]] && ((nr_enabled++))
+
+     # ... else we can't do rating
+     if [[ $nr_enabled -lt 18 ]]; then
+          do_rating=false
+          return 1
+     fi
+
+     return 0
+}
 
 
 # This initializes boolean global do_* variables. They keep track of what to do
@@ -18650,9 +22648,11 @@ initialize_globals() {
      do_pretty_json=false
      do_csv=false
      do_html=false
-     do_pfs=false
+     do_fs=false
      do_protocols=false
      do_rc4=false
+     do_starttls_injection=false
+     do_winshock=false
      do_grease=false
      do_renego=false
      do_cipherlists=false
@@ -18665,13 +22665,14 @@ initialize_globals() {
      do_tls_sockets=false
      do_client_simulation=false
      do_display_only=false
-     do_starttls=true
+     do_starttls=false
+     do_rating=false
 }
 
 
 # Set default scanning options for the boolean global do_* variables.
 set_scanning_defaults() {
-     do_allciphers=true
+     do_allciphers=false
      do_vulnerabilities=true
      do_beast=true
      do_lucky13=true
@@ -18687,8 +22688,10 @@ set_scanning_defaults() {
      do_ssl_poodle=true
      do_sweet32=true
      do_header=true
-     do_pfs=true
+     do_fs=true
      do_rc4=true
+     do_starttls_injection=true
+     do_winshock=true
      do_protocols=true
      do_renego=true
      do_cipherlists=true
@@ -18697,22 +22700,23 @@ set_scanning_defaults() {
      do_tls_fallback_scsv=true
      do_client_simulation=true
      if "$OFFENSIVE"; then
-          VULN_COUNT=16
+          VULN_COUNT=17
      else
-          VULN_COUNT=12
+          VULN_COUNT=13
      fi
+     do_rating=true
 }
 
 # returns number of $do variables set = number of run_funcs() to perform
-query_globals() {
+count_do_variables() {
      local gbl
-     local true_nr=0
+     local -i true_nr=0
 
      for gbl in do_allciphers do_vulnerabilities do_beast do_lucky13 do_breach do_ccs_injection do_ticketbleed do_cipher_per_proto do_crime \
-               do_freak do_logjam do_drown do_header do_heartbleed do_mx_all_ips do_pfs do_protocols do_rc4 do_grease do_robot do_renego \
-               do_cipherlists do_server_defaults do_server_preference do_ssl_poodle do_tls_fallback_scsv \
-               do_sweet32 do_client_simulation do_cipher_match do_tls_sockets do_mass_testing do_display_only; do
-                    [[ "${!gbl}" == true ]] && let true_nr++
+               do_freak do_logjam do_drown do_header do_heartbleed do_mx_all_ips do_fs do_protocols do_rc4 do_starttls_injection do_grease do_robot do_renego \
+               do_cipherlists do_server_defaults do_server_preference do_ssl_poodle do_tls_fallback_scsv do_winshock \
+               do_sweet32 do_client_simulation do_cipher_match do_tls_sockets do_mass_testing do_display_only do_rating; do
+                    "${!gbl}" && ((true_nr++))
      done
      return $true_nr
 }
@@ -18722,13 +22726,31 @@ debug_globals() {
      local gbl
 
      for gbl in do_allciphers do_vulnerabilities do_beast do_lucky13 do_breach do_ccs_injection do_ticketbleed do_cipher_per_proto do_crime \
-               do_freak do_logjam do_drown do_header do_heartbleed do_mx_all_ips do_pfs do_protocols do_rc4 do_grease do_robot do_renego \
-               do_cipherlists do_server_defaults do_server_preference do_ssl_poodle do_tls_fallback_scsv \
-               do_sweet32 do_client_simulation do_cipher_match do_tls_sockets do_mass_testing do_display_only; do
+               do_freak do_logjam do_drown do_header do_heartbleed do_mx_all_ips do_fs do_protocols do_rc4 do_starttls_injection do_grease do_robot do_renego \
+               do_cipherlists do_server_defaults do_server_preference do_ssl_poodle do_tls_fallback_scsv do_winshock \
+               do_sweet32 do_client_simulation do_cipher_match do_tls_sockets do_mass_testing do_display_only do_rating; do
           printf "%-22s = %s\n" $gbl "${!gbl}"
      done
+     # ${!var} is an indirect expansion, see https://www.gnu.org/software/bash/manual/html_node/Shell-Parameter-Expansion.html
+     # Example: https://stackoverflow.com/questions/8515411/what-is-indirect-expansion-what-does-var-mean#8515492
      printf "%-22s : %s\n" URI: "$URI"
 }
+
+
+# This is determining the tests which should be skipped by --no-* or --disable-* a a cmdline arg.
+# It achieves that by setting the do_<variables> according to the global array $SKIP_TESTS
+#
+set_skip_tests() {
+     local t
+
+     for t in ${SKIP_TESTS[@]} ; do
+          t="do_${t}"
+          # declare won't do it here --> local scope
+          eval "$t"=false
+          debugme printf '%s\n' "set $t: ${!t}"
+     done
+}
+
 
 
 # arg1: either switch+value (=) or switch
@@ -18744,7 +22766,7 @@ parse_opt_equal_sign() {
 }
 
 # Create the command line string for printing purposes
-# See http://stackoverflow.com/questions/10835933/preserve-quotes-in-bash-arguments
+# See https://stackoverflow.com/questions/10835933/preserve-quotes-in-bash-arguments
 create_cmd_line_string() {
      local arg
      local -a allargs=()
@@ -18778,6 +22800,11 @@ check_base_requirements() {
                fatal "${binary} is from busybox. Please install a regular binary" $ERR_RESOURCE
           fi
      done
+     # testssl.sh works without xxd, but using xxd is faster. The following checks that the xxd
+     # binary is available and (just to be safe) that "xxd -r -p" works as expected.
+     if type -p xxd &> /dev/null && [[ "$(xxd -r -p <<< "30313233343536373839" 2>/dev/null)" == 0123456789 ]]; then
+          HAS_XXD=true
+     fi
 }
 
 parse_cmd_line() {
@@ -18786,25 +22813,30 @@ parse_cmd_line() {
      local -i subret=0
 
      CMDLINE="$(create_cmd_line_string "${CMDLINE_ARRAY[@]}")"
+     CMDLINE_PARSED=false
 
-     # Show usage if no options were specified
-     [[ -z "$1" ]] && help 0
-     # Set defaults if only an URI was specified, maybe ToDo: use "="-option, then: ${i#*=} i.e. substring removal
-     [[ "$#" -eq 1 ]] && set_scanning_defaults
+     case $1 in
+          --help|"")
+               help 0
+               ;;
+          -b|--banner|-v|--version)
+               maketempf
+               get_install_dir
+               find_openssl_binary
+               prepare_debug
+               mybanner
+               exit $ALLOK
+               ;;
+     esac
+
+     # set all do_* globals to false
+     initialize_globals
 
      while [[ $# -gt 0 ]]; do
           case $1 in
-               --help)
-                    help 0
+               --help|-b|--banner|-v|--version)
+                    fatal "$1 is a standalone command line option" $ERR_CMDLINE
                     ;;
-               -b|--banner|-v|--version)
-                    maketempf
-                    get_install_dir
-                    find_openssl_binary
-                    prepare_debug
-                    mybanner
-                    exit $ALLOK
-                   ;;
                --mx)
                     do_mx_all_ips=true
                     PORT=25
@@ -18855,8 +22887,8 @@ parse_cmd_line() {
                     STARTTLS_PROTOCOL="$(parse_opt_equal_sign "$1" "$2")"
                     [[ $? -eq 0 ]] && shift
                     case $STARTTLS_PROTOCOL in
-                         ftp|smtp|lmtp|pop3|imap|xmpp|telnet|ldap|irc|nntp|postgres|mysql) ;;
-                         ftps|smtps|lmtps|pop3s|imaps|xmpps|telnets|ldaps|ircs|nntps) ;;
+                         ftp|smtp|lmtp|pop3|imap|sieve|xmpp|xmpp-server|telnet|ldap|irc|nntp|postgres|mysql) ;;
+                         ftps|smtps|lmtps|pop3s|imaps|xmpps|telnets|ldaps|ircs|nntps|mysqls) ;;
                          *)   tmln_magenta "\nunrecognized STARTTLS protocol \"$1\", see help" 1>&2
                               help 1 ;;
                     esac
@@ -18874,7 +22906,8 @@ parse_cmd_line() {
                -p|--protocols)
                     do_protocols=true
                     ;;
-               -s|--std|--standard)
+               -s|--std|--standard|--categories)
+                    # --standard is deprecated
                     do_cipherlists=true
                     ;;
                -S|--server[-_]defaults)
@@ -18890,6 +22923,13 @@ parse_cmd_line() {
                     do_client_simulation=true
                     ;;
                -U|--vulnerable|--vulnerabilities)
+                    # Lookahead function: If the order of the cmdline is '-U --ids-friendly'
+                    # then we need to make sure we catch --ids-friendly. Normally we do not,
+                    # see #1717.  The following statement makes sure. In the do-while + case-esac
+                    # loop it will be execute again, but it does not hurt
+                    if [[ "${CMDLINE_ARRAY[@]}" =~ --ids-friendly ]]; then
+                         OFFENSIVE=false
+                    fi
                     do_vulnerabilities=true
                     do_heartbleed="$OFFENSIVE"
                     do_ccs_injection="$OFFENSIVE"
@@ -18906,11 +22946,13 @@ parse_cmd_line() {
                     do_logjam=true
                     do_beast=true
                     do_lucky13=true
+                    do_winshock=true
                     do_rc4=true
+                    do_starttls_injection=true
                     if "$OFFENSIVE"; then
-                         VULN_COUNT=16
+                         VULN_COUNT=17
                     else
-                         VULN_COUNT=12
+                         VULN_COUNT=13
                     fi
                     ;;
                --ids-friendly)
@@ -18918,96 +22960,108 @@ parse_cmd_line() {
                     ;;
                -H|--heartbleed)
                     do_heartbleed=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -I|--ccs|--ccs[-_]injection)
                     do_ccs_injection=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -T|--ticketbleed)
                     do_ticketbleed=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
-               -BB|--robot)
+               -BB|--BB|--robot)
                     do_robot=true
                     ;;
                -R|--renegotiation)
                     do_renego=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -C|--compression|--crime)
                     do_crime=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -B|--breach)
                     do_breach=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -O|--poodle)
                     do_ssl_poodle=true
                     do_tls_fallback_scsv=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -Z|--tls[_-]fallback|tls[_-]fallback[_-]scs)
                     do_tls_fallback_scsv=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -W|--sweet32)
                     do_sweet32=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -F|--freak)
                     do_freak=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -D|--drown)
                     do_drown=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -J|--logjam)
                     do_logjam=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -A|--beast)
                     do_beast=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
                -L|--lucky13)
                     do_lucky13=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
+                    ;;
+               -WS|--winshock)
+                    do_winshock=true
+                    ((VULN_COUNT++))
                     ;;
                -4|--rc4|--appelbaum)
                     do_rc4=true
-                    let "VULN_COUNT++"
+                    ((VULN_COUNT++))
                     ;;
-               -f|--pfs|--fs|--nsa)
-                    do_pfs=true
+               -SI|--SI|--starttls[-_]injection)
+                    do_starttls_injection=true
+                    ((VULN_COUNT++))
+                    ;;
+               -f|--fs|--nsa|--forward-secrecy)
+                    do_fs=true
                     ;;
                -g|--grease)
                     do_grease=true
                     ;;
+               --disable-rating|--no-rating)
+                    SKIP_TESTS+=("rating")
+                    # TODO: a generic thing would be --disable-* / --no-* ,
+                    # catch $1 and add it to the array ( #1502 )
+                    ;;
                -9|--full)
                     set_scanning_defaults
                     do_allciphers=false
-                    do_cipher_per_proto=true
                     do_grease=true
                     ;;
                --add-ca|--add-CA|--add-ca=*|--add-CA=*)
-                    ADDITIONAL_CA_FILES="$(parse_opt_equal_sign "$1" "$2")"
+                    ADDTL_CA_FILES="$(parse_opt_equal_sign "$1" "$2")"
                     [[ $? -eq 0 ]] && shift
                     ;;
-               --devel) ### this development feature will soon disappear
+               --devel) echo -e "\nthis is a development feature and may disappear at any time"
                     # arg1: SSL/TLS protocol (SSLv2=22)
                     # arg2: list of cipher suites / hostname/ip
                     # arg3: hostname/ip
-                    HEX_CIPHER="$TLS12_CIPHER"
-                    # DEBUG=3  ./testssl.sh --devel 04 "13,02, 13,01" google.com                               --> TLS 1.3
-                    # DEBUG=3  ./testssl.sh --devel 03 "cc, 13, c0, 13" google.de                              --> TLS 1.2, old CHACHA/POLY
-                    # DEBUG=3  ./testssl.sh --devel 03 "cc,a8, cc,a9, cc,aa, cc,ab, cc,ac" blog.cloudflare.com -->          new CHACHA/POLY
-                    # DEBUG=3  ./testssl.sh --devel 01 yandex.ru                     --> TLS 1.0
+                    # DEBUG=3  ./testssl.sh --devel 04 "13,02, 13,01" google.com                                --> TLS 1.3
+                    # DEBUG=3  ./testssl.sh --devel 03 "cc, 13, c0, 13" google.de                               --> TLS 1.2, old CHACHA/POLY
+                    # DEBUG=3  ./testssl.sh --devel 03 "cc,a8, cc,a9, cc,aa, cc,ab, cc,ac" blog.cloudflare.com  -->          new CHACHA/POLY
+                    # DEBUG=3  ./testssl.sh --devel 01 yandex.ru                                                --> TLS 1.0
                     # DEBUG=3  ./testssl.sh --devel 00 <host which supports SSLv3>
                     # DEBUG=3  ./testssl.sh --devel 22 <host which still supports SSLv2>
-                    TLS_LOW_BYTE="$2";
+                    HEX_CIPHER="$TLS12_CIPHER"
+                    TLS_LOW_BYTE="$2"
                     if [[ $# -eq 4 ]]; then  # protocol AND ciphers specified
                          HEX_CIPHER="$3"
                          shift
@@ -19025,6 +23079,10 @@ parse_cmd_line() {
                --sneaky)
                     SNEAKY=true
                     ;;
+               --user-agent|--user-agent=*)
+                    UA_STD="$(parse_opt_equal_sign "$1" "$2")"
+                    [[ $? -eq 0 ]] && shift
+                    ;;
                -q|--quiet)
                     QUIET=true
                     ;;
@@ -19033,7 +23091,7 @@ parse_cmd_line() {
                     FNAME="$(parse_opt_equal_sign "$1" "$2")"
                     [[ $? -eq 0 ]] && shift
                     IKNOW_FNAME=true
-                    WARNINGS=batch           # set this implicitly!
+                    WARNINGS="batch"           # set this implicitly!
                     do_mass_testing=true
                     ;;
                --mode|--mode=*)
@@ -19041,7 +23099,7 @@ parse_cmd_line() {
                     [[ $? -eq 0 ]] && shift
                     case "$MASS_TESTING_MODE" in
                          serial|parallel) ;;
-                         *)   tmln_magenta "\nmass testing mode can be either \"serial\" or \"parallel\""
+                         *)   tmln_magenta "\nmass testing mode can be either \"serial\" or \"parallel\"" 1>&2
                               help 1
                     esac
                     ;;
@@ -19056,7 +23114,7 @@ parse_cmd_line() {
                     [[ $? -eq 0 ]] && shift
                     case "$WARNINGS" in
                          batch|off) ;;
-                         *)   tmln_magenta "\nwarnings can be either \"batch\", or \"off\""
+                         *)   tmln_magenta "\nwarnings can be either \"batch\", or \"off\"" 1>&2
                               help 1
                     esac
                     ;;
@@ -19074,7 +23132,7 @@ parse_cmd_line() {
                     [[ $? -eq 0 ]] && shift
                     case $DEBUG in
                          [0-6]) ;;
-                         *)   tmln_magenta_term "\nunrecognized debug value \"$1\", must be between 0..6" 1>&2
+                         *)   tmln_magenta "\nunrecognized debug value \"$1\", must be between 0..6" 1>&2
                               help 1
                     esac
                     ;;
@@ -19102,9 +23160,21 @@ parse_cmd_line() {
                     [[ $? -eq 0 ]] && shift
                     do_logging=true
                     ;;
+               --logfile-parent|--logfile-parent=*)
+                    if ! "$CHILD_MASS_TESTING"; then
+                         tmln_warning "$0: unrecognized option \"$1\"" 1>&2;
+                         help 1
+                    fi
+                    PARENT_LOGFILE="$(parse_opt_equal_sign "$1" "$2")"
+                    [[ $? -eq 0 ]] && shift
+                    do_logging=true
+                    ;;
                --json)
                     "$do_pretty_json" && fatal "flat and pretty JSON output are mutually exclusive" $ERR_CMDLINE
                     "$do_json" && fatal "--json and --jsonfile are mutually exclusive" $ERR_CMDLINE
+                    if [[ "$2" =~ \.(json|JSON)$ ]]; then
+                         fatal "No file name allowed after \"--json\" (use \"--jsonfile\" instead)" $ERR_CMDLINE
+                    fi
                     do_json=true
                     ;;   # DEFINITION of JSONFILE is not arg specified: automagically in parse_hn_port()
                     # following does the same but additionally we can specify a log location
@@ -19115,15 +23185,36 @@ parse_cmd_line() {
                     [[ $? -eq 0 ]] && shift
                     do_json=true
                     ;;
+               --jsonfile-parent|--jsonfile-parent=*)
+                    if ! "$CHILD_MASS_TESTING"; then
+                         tmln_warning "$0: unrecognized option \"$1\"" 1>&2;
+                         help 1
+                    fi
+                    PARENT_JSONFILE="$(parse_opt_equal_sign "$1" "$2")"
+                    [[ $? -eq 0 ]] && shift
+                    do_json=true
+                    ;;
                --json-pretty)
                     "$do_json" && fatal "flat and pretty JSON output are mutually exclusive" $ERR_CMDLINE
                     "$do_pretty_json" && fatal "--json-pretty and --jsonfile-pretty are mutually exclusive" $ERR_CMDLINE
+                    if [[ "$2" =~ \.(json|JSON)$ ]]; then
+                         fatal "No file name allowed after \"--json\" (use \"--jsonfile-pretty\" instead)" $ERR_CMDLINE
+                    fi
                     do_pretty_json=true
                     ;;
                --jsonfile-pretty|--jsonfile-pretty=*|-oJ|-oJ=*)
                     "$do_json" && fatal "flat and pretty JSON output are mutually exclusive" $ERR_CMDLINE
                     "$do_pretty_json" && fatal "--json-pretty and --jsonfile-pretty are mutually exclusive" $ERR_CMDLINE
                     JSONFILE="$(parse_opt_equal_sign "$1" "$2")"
+                    [[ $? -eq 0 ]] && shift
+                    do_pretty_json=true
+                    ;;
+               --jsonfile-pretty-parent|--jsonfile-pretty-parent=*)
+                    if ! "$CHILD_MASS_TESTING"; then
+                         tmln_warning "$0: unrecognized option \"$1\"" 1>&2;
+                         help 1
+                    fi
+                    PARENT_JSONFILE="$(parse_opt_equal_sign "$1" "$2")"
                     [[ $? -eq 0 ]] && shift
                     do_pretty_json=true
                     ;;
@@ -19136,6 +23227,9 @@ parse_cmd_line() {
                     ;;
                --csv)
                     "$do_csv" && fatal "two --csv* arguments" $ERR_CMDLINE
+                    if [[ "$2" =~ \.(csv|CSV)$ ]]; then
+                         fatal "No file name allowed after \"--csv\" (use \"--csvfile\" instead)" $ERR_CMDLINE
+                    fi
                     do_csv=true
                     ;;   # DEFINITION of CSVFILE is not arg specified: automagically in parse_hn_port()
                     # following does the same but additionally we can specify a log location
@@ -19145,14 +23239,35 @@ parse_cmd_line() {
                     [[ $? -eq 0 ]] && shift
                     do_csv=true
                     ;;
+               --csvfile-parent|--csvfile-parent=*)
+                    if ! "$CHILD_MASS_TESTING"; then
+                         tmln_warning "$0: unrecognized option \"$1\"" 1>&2;
+                         help 1
+                    fi
+                    PARENT_CSVFILE="$(parse_opt_equal_sign "$1" "$2")"
+                    [[ $? -eq 0 ]] && shift
+                    do_csv=true
+                    ;;
                --html)
                     "$do_html" && fatal "two --html* arguments" $ERR_CMDLINE
+                    if [[ "$2" =~ \.(htm|html|HTM|HTML)$ ]]; then
+                         fatal "No file name allowed after \"--html\" (use \"--htmlfile\" instead)" $ERR_CMDLINE
+                    fi
                     do_html=true
                     ;;  # DEFINITION of HTMLFILE is not arg specified: automagically in parse_hn_port()
                     # following does the same but additionally we can specify a file location
                --htmlfile|--htmlfile=*|-oH|-oH=*)
                     "$do_html" && fatal "two --html* arguments" $ERR_CMDLINE
                     HTMLFILE="$(parse_opt_equal_sign "$1" "$2")"
+                    [[ $? -eq 0 ]] && shift
+                    do_html=true
+                    ;;
+               --htmlfile-parent|--htmlfile-parent=*)
+                    if ! "$CHILD_MASS_TESTING"; then
+                         tmln_warning "$0: unrecognized option \"$1\"" 1>&2;
+                         help 1
+                    fi
+                    PARENT_HTMLFILE="$(parse_opt_equal_sign "$1" "$2")"
                     [[ $? -eq 0 ]] && shift
                     do_html=true
                     ;;
@@ -19200,7 +23315,12 @@ parse_cmd_line() {
                     do_csv=true
                     do_logging=true
                     ;;
+               --overwrite)
+                    "$APPEND" && fatal "using --overwrite and --append is contradicting" $ERR_CMDLINE
+                    OVERWRITE=true
+                    ;;
                --append)
+                    "$OVERWRITE" && fatal "using --append and --overwrite is contradicting" $ERR_CMDLINE
                     APPEND=true
                     ;;
                --outprefix)
@@ -19223,6 +23343,10 @@ parse_cmd_line() {
                     OPENSSL_TIMEOUT="$(parse_opt_equal_sign "$1" "$2")"
                     [[ $? -eq 0 ]] && shift
                     ;;
+               --connect-timeout|--connect-timeout=*)
+                    CONNECT_TIMEOUT="$(parse_opt_equal_sign "$1" "$2")"
+                    [[ $? -eq 0 ]] && shift
+                    ;;
                --mapping|--mapping=*)
                     cipher_mapping="$(parse_opt_equal_sign "$1" "$2")"
                     [[ $? -eq 0 ]] && shift
@@ -19231,7 +23355,7 @@ parse_cmd_line() {
                          no-rfc|no-iana) DISPLAY_CIPHERNAMES="openssl-only" ;;
                          openssl) DISPLAY_CIPHERNAMES="openssl" ;;
                          rfc|iana) DISPLAY_CIPHERNAMES="rfc" ;;
-                         *)   tmln_warning "\nmapping can only be \"no-openssl\", \"no-iana\"(\"no-rfc\"), \"openssl\" or \"iana\"(\"rfc\")"
+                         *)   tmln_warning "\nmapping can only be \"no-openssl\", \"no-iana\"(\"no-rfc\"), \"openssl\" or \"iana\"(\"rfc\")" 1>&2;
                               help 1 ;;
                     esac
                     ;;
@@ -19252,10 +23376,19 @@ parse_cmd_line() {
                --ssl_native|--ssl-native)
                     SSL_NATIVE=true
                     ;;
+               --basicauth|--basicauth=*)
+                    BASICAUTH="$(parse_opt_equal_sign "$1" "$2")"
+                    [[ $? -eq 0 ]] && shift
+                    ;;
+               --reqheader|--reqheader=*)
+                    REQHEADER="$(parse_opt_equal_sign "$1" "$2")"
+                    [[ $? -eq 0 ]] && shift
+                    REQHEADERS+=("$REQHEADER")
+                    ;;
                (--) shift
                     break
                     ;;
-               (-*) tmln_warning "0: unrecognized option \"$1\"" 1>&2;
+               (-*) tmln_warning "$0: unrecognized option \"$1\"" 1>&2;
                     help 1
                     ;;
                (*)  break
@@ -19268,24 +23401,40 @@ parse_cmd_line() {
      if [[ -z "$1" ]] && [[ -z "$FNAME" ]] && ! "$do_display_only"; then
           fatal "URI missing" $ERR_CMDLINE
      else
-     # left off here is the URI
+     # What is left here should be the URI.
           URI="$1"
-          # parameter after URI supplied:
           [[ -n "$2" ]] && fatal "URI comes last" $ERR_CMDLINE
      fi
+
+     # Now spot some incompatibilities in cmdlines
      [[ $CMDLINE_IP == one ]] && [[ "$NODNS" == none ]] && fatal "\"--ip=one\" and \"--nodns=none\" don't work together" $ERR_CMDLINE
      [[ $CMDLINE_IP == one ]] && ( is_ipv4addr "$URI" || is_ipv6addr "$URI" )  && fatal "\"--ip=one\" plus supplying an IP address doesn't work" $ERR_CMDLINE
      "$do_mx_all_ips" && [[ "$NODNS" == none ]] && fatal "\"--mx\" and \"--nodns=none\" don't work together" $ERR_CMDLINE
 
-     ADDITIONAL_CA_FILES="${ADDITIONAL_CA_FILES//,/ }"
-     for fname in $ADDITIONAL_CA_FILES; do
+     if [[ -d $ADDTL_CA_FILES ]]; then
+          ADDTL_CA_FILES="$ADDTL_CA_FILES/*.pem"
+     else
+          ADDTL_CA_FILES="${ADDTL_CA_FILES//,/ }"
+     fi
+     for fname in $ADDTL_CA_FILES; do
           [[ -s "$fname" ]] || fatal "CA file \"$fname\" does not exist" $ERR_RESOURCE
-          grep -q "BEGIN CERTIFICATE" "$fname" || fatal "\"$fname\" is not CA file in PEM format" $ERR_RESOURCE
+          grep -q 'BEGIN CERTIFICATE' "$fname" || fatal "\"$fname\" is not CA file in PEM format" $ERR_RESOURCE
      done
 
+     if "$do_starttls_injection" && [[ "$STARTTLS_PROTOCOL" =~ smtp ]]; then
+          ((VULN_COUNT++))
+     fi
+
+     count_do_variables
+     [[ $? -eq 0 ]] && set_scanning_defaults
+     set_skip_tests
      [[ "$DEBUG" -ge 5 ]] && debug_globals
-     # if we have no "do_*" set here --> query_globals: we do a standard run -- otherwise just the one specified
-     query_globals && set_scanning_defaults
+
+     # Unless explicit disabled, check if rating can be enabled
+     # Should be called after set_scanning_defaults
+     ! "$do_rating" && set_rating_state
+
+     CMDLINE_PARSED=true
 }
 
 
@@ -19303,11 +23452,39 @@ nodeip_to_proper_ip6() {
 
 
 reset_hostdepended_vars() {
+     NR_SOCKET_FAIL=0
+     NR_OSSL_FAIL=0
+     NR_STARTTLS_FAIL=0
+     NR_HEADER_FAIL=0
      TLS_EXTENSIONS=""
+     TLS13_CERT_COMPRESS_METHODS=""
+     CERTIFICATE_TRANSPARENCY_SOURCE=""
      PROTOS_OFFERED=""
+     TLS12_CIPHER_OFFERED=""
      CURVES_OFFERED=""
+     KNOWN_OSSL_PROB=false
+     TLS13_ONLY=false
+     CLIENT_AUTH="none"
+     NO_SSL_SESSIONID=true
+     DH_GROUP_OFFERED=""
+     DH_GROUP_LEN_P=0
+     KEY_SHARE_EXTN_NR="33"
+     BAD_SERVER_HELLO_CIPHER=false
+     GOST_STATUS_PROBLEM=false
      OPTIMAL_PROTO=""
+     STARTTLS_OPTIMAL_PROTO=""
+     ALL_FAILED_SOCKETS=true
      SERVER_SIZE_LIMIT_BUG=false
+     SERVICE=""
+     CERT_FINGERPRINT_SHA2=""
+     RSA_CERT_FINGERPRINT_SHA2=""
+     TLS_TIME=""
+     GRADE_CAP=""
+     GRADE_CAP_REASONS=()
+     GRADE_WARNINGS=()
+     KEY_EXCH_SCORE=100
+     CIPH_STR_BEST=0
+     CIPH_STR_WORST=100000
 }
 
 # Rough estimate, in the future we maybe want to make use of nano secs (%N). Note this
@@ -19372,6 +23549,7 @@ lets_roll() {
           fi
           if "$do_cipher_match"; then
                # we will have an invalid JSON with no if statement
+               ((section_number++))
                fileout_section_header $section_number false
                run_cipher_match ${single_cipher}
                stopwatch run_cipher_match
@@ -19395,10 +23573,10 @@ lets_roll() {
                "$do_cipherlists" && { run_cipherlists; ret=$(($? + ret)); stopwatch run_cipherlists; }
 
                fileout_section_header $section_number true && ((section_number++))
-               "$do_pfs" && { run_pfs; ret=$(($? + ret)); stopwatch run_pfs; }
+               "$do_server_preference" && { run_server_preference; ret=$(($? + ret)); stopwatch run_server_preference; }
 
                fileout_section_header $section_number true && ((section_number++))
-               "$do_server_preference" && { run_server_preference; ret=$(($? + ret)); stopwatch run_server_preference; }
+               "$do_fs" && { run_fs; ret=$(($? + ret)); stopwatch run_fs; }
 
                fileout_section_header $section_number true && ((section_number++))
                "$do_server_defaults" && { run_server_defaults; ret=$(($? + ret)); stopwatch run_server_defaults; }
@@ -19429,6 +23607,7 @@ lets_roll() {
                fi
 
                fileout_section_header $section_number true && ((section_number++))
+
                "$do_heartbleed" && { run_heartbleed; ret=$(($? + ret)); stopwatch run_heartbleed; }
                "$do_ccs_injection" && { run_ccs_injection; ret=$(($? + ret)); stopwatch run_ccs_injection; }
                "$do_ticketbleed" && { run_ticketbleed; ret=$(($? + ret)); stopwatch run_ticketbleed; }
@@ -19444,7 +23623,10 @@ lets_roll() {
                "$do_logjam" && { run_logjam; ret=$(($? + ret)); stopwatch run_logjam; }
                "$do_beast" && { run_beast; ret=$(($? + ret)); stopwatch run_beast; }
                "$do_lucky13" && { run_lucky13; ret=$(($? + ret)); stopwatch run_lucky13; }
+               "$do_winshock" && { run_winshock; ret=$(($? + ret)); stopwatch run_winshock; }
                "$do_rc4" && { run_rc4; ret=$(($? + ret)); stopwatch run_rc4; }
+               "$do_starttls_injection" && { run_starttls_injection; ret=$(($? + ret)); stopwatch run_starttls_injection; }
+               outln
 
                fileout_section_header $section_number true && ((section_number++))
                "$do_allciphers" && { run_allciphers; ret=$(($? + ret)); stopwatch run_allciphers; }
@@ -19452,17 +23634,17 @@ lets_roll() {
 
                fileout_section_header $section_number true && ((section_number++))
                "$do_client_simulation" && { run_client_simulation; ret=$(($? + ret)); stopwatch run_client_simulation; }
+
+               fileout_section_header $section_number true && ((section_number++))
+               "$do_rating" && { run_rating; ret=$(($? + ret)); stopwatch run_rating; }
+
           fi
-         fileout_section_footer true
+          fileout_section_footer true
      fi
 
      outln
      calc_scantime
      datebanner " Done"
-
-     # reset the failed connect counter as we are finished
-     NR_SOCKET_FAIL=0
-     NR_OSSL_FAIL=0
 
      "$MEASURE_TIME" && printf "$1: %${COLUMNS}s\n" "$SCAN_TIME"
      [[ -e "$MEASURE_TIME_FILE" ]] && echo "Total : $SCAN_TIME " >> "$MEASURE_TIME_FILE"
@@ -19483,6 +23665,8 @@ lets_roll() {
      initialize_globals
      check_base_requirements            # needs to come after $do_html is defined
      parse_cmd_line "$@"
+     # CMDLINE_PARSED has been set now. Don't put a function immediately after this which calls fatal().
+     # Rather put it after csv_header below.
      # html_header() needs to be called early! Otherwise if html_out() is called before html_header() and the
      # command line contains --htmlfile <htmlfile> or --html, it'll make problems with html output, see #692.
      # json_header and csv_header could be called later but for context reasons we'll leave it here
@@ -19495,13 +23679,16 @@ lets_roll() {
      set_color_functions
      maketempf
      find_openssl_binary
+     find_socat
      choose_printf
+     check_resolver_bins
      prepare_debug  ; stopwatch parse
      prepare_arrays ; stopwatch prepare_arrays
      mybanner
      check_proxy
      check4openssl_oldfarts
      check_bsd_mount
+     setup_lc_collate
 
      if "$do_display_only"; then
           prettyprint_local "$PATTERN2SHOW"
@@ -19522,9 +23709,10 @@ lets_roll() {
 
      #TODO: there shouldn't be the need for a special case for --mx, only the ip addresses we would need upfront and the do-parser
      if "$do_mx_all_ips"; then
-          query_globals                                # if we have just 1x "do_*" --> we do a standard run -- otherwise just the one specified
+          #FIXME: do we need this really here?
+          count_do_variables                           # if we have just 1x "do_*" --> we do a standard run -- otherwise just the one specified
           [[ $? -eq 1 ]] && set_scanning_defaults
-          run_mx_all_ips "${URI}" $PORT                # we should reduce run_mx_all_ips to the stuff necessary as ~15 lines later we have similar code
+          run_mx_all_ips "${URI}" $PORT                # we should reduce run_mx_all_ips to what's necessary as below we have similar code
           exit $?
      fi
 
@@ -19554,4 +23742,3 @@ lets_roll() {
      fi
 
 exit $RET
-

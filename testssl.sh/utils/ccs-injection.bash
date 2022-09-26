@@ -1,4 +1,4 @@
-#!/bin/bash 
+#!/usr/bin/env bash
 
 # POC bash socket implementation of CCS Injection vulnerability in OpenSSL (CVE-2014-0224), 
 # see https://www.openssl.org/news/secadv_20140605.txt
@@ -181,7 +181,7 @@ starttls_line0() {
      debugme echo "... received result: "
      cat $reply
      if [ -n "$2" ]; then
-          if egrep -q "$2" $reply; then
+          if grep -Eq "$2" $reply; then
                debugme echo "---> reply matched \"$2\""
                [ $DEBUG -eq 0 ] && rm $reply
                return 0
@@ -352,5 +352,5 @@ fi
 echo
 exit $ret
 
-#  vim:tw=100:ts=5:sw=5:expandtab
+#  vim:ts=5:sw=5:expandtab
 #  $Id: ccs-injection.bash,v 1.9 2015/07/06 20:01:49 dirkw Exp $ 

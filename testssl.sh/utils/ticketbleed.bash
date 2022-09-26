@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Fast and reliable POC bash socket implementation of ticketbleed (CVE-2016-9244), see also http://ticketbleed.com/
 # Author: Dirk Wetter, GPLv2 see https://testssl.sh/LICENSE.txt
@@ -50,7 +50,7 @@ yellow=$(tput setaf 3; tput bold)
 normal=$(tput sgr0)
 
 send_clienthello() {
-     local -i len_ch=216                          # len of clienthello, exlcuding TLS session ticket and SID (record layer)
+     local -i len_ch=216                          # len of clienthello, excluding TLS session ticket and SID (record layer)
      local session_tckt_tls="$1"
      local -i len_tckt_tls="${#1}"
      local xlen_tckt_tls=""
@@ -269,7 +269,7 @@ trap "cleanup" QUIT EXIT
 "$DEBUG" && ( echo; echo )
 echo "##### 2) Sending 1 to 3 ClientHello(s) (TLS version 03,$TLSV) with this ticket and a made up SessionID"
 
-# we do 3 client hellos, and see whether different memmory is returned
+# we do 3 client hellos, and see whether different memory is returned
 for i in 1 2 3; do
      fd_socket $PORT
 
@@ -348,5 +348,5 @@ fi
 
 exit 0
 
-#  vim:ts=5:sw=5
+#  vim:ts=5:sw=5:expandtab
 

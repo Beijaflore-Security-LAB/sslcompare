@@ -36,7 +36,7 @@ find_openssl_binary() {
           :    # 2. otherwise try openssl in path of testssl.sh
      elif test_openssl_suffix ../$RUN_DIR/bin; then
           :    # 3. otherwise here, this is supposed to be the standard --platform independent path in the future!!!
-     elif test_openssl_suffix "$(dirname "$(which openssl)")"; then
+     elif test_openssl_suffix "$(dirname "$(command -v openssl)")"; then
           :    # 5. we tried hard and failed, so now we use the system binaries
      fi
 
@@ -62,8 +62,8 @@ HN="$1"
 [ -z "$HN" ] && HN=testssl.sh
 find_openssl_binary 
 
-ERRFILE=$(mktemp /tmp/curve_tester.R.XXXXXX) || exit -6
-TMPFILE=$(mktemp /tmp/curve_tester.T.XXXXXX) || exit -6
+ERRFILE=$(mktemp /tmp/curve_tester.R.XXXXXX) || exit 6
+TMPFILE=$(mktemp /tmp/curve_tester.T.XXXXXX) || exit 6
 
 
 for curve in $($OPENSSL ecparam -list_curves | awk -F':' '/:/ { print $1 }'); do

@@ -1,24 +1,49 @@
-## Usage:
+## Usage
 
-(in git directory):
+### From git directory
+
+```
+docker build .
+```
+
+Catch is when you run without image tags you need to catch the ID when building
+
+```
+[..]
+---> 889fa2f99933
+Successfully built 889fa2f99933
+```
+
+More comfortable is
+
 ```
 docker build -t mytestssl .
-docker run -t mytestssl example.com
+docker run --rm -t mytestssl example.com
 ```
 
 You can also supply command line options like:
 
-``docker run -t mytestssl -p --header example.com``
-
-Please keep in mind that any output file (--log, --html, --json etc.) will be created
-in the container. Also if you don't provide a user, this docker container uses a non-root user.
-
-
-You can also pull the image from dockerhub and run:
 ```
-docker run -t drwetter/testssl.sh --pfs example.com
+docker run -t mytestssl --help
+docker run --rm -t mytestssl -p --header example.com
 ```
 
-Tags supported are currently: ``latest``, ``stable`` which are all the same and point to ``3.0``. And for the indomitable users who prefer to run old stuff ``2.9.5``. The tag ``2.9dev`` should not be used.
+### From dockerhub
 
-``docker run -t drwetter/testssl.sh:stable example.com``.
+You can pull the image from dockerhub and run:
+
+```
+docker run --rm -t drwetter/testssl.sh --fs example.com
+```
+
+Supported tags are: ``3.1dev`` and ``latest`, which are the same, i.e. the rolling release. ``3.0`` is the latest stable version from git which might have a few improvements (see git log) over the released version 3.0.X.
+
+``docker run --rm -t drwetter/testssl.sh:stable example.com``.
+
+Keep in mind that any output file (--log, --html, --json etc.) will be created within the container. If you wish to have this created in a local directory on your host you can mount a volume into the container and change the output prefix where the container user has write access to, e.g.:
+
+```
+docker run --rm -t -v /tmp:/data drwetter/testssl.sh --htmlfile /data/ example.com
+```
+
+which writes the HTML output to ``/tmp/example.com_p443-<date>-<time>.html.`` The uid/gid is the one from the docker user. Normally the file is 644. testssl.sh's docker container uses a non-root user (usually with user/groupid 1000:1000).
