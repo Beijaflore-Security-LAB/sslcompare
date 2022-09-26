@@ -1,0 +1,3 @@
+[console_scripts]
+sslcompare=sslcompare.sslcompare:main
+

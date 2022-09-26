@@ -1,0 +1,26 @@
+{
+    "injected_packages": {},
+    "main_package": {
+        "app_paths": [
+            {
+                "__Path__": "/home/aja/.local/pipx/venvs/sslcompare/bin/sslcompare",
+                "__type__": "Path"
+            }
+        ],
+        "app_paths_of_dependencies": {},
+        "apps": [
+            "sslcompare"
+        ],
+        "apps_of_dependencies": [],
+        "include_apps": true,
+        "include_dependencies": false,
+        "package": "sslcompare",
+        "package_or_url": "/home/aja/gits/sslcompare/dist/sslcompare-1.4.0-py3-none-any.whl",
+        "package_version": "1.4.0",
+        "pip_args": [],
+        "suffix": ""
+    },
+    "pipx_metadata_version": "0.2",
+    "python_version": "Python 3.10.7",
+    "venv_args": []
+}

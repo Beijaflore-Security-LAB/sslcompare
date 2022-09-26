@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "sslcompare"
-version = "1.2.2"
+version = "1.4.0"
 description = "Compares a server's cipher suites with a provided baseline"
 authors = [
 	"Arthur Le Corguille",
@@ -15,7 +15,7 @@ include = ["sslcompare/**/*"]
 sslcompare = "sslcompare.sslcompare:main"
 
 [tool.poetry.dependencies]
-python = "^3.9.0"
+python = ">=3.8.0,<3.11"
 click = "^8.0.1"
 PyYAML = "^5.4.1"
 

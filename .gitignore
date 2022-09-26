@@ -1,13 +1,2 @@
-<<<<<<< HEAD
-/sslcompare.tgz
-=======
-/Python-3.9.5.tgz
-/Python-3.9.5/
-/sslcompare/__pycache__/
-/sslcompare/testssl.sh/etc/etc/
-/sslcompare_standalone.bin
-/sslcompare_standalone.build/
-/sslcompare_standalone.dist/
-/sslcompare_standalone.tgz
+/**/__pycache__/
 /poetry.lock
->>>>>>> c4f4fee002858bba785259b631784269bd3fc8cb
